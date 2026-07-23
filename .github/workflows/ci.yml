@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flutter-quality:
+    name: Flutter analyze and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Detect Flutter scaffold
+        id: app
+        shell: bash
+        run: |
+          if [[ -f app/pubspec.yaml ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Flutter scaffold is not present yet; analysis starts with Phase 0 Task 2."
+          fi
+
+      - name: Set up Flutter
+        if: steps.app.outputs.exists == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        if: steps.app.outputs.exists == 'true'
+        working-directory: app
+        run: flutter pub get
+
+      - name: Analyze
+        if: steps.app.outputs.exists == 'true'
+        working-directory: app
+        run: flutter analyze --fatal-infos
+
+      - name: Run unit tests
+        if: steps.app.outputs.exists == 'true'
+        working-directory: app
+        run: flutter test

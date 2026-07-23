@@ -1,0 +1,67 @@
+name: Implementation task
+description: Create one scoped task from docs/implementation-board.md
+title: "[P?-??] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use one backlog ID per issue. Preserve the spec's phase gates and offline-first design laws.
+  - type: input
+    id: backlog-id
+    attributes:
+      label: Backlog ID
+      description: ID from docs/implementation-board.md, for example P1-03.
+      placeholder: P1-03
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - Phase 0 — Spine
+        - Phase 1 — Sync core
+        - Phase 2 — Intelligence
+        - Phase 3 — Ceremony completeness and archive
+        - Phase 4 — Hardening and submission
+        - Demo prep
+    validations:
+      required: true
+  - type: input
+    id: owner-role
+    attributes:
+      label: Default owner role
+      placeholder: R1 / R2 / R3 / All
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Describe the user-visible or system outcome, not just files to edit.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: Tests, device demonstration, recording, or artifact that proves completion.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and risks
+      description: List prerequisite backlog IDs and hardware or reliability risks.
+  - type: checkboxes
+    id: laws
+    attributes:
+      label: Design-law check
+      options:
+        - label: The change preserves local-only weekly transport.
+          required: true
+        - label: The change does not introduce an AI persona or advice.
+          required: true
+        - label: The core path still works offline and without a backend.
+          required: true
