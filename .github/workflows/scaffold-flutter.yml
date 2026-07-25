@@ -1,0 +1,41 @@
+name: Generate Flutter scaffold
+
+on:
+  push:
+    branches:
+      - feat/p0-flutter-riverpod-storage
+    paths:
+      - .github/workflows/scaffold-flutter.yml
+
+permissions:
+  contents: write
+
+jobs:
+  scaffold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android and iOS scaffold
+        run: flutter create --org app.keepers --project-name keepers --platforms=android,ios app
+
+      - name: Commit generated scaffold
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app
+          if git diff --cached --quiet; then
+            echo "Scaffold already exists."
+            exit 0
+          fi
+          git commit -m "build: generate Flutter Android and iOS scaffold"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
