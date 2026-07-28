@@ -43,3 +43,20 @@ This log is competition evidence. Add an entry whenever an AI tool contributes t
 - **Changes after review:** Pending.
 - **Evidence:** Branch chore/phase-0-repo-ci-docs and its pull request.
 - **Data sent externally:** Repository specification and non-sensitive repository metadata only.
+
+---
+
+## AI-002 — Flutter, Riverpod, and encrypted storage scaffold
+
+- **Date/time:** 2026-08-31, Asia/Dubai
+- **Tool/model:** OpenAI Codex
+- **Backlog ID:** P0-02
+- **Prompt:**
+
+> Create the app.
+
+- **Output used:** Flutter-generated Android/iOS scaffold, Riverpod root providers, SQLCipher database opener, secure database-key storage, normalized v1 schema, initial UI, platform hardening, and automated tests.
+- **Human verification:** Pending team review on the stacked P0-02 pull request; GitHub Actions runs analyze and tests.
+- **Changes after review:** Pending.
+- **Evidence:** Branch feat/p0-flutter-riverpod-storage and its pull request.
+- **Data sent externally:** Public package metadata, repository specification, and non-sensitive source code only.
