@@ -1,0 +1,42 @@
+name: Diagnose Flutter
+
+on:
+  push:
+    branches:
+      - feat/p0-flutter-riverpod-storage
+    paths:
+      - .github/workflows/diagnose-flutter.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Capture analyzer and test output
+        shell: bash
+        run: |
+          mkdir -p .ci-diagnostics
+          set +e
+          (cd app && flutter analyze --fatal-infos) > .ci-diagnostics/analyze.log 2>&1
+          analyze_status=$?
+          (cd app && flutter test) > .ci-diagnostics/test.log 2>&1
+          test_status=$?
+          set -e
+          echo "analyze_status=${analyze_status}" > .ci-diagnostics/status.txt
+          echo "test_status=${test_status}" >> .ci-diagnostics/status.txt
+      - name: Commit diagnostics
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci-diagnostics
+          git commit -m "chore: capture temporary Flutter diagnostics"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
