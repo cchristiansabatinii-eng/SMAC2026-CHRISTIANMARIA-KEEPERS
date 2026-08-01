@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/storage/schema.dart';
-import 'package:sqflite_common/sqlite_api.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -18,8 +17,10 @@ void main() {
     }
 
     final rows = await database.rawQuery(
-      "SELECT name FROM sqlite_master "
-      "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+      r'''
+SELECT name FROM sqlite_master
+WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+''',
     );
     final names = rows
         .map((row) => row['name'])

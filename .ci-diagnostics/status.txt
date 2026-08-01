@@ -1,2 +1,0 @@
-analyze_status=1
-test_status=0
