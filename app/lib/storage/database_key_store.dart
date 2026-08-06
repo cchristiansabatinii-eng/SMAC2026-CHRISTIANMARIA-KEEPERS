@@ -7,11 +7,13 @@ abstract interface class SecureValueStore {
   Future<String?> read(String key);
 
   Future<void> write(String key, String value);
+
+  Future<void> delete(String key);
 }
 
 final class FlutterSecureValueStore implements SecureValueStore {
   FlutterSecureValueStore([FlutterSecureStorage? storage])
-      : _storage = storage ?? const FlutterSecureStorage();
+    : _storage = storage ?? const FlutterSecureStorage();
 
   final FlutterSecureStorage _storage;
 
@@ -22,16 +24,16 @@ final class FlutterSecureValueStore implements SecureValueStore {
   Future<void> write(String key, String value) {
     return _storage.write(key: key, value: value);
   }
+
+  @override
+  Future<void> delete(String key) => _storage.delete(key: key);
 }
 
 typedef RandomBytesFactory = List<int> Function(int length);
 
 final class DatabaseKeyStore {
-  DatabaseKeyStore(
-    this._store, {
-    RandomBytesFactory? randomBytesFactory,
-  }) : _randomBytesFactory =
-            randomBytesFactory ?? _generateSecureRandomBytes;
+  DatabaseKeyStore(this._store, {RandomBytesFactory? randomBytesFactory})
+    : _randomBytesFactory = randomBytesFactory ?? _generateSecureRandomBytes;
 
   static const String keyName = 'keepers.database.encryption-key.v1';
   static const int keyLengthInBytes = 32;
@@ -45,9 +47,7 @@ final class DatabaseKeyStore {
       return existing;
     }
 
-    final key = base64UrlEncode(
-      _randomBytesFactory(keyLengthInBytes),
-    );
+    final key = base64UrlEncode(_randomBytesFactory(keyLengthInBytes));
     await _store.write(keyName, key);
     return key;
   }
