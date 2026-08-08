@@ -81,6 +81,7 @@ void main() {
     expect(state.privacy, PrivacyTier.journal);
     expect(state.text, 'Private note');
     expect(state.errorMessage, isNull);
+    expect(state.canSave, isTrue);
   });
 
   test('voice uses tap start then tap stop', () async {
@@ -215,10 +216,6 @@ void main() {
       final support = await Directory.systemTemp.createTemp(
         'mismatch-cancel-success-support-',
       );
-      addTearDown(() async {
-        if (await root.exists()) await root.delete(recursive: true);
-        if (await support.exists()) await support.delete(recursive: true);
-      });
       final client = StopResultRecorderClient(
         cancelError: StateError('plugin cancel failed'),
       );
@@ -233,8 +230,13 @@ void main() {
         blobStore: () async => testEncryptedBlobStore(support, root),
       );
       final container = captureContainer(recorder: recorder, files: files);
-      addTearDown(container.dispose);
       final controller = container.read(captureControllerProvider.notifier);
+      addTearDown(() async {
+        container.dispose();
+        await client.disposed.future;
+        if (await root.exists()) await root.delete(recursive: true);
+        if (await support.exists()) await support.delete(recursive: true);
+      });
       await controller.selectFormat(MemoryFormat.voice);
       await controller.toggleRecording();
       final original = File(client.path!);
@@ -1653,6 +1655,7 @@ final class StopResultRecorderClient implements VoiceRecorderClient {
   Object? cancelError;
   int cancels = 0;
   int starts = 0;
+  final disposed = Completer<void>();
 
   @override
   Stream<Amplitude> onAmplitudeChanged(Duration interval) =>
@@ -1678,5 +1681,7 @@ final class StopResultRecorderClient implements VoiceRecorderClient {
   }
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    if (!disposed.isCompleted) disposed.complete();
+  }
 }

@@ -27,9 +27,12 @@ final class CaptureController extends Notifier<CaptureDraft> {
   var _busy = false;
   var _disposed = false;
   var _recordingOwned = false;
+  var _mandatoryCleanup = false;
   final _pendingMedia = <CaptureMedia>[];
   final _orphanedPaths = <String>{};
   final _activeOperations = <Future<void>>{};
+
+  Stream<double> get amplitudes => _voice.amplitudes;
 
   @override
   CaptureDraft build() {
@@ -46,6 +49,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
       _generation++;
       unawaited(_disposeResources());
     });
+    _last = const CaptureDraft(phase: CapturePhase.recovering);
     unawaited(_trackOperation(() => _startupRecovery(_generation)));
     return _last;
   }
@@ -57,27 +61,83 @@ final class CaptureController extends Notifier<CaptureDraft> {
 
   void _emit(CaptureDraft next) {
     if (_disposed) return;
-    _last = next;
-    state = next;
+    final cleanupRequired =
+        _mandatoryCleanup ||
+        _pendingMedia.isNotEmpty ||
+        _orphanedPaths.isNotEmpty;
+    var normalized = next.cleanupRequired == cleanupRequired
+        ? next
+        : next.copyWith(cleanupRequired: cleanupRequired);
+    if (cleanupRequired &&
+        next.phase == CapturePhase.editing &&
+        next.errorMessage == null) {
+      normalized = normalized.copyWith(
+        phase: CapturePhase.failed,
+        errorMessage: 'Temporary media cleanup needs attention before this capture can close.',
+        retryIntent: CaptureRetryIntent.pendingCleanup,
+      );
+    }
+    _last = normalized;
+    state = normalized;
   }
 
   void updateText(String value) {
-    if (_busy || _terminal || state.format != MemoryFormat.text) return;
+    if (_busy ||
+        _terminal ||
+        state.retryRequiresCleanup ||
+        state.format != MemoryFormat.text) {
+      return;
+    }
     _generation++;
-    _emit(state.copyWith(text: value, clearErrorMessage: true));
+    _emit(
+      state.copyWith(
+        text: value,
+        phase: state.phase == CapturePhase.failed
+            ? CapturePhase.editing
+            : state.phase,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
+    );
   }
 
   void updateCaption(String value) {
-    if (_busy || _terminal) return;
+    if (_busy || _terminal || state.retryRequiresCleanup) return;
     _generation++;
-    _emit(state.copyWith(caption: value, clearErrorMessage: true));
+    _emit(
+      state.copyWith(
+        caption: value,
+        phase: state.phase == CapturePhase.failed
+            ? CapturePhase.editing
+            : state.phase,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
+    );
   }
 
   void setPrivacy(PrivacyTier value) {
-    if (_busy || _terminal) return;
+    if (_busy || _terminal || state.retryRequiresCleanup) return;
     _generation++;
-    _emit(state.copyWith(privacy: value, clearErrorMessage: true));
+    _emit(
+      state.copyWith(
+        privacy: value,
+        phase: state.phase == CapturePhase.failed
+            ? CapturePhase.editing
+            : state.phase,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
+    );
   }
+
+  void resetAfterCompletion() {
+    if (_busy || state.phase != CapturePhase.saved) return;
+    _generation++;
+    _emit(const CaptureDraft());
+  }
+
+  Future<void> finalizeDismissal() => discard();
 
   Future<void> selectFormat(MemoryFormat format) async {
     if (_busy || _terminal || state.isRecording || state.format == format) {
@@ -104,6 +164,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
       _emit(
         before.copyWith(
           phase: CapturePhase.failed,
+          retryIntent: _formatRetryIntent(format),
           errorMessage:
               'The previous draft could not be cleaned up. Try again.',
         ),
@@ -155,6 +216,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
       _emit(
         before.copyWith(
           phase: CapturePhase.failed,
+          retryIntent: CaptureRetryIntent.replacePrimary,
           errorMessage:
               'The previous draft could not be cleaned up. Try again.',
         ),
@@ -180,7 +242,11 @@ final class CaptureController extends Notifier<CaptureDraft> {
     final before = state;
     _busy = true;
     _emit(
-      before.copyWith(phase: CapturePhase.picking, clearErrorMessage: true),
+      before.copyWith(
+        phase: CapturePhase.picking,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
     );
     try {
       final path = await _photos.pick(source);
@@ -200,6 +266,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
         _emit(
           before.copyWith(
             phase: CapturePhase.failed,
+            retryIntent: _photoRetryIntent(source),
             errorMessage: _permissionMessage(error.source),
           ),
         );
@@ -210,6 +277,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
         _emit(
           before.copyWith(
             phase: CapturePhase.failed,
+            retryIntent: _photoRetryIntent(source),
             errorMessage: 'This photo could not be added. You can try again or choose another format.',
           ),
         );
@@ -227,12 +295,21 @@ final class CaptureController extends Notifier<CaptureDraft> {
         if (path != null) await _deleteStale(path);
       } else if (path != null) {
         await _acceptPhoto(path);
+      } else {
+        _emit(
+          state.copyWith(
+            phase: CapturePhase.editing,
+            clearErrorMessage: true,
+            clearRetryIntent: true,
+          ),
+        );
       }
     } on Object {
       if (_current(initialToken) && !state.hasDraft) {
         _emit(
           state.copyWith(
             phase: CapturePhase.failed,
+            retryIntent: CaptureRetryIntent.recoverLostPhoto,
             errorMessage: 'The interrupted photo could not be recovered.',
           ),
         );
@@ -246,7 +323,15 @@ final class CaptureController extends Notifier<CaptureDraft> {
     final token = ++_generation;
     final before = state;
     _busy = true;
-    if (!startup) _emit(before.copyWith(phase: CapturePhase.recovering));
+    if (!startup) {
+      _emit(
+        before.copyWith(
+          phase: CapturePhase.recovering,
+          clearErrorMessage: true,
+          clearRetryIntent: true,
+        ),
+      );
+    }
     try {
       final path = await _photos.recoverLostPhoto();
       if (!_current(token) || state.hasDraft) {
@@ -265,6 +350,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
         _emit(
           before.copyWith(
             phase: CapturePhase.failed,
+            retryIntent: CaptureRetryIntent.recoverLostPhoto,
             errorMessage: 'The interrupted photo could not be recovered.',
           ),
         );
@@ -286,7 +372,11 @@ final class CaptureController extends Notifier<CaptureDraft> {
     final token = ++_generation;
     _busy = true;
     _emit(
-      state.copyWith(phase: CapturePhase.starting, clearErrorMessage: true),
+      state.copyWith(
+        phase: CapturePhase.starting,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
     );
     try {
       if (!await _voice.hasPermission()) {
@@ -316,6 +406,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
         _emit(
           state.copyWith(
             phase: CapturePhase.failed,
+            retryIntent: CaptureRetryIntent.recording,
             recordingActive: false,
             errorMessage: _permissionMessage(error.source),
           ),
@@ -329,6 +420,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
         _emit(
           state.copyWith(
             phase: CapturePhase.failed,
+            retryIntent: CaptureRetryIntent.recording,
             recordingActive: _recordingOwned,
             errorMessage: 'Recording could not start. You can try again or choose another format.',
           ),
@@ -374,6 +466,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
             state.copyWith(
               recordingActive: _recordingOwned,
               phase: CapturePhase.failed,
+              retryIntent: CaptureRetryIntent.discard,
               errorMessage: 'Recording cleanup is incomplete. Try discard before recording again.',
             ),
           );
@@ -407,6 +500,9 @@ final class CaptureController extends Notifier<CaptureDraft> {
           state.copyWith(
             recordingActive: _recordingOwned,
             phase: CapturePhase.failed,
+            retryIntent: _recordingOwned
+                ? CaptureRetryIntent.discard
+                : CaptureRetryIntent.recording,
             errorMessage: 'Recording stopped unexpectedly. Your draft details are still here.',
           ),
         );
@@ -433,6 +529,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
       _emit(
         before.copyWith(
           phase: CapturePhase.failed,
+          retryIntent: CaptureRetryIntent.replacePrimary,
           errorMessage: 'The draft file could not be removed. Try again.',
         ),
       );
@@ -471,6 +568,8 @@ final class CaptureController extends Notifier<CaptureDraft> {
       <String>{..._mediaPaths(before), ..._orphanedPaths}.toList(),
     );
     error ??= cleanupError;
+    final pendingError = await _drainPendingCleanup();
+    error ??= pendingError;
     if (!_current(token)) return;
     _busy = false;
     if (error != null) {
@@ -478,6 +577,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
         before.copyWith(
           phase: CapturePhase.failed,
           recordingActive: _recordingOwned,
+          retryIntent: CaptureRetryIntent.discard,
           errorMessage:
               'Some draft plaintext could not be removed. Try discard again.',
         ),
@@ -495,7 +595,31 @@ final class CaptureController extends Notifier<CaptureDraft> {
     _busy = true;
     CaptureMedia? snapshot;
     EntryMetadata? metadata;
-    _emit(frozen.copyWith(phase: CapturePhase.saving, clearErrorMessage: true));
+    EntryMetadata? savedEntry;
+    var outcomePhase = CapturePhase.failed;
+    String? outcomeMessage =
+        'This memory could not be sealed. Your draft is still here.';
+    CaptureRetryIntent? outcomeRetry = CaptureRetryIntent.save;
+    _emit(
+      frozen.copyWith(
+        phase: CapturePhase.saving,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
+    );
+    final pendingError = await _drainPendingCleanup();
+    if (!_current(token)) return;
+    if (pendingError != null) {
+      _busy = false;
+      _emit(
+        frozen.copyWith(
+          phase: CapturePhase.failed,
+          errorMessage: 'This memory was not sealed, and snapshot cleanup needs attention.',
+          retryIntent: CaptureRetryIntent.save,
+        ),
+      );
+      return;
+    }
     try {
       final identity = await _identity;
       if (!_current(token)) return;
@@ -513,10 +637,15 @@ final class CaptureController extends Notifier<CaptureDraft> {
           : frozen.format == MemoryFormat.voice
           ? frozen.voicePath
           : null;
-      snapshot = mediaPath == null ? null : await _files.read(mediaPath);
-      if (snapshot != null) _pendingMedia.add(snapshot);
+      if (mediaPath != null) {
+        // A read can allocate and register a residual snapshot before it
+        // throws, so retain independent cleanup authority before awaiting it.
+        _mandatoryCleanup = true;
+        snapshot = await _files.read(mediaPath);
+        _pendingMedia.add(snapshot);
+      }
       if (!_current(token)) return;
-      final saved = await _saveEntry(
+      savedEntry = await _saveEntry(
         EntrySaveRequest(
           metadata: metadata,
           identity: identity,
@@ -541,67 +670,63 @@ final class CaptureController extends Notifier<CaptureDraft> {
       Object? cleanupError;
       if (mediaPath != null) cleanupError = await _cleanupPaths([mediaPath]);
       if (!_current(token)) return;
-      _busy = false;
-      _emit(
-        frozen.copyWith(
-          phase: cleanupError == null
-              ? CapturePhase.saved
-              : CapturePhase.committedCleanup,
-          savedEntry: saved,
-          errorMessage: cleanupError == null
-              ? null
-              : 'The memory is sealed, but draft cleanup needs attention.',
-          clearErrorMessage: cleanupError == null,
-        ),
-      );
+      outcomePhase = cleanupError == null
+          ? CapturePhase.saved
+          : CapturePhase.committedCleanup;
+      outcomeMessage = cleanupError == null
+          ? null
+          : 'The memory is sealed, but draft cleanup needs attention.';
+      outcomeRetry = cleanupError == null
+          ? null
+          : CaptureRetryIntent.committedCleanup;
     } on EntrySaveFailure catch (error) {
-      if (_current(token)) {
-        _busy = false;
-        _emit(
-          frozen.copyWith(
-            phase: error.consistency.metadataCommitted
-                ? CapturePhase.committedCleanup
-                : CapturePhase.failed,
-            savedEntry: error.consistency.metadataCommitted
-                ? error.committedMetadata ?? metadata
-                : null,
-            errorMessage: error.consistency.metadataCommitted
-                ? 'The memory is sealed, but draft cleanup needs attention.'
-                : 'This memory could not be sealed. Your draft is still here.',
-          ),
-        );
+      if (error.consistency.metadataCommitted) {
+        savedEntry = error.committedMetadata ?? metadata;
+        outcomePhase = CapturePhase.committedCleanup;
+        outcomeMessage =
+            'The memory is sealed, but draft cleanup needs attention.';
+        outcomeRetry = CaptureRetryIntent.committedCleanup;
       }
     } on Object {
-      if (_current(token)) {
-        _busy = false;
-        _emit(
-          frozen.copyWith(
-            phase: CapturePhase.failed,
-            errorMessage:
-                'This memory could not be sealed. Your draft is still here.',
-          ),
-        );
-      }
+      // The default failed-save outcome preserves the draft for retry.
     } finally {
+      Object? snapshotCleanupError;
       if (snapshot != null) {
         try {
           await snapshot.release();
           _pendingMedia.remove(snapshot);
-        } on Object {
-          if (_current(token)) {
-            _busy = false;
-            _emit(
-              state.copyWith(
-                phase: state.savedEntry == null
-                    ? CapturePhase.failed
-                    : CapturePhase.committedCleanup,
-                errorMessage: state.savedEntry == null
-                    ? 'This memory was not sealed, and snapshot cleanup needs attention.'
-                    : 'The memory is sealed, but draft cleanup needs attention.',
-              ),
-            );
-          }
+          _mandatoryCleanup = false;
+        } on Object catch (error) {
+          snapshotCleanupError = error;
         }
+      }
+      if (snapshot == null && _mandatoryCleanup) {
+        snapshotCleanupError = await _drainPendingCleanup();
+      }
+      if (_current(token)) {
+        if (snapshotCleanupError != null) {
+          outcomePhase = savedEntry == null
+              ? CapturePhase.failed
+              : CapturePhase.committedCleanup;
+          outcomeMessage = savedEntry == null
+              ? 'This memory was not sealed, and snapshot cleanup needs attention.'
+              : 'The memory is sealed, but draft cleanup needs attention.';
+          outcomeRetry = savedEntry == null
+              ? CaptureRetryIntent.save
+              : CaptureRetryIntent.committedCleanup;
+        }
+        _busy = false;
+        _emit(
+          frozen.copyWith(
+            phase: outcomePhase,
+            savedEntry: savedEntry,
+            clearSavedEntry: savedEntry == null,
+            errorMessage: outcomeMessage,
+            clearErrorMessage: outcomeMessage == null,
+            retryIntent: outcomeRetry,
+            clearRetryIntent: outcomeRetry == null,
+          ),
+        );
       }
     }
   }
@@ -615,21 +740,9 @@ final class CaptureController extends Notifier<CaptureDraft> {
     final pathError = await _cleanupPaths(_mediaPaths(committed));
     firstError ??= pathError;
     if (!_current(token)) return;
-    try {
-      await _files.retryPendingCleanup();
-    } on Object catch (error) {
-      firstError ??= error;
-    }
+    final pendingError = await _drainPendingCleanup();
+    firstError ??= pendingError;
     if (!_current(token)) return;
-    for (final media in List<CaptureMedia>.of(_pendingMedia)) {
-      try {
-        await media.release();
-        _pendingMedia.remove(media);
-      } on Object catch (error) {
-        firstError ??= error;
-      }
-      if (!_current(token)) return;
-    }
     _busy = false;
     _emit(
       committed.copyWith(
@@ -640,6 +753,45 @@ final class CaptureController extends Notifier<CaptureDraft> {
             ? null
             : 'The memory is sealed, but draft cleanup needs attention.',
         clearErrorMessage: firstError == null,
+        retryIntent: firstError == null
+            ? null
+            : CaptureRetryIntent.committedCleanup,
+        clearRetryIntent: firstError == null,
+      ),
+    );
+  }
+
+  Future<void> retryPendingCleanup() async {
+    if (_busy || _terminal || !state.cleanupRequired) return;
+    final token = ++_generation;
+    final before = state;
+    _busy = true;
+    _emit(
+      before.copyWith(
+        phase: CapturePhase.cleaning,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
+    );
+    Object? firstError;
+    if (_orphanedPaths.isNotEmpty) {
+      final orphanError = await _cleanupPaths(_orphanedPaths.toList());
+      firstError ??= orphanError;
+      if (orphanError == null) _orphanedPaths.clear();
+    }
+    final pendingError = await _drainPendingCleanup();
+    firstError ??= pendingError;
+    if (!_current(token)) return;
+    _busy = false;
+    _emit(
+      before.copyWith(
+        phase: firstError == null ? CapturePhase.editing : CapturePhase.failed,
+        errorMessage: firstError == null ? null : 'Temporary media cleanup needs attention before this capture can close.',
+        clearErrorMessage: firstError == null,
+        retryIntent: firstError == null
+            ? null
+            : CaptureRetryIntent.pendingCleanup,
+        clearRetryIntent: firstError == null,
       ),
     );
   }
@@ -673,6 +825,25 @@ final class CaptureController extends Notifier<CaptureDraft> {
     return error;
   }
 
+  Future<Object?> _drainPendingCleanup() async {
+    Object? firstError;
+    try {
+      await _files.retryPendingCleanup();
+    } on Object catch (error) {
+      firstError = error;
+    }
+    for (final media in List<CaptureMedia>.of(_pendingMedia)) {
+      try {
+        await media.release();
+        _pendingMedia.remove(media);
+      } on Object catch (error) {
+        firstError ??= error;
+      }
+    }
+    _mandatoryCleanup = firstError != null;
+    return firstError;
+  }
+
   Future<Object?> _deleteStale(String path) async {
     final error = await _cleanupPaths([path]);
     if (error == null) {
@@ -696,19 +867,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
       final orphanError = await _cleanupPaths(_orphanedPaths.toList());
       if (orphanError == null) _orphanedPaths.clear();
     }
-    try {
-      await _files.retryPendingCleanup();
-    } on Object {
-      // The stable cleanup registry retains unresolved artifacts.
-    }
-    for (final media in List<CaptureMedia>.of(_pendingMedia)) {
-      try {
-        await media.release();
-        _pendingMedia.remove(media);
-      } on Object {
-        // The capability remains owned for the process lifetime.
-      }
-    }
+    await _drainPendingCleanup();
     try {
       await _voice.dispose();
     } on Object {
@@ -743,4 +902,16 @@ final class CaptureController extends Notifier<CaptureDraft> {
     CapturePermissionSource.microphone =>
       'Microphone access is needed to record a memory.',
   };
+
+  CaptureRetryIntent _photoRetryIntent(PhotoSource source) => switch (source) {
+    PhotoSource.camera => CaptureRetryIntent.camera,
+    PhotoSource.library => CaptureRetryIntent.library,
+  };
+
+  CaptureRetryIntent _formatRetryIntent(MemoryFormat format) =>
+      switch (format) {
+        MemoryFormat.photo => CaptureRetryIntent.selectPhoto,
+        MemoryFormat.voice => CaptureRetryIntent.selectVoice,
+        MemoryFormat.text => CaptureRetryIntent.selectText,
+      };
 }
