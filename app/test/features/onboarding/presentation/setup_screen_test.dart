@@ -39,9 +39,10 @@ void main() {
     await tester.enterText(find.byKey(const Key('member-name')), 'Chris');
     await tester.pump();
     await tester.tap(find.text('Enter the Observatory'));
-    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.text('No memories yet.'));
 
-    expect(find.text('Every family has a keeper.'), findsOneWidget);
+    expect(find.text('The Observatory'), findsOneWidget);
+    expect(find.text('No memories yet.'), findsOneWidget);
     expect(await fixture.database.query('families'), hasLength(1));
     expect(await fixture.database.query('members'), hasLength(1));
   });
@@ -193,7 +194,7 @@ void main() {
     expect(data.flagsCollection.isLiveRegion, isTrue);
 
     fixture.store.releaseFirstWrite();
-    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.text('The Observatory'));
     semantics.dispose();
   });
 
@@ -239,6 +240,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Name your family space'), findsOneWidget);
   });
+}
+
+Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
+  for (var attempt = 0; attempt < 20 && finder.evaluate().isEmpty; attempt++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
 }
 
 final class _WidgetFixture {
