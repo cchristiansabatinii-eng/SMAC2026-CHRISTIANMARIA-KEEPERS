@@ -262,6 +262,44 @@ void main() {
     ]);
   });
 
+  test('own request exposes the authoritative cancellation reason', () async {
+    client.responses
+      ..add(_ownRequestResponse(state: 'cancelled', cancelReason: 'requester'))
+      ..add(
+        _ownRequestResponse(
+          state: 'cancelled',
+          cancelReason: 'code_regenerated',
+        ),
+      );
+
+    expect(
+      (await gateway.getOwnJoinRequest())!.cancelReason,
+      FamilyJoinRequestCancelReason.requester,
+    );
+    expect(
+      (await gateway.getOwnJoinRequest())!.cancelReason,
+      FamilyJoinRequestCancelReason.codeRegenerated,
+    );
+  });
+
+  test(
+    'own request rejects missing or impossible cancellation reasons',
+    () async {
+      final cancelled = _ownRequestResponse(state: 'cancelled');
+      client.responses
+        ..add({...cancelled}..remove('cancelReason'))
+        ..add({..._ownRequestResponse(), 'cancelReason': 'requester'})
+        ..add({...cancelled, 'cancelReason': 'unknown'});
+
+      for (var index = 0; index < 3; index += 1) {
+        await expectLater(
+          gateway.getOwnJoinRequest(),
+          throwsFamilyJoin(FamilyJoinFailureCode.unknown),
+        );
+      }
+    },
+  );
+
   test(
     'rejects impossible create and transition acknowledgement states',
     () async {
@@ -604,9 +642,13 @@ Map<String, Object?> _pendingRequestResponse({String state = 'pending'}) => {
 Map<String, Object?> _ownRequestResponse({
   String state = 'pending',
   bool approved = false,
+  String? cancelReason,
 }) => {
   ..._pendingRequestResponse(state: state),
   'familyName': 'Sabati',
+  'cancelReason': state == 'cancelled'
+      ? (cancelReason ?? 'requester')
+      : cancelReason,
   'approvalEnvelope': approved ? _approvalEnvelope.toJson() : null,
   'roster': approved
       ? [

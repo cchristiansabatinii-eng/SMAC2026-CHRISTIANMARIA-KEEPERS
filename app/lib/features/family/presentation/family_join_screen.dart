@@ -134,54 +134,60 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
       }
     });
     _syncDraft(state);
+    final canAbandon =
+        !widget.resumePendingRequest || _isResolvedTerminal(state.phase);
 
     return PopScope<void>(
-      canPop: widget.onAbandoned == null,
+      canPop: canAbandon && widget.onAbandoned == null,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) widget.onAbandoned?.call();
+        if (!didPop && canAbandon) widget.onAbandoned?.call();
       },
-      child: _frame(context, _content(state)),
+      child: _frame(context, _content(state), showBack: canAbandon),
     );
   }
 
-  Widget _frame(BuildContext context, Widget content) => Scaffold(
-    backgroundColor: Colors.transparent,
-    body: SafeArea(
-      child: Center(
-        child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(
-            24,
-            18,
-            24,
-            28 + MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: IconButton(
-                    key: const Key('leave-family-join'),
-                    tooltip: 'Back',
-                    constraints: const BoxConstraints(
-                      minWidth: 48,
-                      minHeight: 48,
-                    ),
-                    onPressed: _abandon,
-                    icon: const Icon(Icons.arrow_back_rounded),
-                  ),
+  Widget _frame(BuildContext context, Widget content, {bool showBack = true}) =>
+      Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                24,
+                18,
+                24,
+                28 + MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (showBack)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: IconButton(
+                          key: const Key('leave-family-join'),
+                          tooltip: 'Back',
+                          constraints: const BoxConstraints(
+                            minWidth: 48,
+                            minHeight: 48,
+                          ),
+                          onPressed: _abandon,
+                          icon: const Icon(Icons.arrow_back_rounded),
+                        ),
+                      )
+                    else
+                      const SizedBox(height: 48),
+                    const SizedBox(height: 20),
+                    content,
+                  ],
                 ),
-                const SizedBox(height: 20),
-                content,
-              ],
+              ),
             ),
           ),
         ),
-      ),
-    ),
-  );
+      );
 
   Widget _content(FamilyJoinState state) {
     if (_terminalMessage(state) case final message?) return _terminal(message);
@@ -822,6 +828,14 @@ String? _terminalMessage(FamilyJoinState state) => switch (state.phase) {
     _ => null,
   },
   _ => null,
+};
+
+bool _isResolvedTerminal(FamilyJoinPhase phase) => switch (phase) {
+  FamilyJoinPhase.declined ||
+  FamilyJoinPhase.cancelled ||
+  FamilyJoinPhase.expired ||
+  FamilyJoinPhase.invitationChanged => true,
+  _ => false,
 };
 
 String? _recoverableMessage(FamilyJoinFailureCode? code) => switch (code) {

@@ -109,8 +109,9 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
   String? _proposedMemberId;
   AvatarConfig? _proposedAvatar;
   String? _proposedJoiningPublicKey;
-  bool _cancelInitiated = false;
   bool _installedLocally = false;
+  bool _reloadScheduled = false;
+  var _bindingGeneration = 0;
 
   @override
   FamilyJoinState build() {
@@ -129,24 +130,27 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
       _joiningKey = null;
       _proposedJoiningPublicKey = null;
       _authenticationEmailNormalized = null;
+      _bindingGeneration += 1;
     });
     return const FamilyJoinState();
   }
 
   Future<void> loadCode(FamilyCode code) => _deduplicate(() async {
     final retainedPhase = state.phase;
+    final gateway = ref.read(familyCodeJoinGatewayProvider);
+    if (_accountId != null && gateway.authenticatedAccountId != _accountId) {
+      _resetAccountBinding();
+    }
     final changedCode = _code != code;
     _code = code;
     if (changedCode) {
       _preview = null;
       _request = null;
       _lastProfile = null;
-      _cancelInitiated = false;
       _installedLocally = false;
     }
     state = _next(phase: FamilyJoinPhase.checking, clearFailure: true);
 
-    final gateway = ref.read(familyCodeJoinGatewayProvider);
     if (!gateway.isConfigured) {
       _fail(FamilyJoinFailureCode.notConfigured, FamilyJoinRetryPoint.loadCode);
       return;
@@ -165,18 +169,32 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     }
     if (!_accountStillCurrent(accountId)) return;
     _accountId = accountId;
-    _subscribeToInvalidations(gateway);
+    _subscribeToInvalidations(gateway, accountId);
 
     try {
       final own = await gateway.getOwnJoinRequest();
       if (!_accountStillCurrent(accountId)) return;
-      if (own != null) {
+      if (own != null && !_isResolvedRequest(own.state)) {
         await _restoreProposalForRequest(own);
         await _applyAuthoritative(own);
         return;
       }
       final preview = await gateway.previewFamilyByCode(code);
       if (!_accountStillCurrent(accountId)) return;
+      if (own != null) {
+        final matchesEnteredCode =
+            own.familyId == preview.familyId &&
+            own.codeVersion == preview.codeVersion;
+        if (matchesEnteredCode) {
+          await _restoreProposalForRequest(own);
+          await _applyAuthoritative(own);
+          return;
+        }
+        await _rotateProposalAfterResolvedRequest(
+          accountId: accountId,
+          request: own,
+        );
+      }
       _preview = preview;
       await _ensureProposal(accountId);
       if (!_accountStillCurrent(accountId)) return;
@@ -288,6 +306,12 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
       _fail(FamilyJoinFailureCode.signedOut, FamilyJoinRetryPoint.requestJoin);
       return;
     }
+    if (!_accountStillCurrent(
+      accountId,
+      retryPoint: FamilyJoinRetryPoint.requestJoin,
+    )) {
+      return;
+    }
     if (!_profileMatchesProposal(profile)) {
       _fail(
         FamilyJoinFailureCode.invalidJoinKey,
@@ -337,7 +361,13 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
 
   Future<void> _refreshStatusUncoalesced() async {
     final gateway = ref.read(familyCodeJoinGatewayProvider);
-    final accountId = _accountId ?? gateway.authenticatedAccountId;
+    final authenticatedAccountId = gateway.authenticatedAccountId;
+    final boundAccountId = _accountId;
+    if (boundAccountId != null && authenticatedAccountId != boundAccountId) {
+      _accountChanged(FamilyJoinRetryPoint.refreshStatus);
+      return;
+    }
+    final accountId = boundAccountId ?? authenticatedAccountId;
     if (accountId == null) {
       _fail(
         FamilyJoinFailureCode.signedOut,
@@ -346,7 +376,7 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
       return;
     }
     _accountId = accountId;
-    _subscribeToInvalidations(gateway);
+    _subscribeToInvalidations(gateway, accountId);
     if (_installedLocally) {
       await _completeInstalledJoin();
       return;
@@ -385,7 +415,12 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     final request = _request;
     final accountId = _accountId;
     if (request == null || accountId == null) return;
-    _cancelInitiated = true;
+    if (!_accountStillCurrent(
+      accountId,
+      retryPoint: FamilyJoinRetryPoint.cancel,
+    )) {
+      return;
+    }
     final retainedPhase = state.phase;
     state = _next(phase: retainedPhase, isRefreshing: true, clearFailure: true);
     try {
@@ -455,15 +490,21 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     final running = _inFlight;
     if (running != null) await running;
     if (!ref.mounted || _code == null) return;
+    final currentAccountId = ref
+        .read(familyCodeJoinGatewayProvider)
+        .authenticatedAccountId;
+    if (_accountId != null && currentAccountId != _accountId) {
+      _resetAccountBinding();
+    }
     final canResume =
+        currentAccountId != null &&
+            (_accountId == null || currentAccountId != _accountId) ||
         state.phase == FamilyJoinPhase.needsAuthentication ||
         state.phase == FamilyJoinPhase.awaitingOtp ||
         (state.failure != null &&
             (state.retryPoint == FamilyJoinRetryPoint.requestOtp ||
                 state.retryPoint == FamilyJoinRetryPoint.verifyOtp));
-    if (canResume &&
-        ref.read(familyCodeJoinGatewayProvider).authenticatedAccountId !=
-            null) {
+    if (canResume && currentAccountId != null) {
       await loadCode(_code!);
     }
   }
@@ -475,12 +516,17 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     await loadCode(code);
   }
 
-  void _subscribeToInvalidations(FamilyCodeJoinGateway gateway) {
+  void _subscribeToInvalidations(
+    FamilyCodeJoinGateway gateway,
+    String accountId,
+  ) {
     if (_ownRequestSubscription != null) return;
-    _ownRequestSubscription = gateway.watchOwnJoinRequest().listen(
-      (_) => unawaited(_refreshAfterCurrentOperation()),
-      onError: (Object _, StackTrace _) {},
-    );
+    final bindingGeneration = _bindingGeneration;
+    _ownRequestSubscription = gateway.watchOwnJoinRequest().listen((_) {
+      if (bindingGeneration == _bindingGeneration && accountId == _accountId) {
+        unawaited(_refreshAfterCurrentOperation());
+      }
+    }, onError: (Object _, StackTrace _) {});
   }
 
   Future<void> _refreshAfterCurrentOperation() async {
@@ -513,6 +559,39 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     _proposedJoiningPublicKey = joiningKey.publicKey;
   }
 
+  Future<void> _rotateProposalAfterResolvedRequest({
+    required String accountId,
+    required OwnFamilyJoinRequest request,
+  }) async {
+    final values = ref.read(secureValueStoreProvider);
+    final reference = _proposalReference(accountId);
+    final persistedMemberId = await values.read(reference);
+    if (persistedMemberId == null ||
+        persistedMemberId == request.memberId ||
+        !isCanonicalFamilyJoinUuid(persistedMemberId)) {
+      final replacement = ref.read(idFactoryProvider)();
+      if (!isCanonicalFamilyJoinUuid(replacement)) {
+        throw const FamilyJoinFailure(
+          FamilyJoinFailureCode.localPersistenceFailed,
+        );
+      }
+      // Commit the replacement reference first. A crash may leave an orphaned
+      // old key, but can never recreate the resolved request's identity.
+      await values.write(reference, replacement);
+    }
+    final oldKey = await ref
+        .read(joiningKeyStoreProvider)
+        .find(accountId: accountId, memberId: request.memberId);
+    if (oldKey != null && oldKey.publicKey == request.joiningPublicKey) {
+      await ref.read(joiningKeyStoreProvider).deleteExact(oldKey);
+    }
+    _request = null;
+    _proposedMemberId = null;
+    _proposedAvatar = null;
+    _proposedJoiningPublicKey = null;
+    _joiningKey = null;
+  }
+
   Future<void> _restoreProposalForRequest(OwnFamilyJoinRequest request) async {
     final accountId = ref
         .read(familyCodeJoinGatewayProvider)
@@ -521,15 +600,15 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
       throw const FamilyJoinFailure(FamilyJoinFailureCode.signedOut);
     }
     _validateRequestIdentity(request, accountId: accountId);
-    await ref
-        .read(secureValueStoreProvider)
-        .write(_proposalReference(accountId), request.memberId);
     final key = await ref
         .read(joiningKeyStoreProvider)
         .find(accountId: accountId, memberId: request.memberId);
     if (key == null || key.publicKey != request.joiningPublicKey) {
       throw const FamilyJoinFailure(FamilyJoinFailureCode.invalidJoinKey);
     }
+    await ref
+        .read(secureValueStoreProvider)
+        .write(_proposalReference(accountId), request.memberId);
     _accountId = accountId;
     _proposedMemberId = request.memberId;
     _proposedAvatar = request.avatar;
@@ -568,7 +647,7 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
         state = _next(phase: FamilyJoinPhase.declined, clearFailure: true);
       case FamilyJoinRequestState.cancelled:
         state = _next(
-          phase: _cancelInitiated
+          phase: request.cancelReason == FamilyJoinRequestCancelReason.requester
               ? FamilyJoinPhase.cancelled
               : FamilyJoinPhase.invitationChanged,
           clearFailure: true,
@@ -587,6 +666,12 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
         FamilyJoinFailureCode.envelopeRejected,
         FamilyJoinRetryPoint.install,
       );
+      return;
+    }
+    if (!_accountStillCurrent(
+      accountId,
+      retryPoint: FamilyJoinRetryPoint.install,
+    )) {
       return;
     }
     final context = envelope.context;
@@ -658,6 +743,14 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
   }
 
   Future<void> _completeInstalledJoin() async {
+    final accountId = _accountId;
+    if (accountId == null ||
+        !_accountStillCurrent(
+          accountId,
+          retryPoint: FamilyJoinRetryPoint.complete,
+        )) {
+      return;
+    }
     try {
       final result = await ref.read(familyJoinCompletionRecoveryProvider)();
       if (result.phase == PendingJoinCompletionPhase.complete) {
@@ -770,15 +863,68 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     return future;
   }
 
-  bool _accountStillCurrent(String accountId) {
+  bool _accountStillCurrent(
+    String accountId, {
+    FamilyJoinRetryPoint retryPoint = FamilyJoinRetryPoint.refreshStatus,
+  }) {
     if (!ref.mounted) return false;
     final current = ref
         .read(familyCodeJoinGatewayProvider)
         .authenticatedAccountId;
-    if (current == accountId) return true;
-    _fail(FamilyJoinFailureCode.signedOut, FamilyJoinRetryPoint.refreshStatus);
+    if (current == accountId &&
+        (_accountId == null || _accountId == accountId)) {
+      return true;
+    }
+    _accountChanged(retryPoint);
     return false;
   }
+
+  void _accountChanged(FamilyJoinRetryPoint retryPoint) {
+    _resetAccountBinding();
+    _fail(FamilyJoinFailureCode.signedOut, retryPoint);
+    _scheduleCodeReload();
+  }
+
+  void _resetAccountBinding() {
+    _bindingGeneration += 1;
+    final subscription = _ownRequestSubscription;
+    _ownRequestSubscription = null;
+    if (subscription != null) unawaited(subscription.cancel());
+    _preview = null;
+    _request = null;
+    _lastProfile = null;
+    _joiningKey = null;
+    _accountId = null;
+    _authenticationEmailNormalized = null;
+    _proposedMemberId = null;
+    _proposedAvatar = null;
+    _proposedJoiningPublicKey = null;
+    _installedLocally = false;
+  }
+
+  void _scheduleCodeReload() {
+    final code = _code;
+    if (code == null || _reloadScheduled) return;
+    _reloadScheduled = true;
+    unawaited(
+      Future<void>(() async {
+        final running = _inFlight;
+        if (running != null) await running;
+        _reloadScheduled = false;
+        if (ref.mounted) await loadCode(code);
+      }),
+    );
+  }
+
+  static bool _isResolvedRequest(FamilyJoinRequestState state) =>
+      switch (state) {
+        FamilyJoinRequestState.declined ||
+        FamilyJoinRequestState.cancelled ||
+        FamilyJoinRequestState.expired => true,
+        FamilyJoinRequestState.pending ||
+        FamilyJoinRequestState.approved ||
+        FamilyJoinRequestState.installed => false,
+      };
 
   static String _proposalReference(String accountId) =>
       'keepers.join.$accountId.proposed-member-id.v1';

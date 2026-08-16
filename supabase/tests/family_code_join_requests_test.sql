@@ -4,7 +4,7 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to anon, authenticated;
 grant execute on all functions in schema extensions to anon, authenticated;
 
-select plan(102);
+select plan(104);
 
 -- Schema, constraints, RLS, grants, and compatibility.
 select has_table('public', 'family_join_codes');
@@ -847,13 +847,14 @@ select is(
 );
 select ok(
   (
-    select (select count(*) from jsonb_object_keys(result)) = 16
+    select (select count(*) from jsonb_object_keys(result)) = 17
       and result ?& array[
         'approvalEnvelope', 'avatarJson', 'codeVersion', 'colorToken',
-        'createdAt', 'demographicRole', 'displayName', 'expiresAt',
+        'createdAt', 'demographicRole', 'displayName', 'expiresAt', 'cancelReason',
         'familyId', 'familyName', 'joiningPublicKey', 'memberId',
         'requestId', 'requesterAccountId', 'roster', 'state'
       ]::text[]
+      and result -> 'cancelReason' = 'null'::jsonb
     from approved_own_result
   ),
   'approved own request has the exact top-level projection'
@@ -947,6 +948,13 @@ select is(
   ),
   (select result from cancel_result),
   'requester cancellation replay returns the authoritative decision'
+);
+create temporary table cancelled_own_result as
+select public.get_own_family_join_request() result;
+select is(
+  (select result ->> 'cancelReason' from cancelled_own_result),
+  'requester',
+  'own request identifies an authoritative requester cancellation'
 );
 reset role;
 
@@ -1258,6 +1266,11 @@ reset role;
 
 select pg_temp.authenticate_as('10000000-0000-4000-8000-000000000009', 'superseded@example.com');
 set local role authenticated;
+select is(
+  public.get_own_family_join_request() ->> 'cancelReason',
+  'code_regenerated',
+  'own request identifies authoritative code regeneration after restart'
+);
 select is(
   public.preview_family_by_code('ABCD2345'),
   '{"errorCode":"FAMILY_NOT_FOUND"}'::jsonb,

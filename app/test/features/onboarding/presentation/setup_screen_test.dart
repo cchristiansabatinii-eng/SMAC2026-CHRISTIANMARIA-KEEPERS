@@ -203,6 +203,87 @@ void main() {
 
     expect(find.byType(FamilyJoinScreen), findsOneWidget);
     expect(find.byType(SetupScreen), findsNothing);
+    expect(
+      tester
+          .widget<FamilyJoinScreen>(find.byType(FamilyJoinScreen))
+          .onAbandoned,
+      isNotNull,
+    );
+    expect(
+      tester.widget<PopScope<void>>(find.byType(PopScope<void>)).canPop,
+      isFalse,
+    );
+    expect(find.byKey(const Key('leave-family-join')), findsNothing);
+  });
+
+  for (final failure in <String, FamilyJoinFailureCode>{
+    'wrong account': FamilyJoinFailureCode.forbidden,
+    'network': FamilyJoinFailureCode.networkUnavailable,
+    'local persistence': FamilyJoinFailureCode.localPersistenceFailed,
+  }.entries) {
+    testWidgets(
+      'startup blocks normal routing for ${failure.key} recovery failure',
+      (tester) async {
+        var identityReads = 0;
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              familyJoinCompletionRecoveryProvider.overrideWithValue(
+                () async => PendingJoinCompletionState(
+                  phase: PendingJoinCompletionPhase.failed,
+                  failure: FamilyJoinFailure(failure.value),
+                ),
+              ),
+              localIdentityProvider.overrideWith((ref) async {
+                identityReads += 1;
+                return _startupIdentity;
+              }),
+            ],
+            child: const MaterialApp(home: StartupGate()),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(StartupError), findsOneWidget);
+        expect(find.text('THIS WEEK'), findsNothing);
+        expect(find.byType(SetupScreen), findsNothing);
+        expect(identityReads, 0);
+      },
+    );
+  }
+
+  testWidgets('startup recovery failure remains retryable until resolved', (
+    tester,
+  ) async {
+    var recoveryAttempts = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          familyJoinCompletionRecoveryProvider.overrideWithValue(() async {
+            recoveryAttempts += 1;
+            if (recoveryAttempts == 1) {
+              return const PendingJoinCompletionState(
+                phase: PendingJoinCompletionPhase.failed,
+                failure: FamilyJoinFailure(
+                  FamilyJoinFailureCode.networkUnavailable,
+                ),
+              );
+            }
+            return const PendingJoinCompletionState();
+          }),
+          localIdentityProvider.overrideWith((ref) async => null),
+        ],
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StartupError), findsOneWidget);
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+
+    expect(recoveryAttempts, 2);
+    expect(find.byType(SetupScreen), findsOneWidget);
   });
 
   testWidgets(
@@ -240,6 +321,39 @@ void main() {
       semantics.dispose();
     },
   );
+
+  for (final outcome in <FamilyJoinRequestCancelReason, String>{
+    FamilyJoinRequestCancelReason.requester: 'Your request was cancelled',
+    FamilyJoinRequestCancelReason.codeRegenerated:
+        'This family invitation has changed. Ask for the new code.',
+  }.entries) {
+    testWidgets('startup maps authoritative ${outcome.key.name} cancellation', (
+      tester,
+    ) async {
+      final gateway = _StartupGateway(
+        events: <String>[],
+        ownRequest: _startupRequest(
+          FamilyJoinRequestState.cancelled,
+          cancelReason: outcome.key,
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            familyJoinCompletionRecoveryProvider.overrideWithValue(
+              () async => const PendingJoinCompletionState(),
+            ),
+            localIdentityProvider.overrideWith((ref) async => null),
+            familyCodeJoinGatewayProvider.overrideWithValue(gateway),
+          ],
+          child: const MaterialApp(home: StartupGate()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(outcome.value), findsOneWidget);
+    });
+  }
 
   testWidgets('setup failure is inline and retryable without raw errors', (
     tester,
@@ -585,25 +699,39 @@ final class _StartupGateway implements FamilyCodeJoinGateway {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-OwnFamilyJoinRequest _startupRequest(FamilyJoinRequestState state) =>
-    OwnFamilyJoinRequest(
-      requestId: _startupRequestId,
-      familyId: _startupFamilyId,
-      familyName: 'Rahman family',
-      requesterAccountId: _startupAccountId,
-      memberId: _startupMemberId,
-      displayName: 'Mariam',
-      demographicRole: FamilyDemographicRole.adult,
-      colorToken: 'ochre',
-      avatar: const AvatarConfig.defaults(seed: _startupMemberId),
-      joiningPublicKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      codeVersion: 1,
-      state: state,
-      createdAt: DateTime.utc(2026, 9, 7),
-      expiresAt: DateTime.utc(2026, 9, 14),
-    );
+OwnFamilyJoinRequest _startupRequest(
+  FamilyJoinRequestState state, {
+  FamilyJoinRequestCancelReason? cancelReason,
+}) => OwnFamilyJoinRequest(
+  requestId: _startupRequestId,
+  familyId: _startupFamilyId,
+  familyName: 'Rahman family',
+  requesterAccountId: _startupAccountId,
+  memberId: _startupMemberId,
+  displayName: 'Mariam',
+  demographicRole: FamilyDemographicRole.adult,
+  colorToken: 'ochre',
+  avatar: const AvatarConfig.defaults(seed: _startupMemberId),
+  joiningPublicKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  codeVersion: 1,
+  state: state,
+  cancelReason: cancelReason,
+  createdAt: DateTime.utc(2026, 9, 7),
+  expiresAt: DateTime.utc(2026, 9, 14),
+);
 
 const _startupRequestId = '11111111-1111-4111-8111-111111111111';
 const _startupFamilyId = '22222222-2222-4222-8222-222222222222';
 const _startupAccountId = '33333333-3333-4333-8333-333333333333';
 const _startupMemberId = '44444444-4444-4444-8444-444444444444';
+const _startupIdentity = LocalIdentity(
+  familyId: _startupFamilyId,
+  familyName: 'Rahman family',
+  familyKeyRef: 'family-key',
+  memberId: _startupMemberId,
+  memberName: 'Mariam',
+  memberKeyRef: 'member-key',
+  colorToken: 'ochre',
+  avatar: AvatarConfig.defaults(seed: _startupMemberId),
+  accountId: _startupAccountId,
+);

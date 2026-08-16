@@ -805,6 +805,7 @@ OwnFamilyJoinRequest _decodeOwnFamilyJoinRequest(Object? response) {
     'createdAt',
     'expiresAt',
     'familyName',
+    'cancelReason',
     'approvalEnvelope',
     'roster',
   });
@@ -814,6 +815,7 @@ OwnFamilyJoinRequest _decodeOwnFamilyJoinRequest(Object? response) {
   final memberId = _uuidField(object, 'memberId');
   final codeVersion = _positiveIntField(object, 'codeVersion');
   final state = _familyJoinRequestState(object['state']);
+  final cancelReason = _familyJoinRequestCancelReason(object['cancelReason']);
   final envelope = object['approvalEnvelope'] == null
       ? null
       : _decodeFamilyApprovalEnvelope(object['approvalEnvelope']);
@@ -853,6 +855,7 @@ OwnFamilyJoinRequest _decodeOwnFamilyJoinRequest(Object? response) {
     state: state,
     createdAt: _timestampField(object, 'createdAt'),
     expiresAt: _timestampField(object, 'expiresAt'),
+    cancelReason: cancelReason,
     approvalEnvelope: envelope,
     roster: roster,
   );
@@ -920,6 +923,14 @@ FamilyJoinRequestState _familyJoinRequestState(Object? value) =>
       'cancelled' => FamilyJoinRequestState.cancelled,
       'expired' => FamilyJoinRequestState.expired,
       _ => throw const FormatException('Invalid family join request state'),
+    };
+
+FamilyJoinRequestCancelReason? _familyJoinRequestCancelReason(Object? value) =>
+    switch (value) {
+      null => null,
+      'requester' => FamilyJoinRequestCancelReason.requester,
+      'code_regenerated' => FamilyJoinRequestCancelReason.codeRegenerated,
+      _ => throw const FormatException('Invalid family join cancel reason'),
     };
 
 int _positiveIntField(Map<String, Object?> object, String field) {

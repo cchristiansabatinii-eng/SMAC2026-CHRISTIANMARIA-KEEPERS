@@ -120,6 +120,128 @@ void main() {
     },
   );
 
+  test('signed-in account change resets and rebinds the active code', () async {
+    final generatedIds = <String>[_memberId, _otherMemberId].iterator;
+    final fixture = _Fixture(
+      idFactory: () {
+        if (!generatedIds.moveNext()) throw StateError('No generated ID');
+        return generatedIds.current;
+      },
+    );
+    addTearDown(fixture.dispose);
+    await fixture.controller.loadCode(_code);
+    final accountAKey = fixture.state.proposedJoiningPublicKey;
+
+    fixture.gateway
+      ..accountId = _otherAccountId
+      ..emitSignedIn();
+    await fixture.waitFor(
+      (state) =>
+          state.phase == FamilyJoinPhase.preview &&
+          state.proposedMemberId == _otherMemberId,
+    );
+
+    expect(fixture.gateway.previewedCodes, [_code, _code]);
+    expect(fixture.gateway.watchOwnCalls, 2);
+    expect(fixture.state.proposedJoiningPublicKey, isNot(accountAKey));
+  });
+
+  test(
+    'account change refuses request and cancel mutations for prior state',
+    () async {
+      final fixture = _Fixture();
+      addTearDown(fixture.dispose);
+      await fixture.controller.loadCode(_code);
+      final accountAProfile = fixture.profile();
+
+      fixture.gateway.accountId = _otherAccountId;
+      await fixture.controller.requestJoin(accountAProfile);
+
+      expect(fixture.gateway.createdDrafts, isEmpty);
+
+      fixture.gateway.accountId = _accountId;
+      await fixture.controller.loadCode(_code);
+      await fixture.controller.requestJoin(fixture.profile());
+      fixture.gateway.accountId = _otherAccountId;
+      await fixture.controller.cancel();
+
+      expect(fixture.gateway.cancelledIds, isEmpty);
+    },
+  );
+
+  test('account change after install refuses Task 3 completion', () async {
+    final fixture = _Fixture();
+    addTearDown(fixture.dispose);
+    await fixture.controller.loadCode(_code);
+    await fixture.controller.requestJoin(fixture.profile());
+    fixture.gateway.ownRequest = fixture.approvedRequest;
+    fixture.installer.onInstall = () {
+      fixture.gateway.accountId = _otherAccountId;
+    };
+
+    await fixture.controller.refreshStatus();
+
+    expect(fixture.installer.installCalls, 1);
+    expect(fixture.recoveryCalls, 0);
+  });
+
+  test(
+    'resolved request for another code does not supersede a fresh attempt',
+    () async {
+      final generatedIds = <String>[_memberId, _otherMemberId].iterator;
+      final fixture = _Fixture(
+        idFactory: () {
+          if (!generatedIds.moveNext()) throw StateError('No generated ID');
+          return generatedIds.current;
+        },
+      );
+      addTearDown(fixture.dispose);
+      await fixture.controller.loadCode(_code);
+      await fixture.controller.requestJoin(fixture.profile());
+      fixture.gateway
+        ..ownRequest = fixture.declinedRequest
+        ..previews[_otherCode] = _otherPreview
+        ..createResultBuilder = (draft) => _request(
+          state: FamilyJoinRequestState.pending,
+          memberId: draft.profile.memberId,
+          publicKey: draft.profile.joiningPublicKey,
+          requestId: _otherRequestId,
+          familyId: _otherFamilyId,
+          familyName: 'Sabati family',
+          codeVersion: 2,
+        );
+
+      await fixture.controller.loadCode(_otherCode);
+
+      expect(fixture.state.phase, FamilyJoinPhase.preview);
+      expect(fixture.state.preview?.familyId, _otherFamilyId);
+      expect(fixture.state.proposedMemberId, _otherMemberId);
+
+      await fixture.controller.requestJoin(fixture.profile());
+      expect(fixture.gateway.createdDrafts.last.code, _otherCode);
+      expect(fixture.state.phase, FamilyJoinPhase.pending);
+      expect(fixture.state.request?.familyId, _otherFamilyId);
+    },
+  );
+
+  test('authoritative requester cancel survives controller restart', () async {
+    final values = _MemorySecureValueStore();
+    final first = _Fixture(values: values);
+    await first.controller.loadCode(_code);
+    final cancelled = first.cancelledRequestWith(
+      FamilyJoinRequestCancelReason.requester,
+    );
+    first.dispose();
+
+    final second = _Fixture(values: values);
+    addTearDown(second.dispose);
+    second.gateway.ownRequest = cancelled;
+
+    await second.controller.loadCode(_code);
+
+    expect(second.state.phase, FamilyJoinPhase.cancelled);
+  });
+
   test('proposed UUID and joining key survive controller restart', () async {
     final values = _MemorySecureValueStore();
     final first = _Fixture(values: values, generatedId: _memberId);
@@ -203,6 +325,7 @@ final class _Fixture {
     bool authenticated = true,
     _MemorySecureValueStore? values,
     String generatedId = _memberId,
+    String Function()? idFactory,
   }) : values = values ?? _MemorySecureValueStore(),
        gateway = _Gateway(accountId: authenticated ? _accountId : null),
        events = <String>[],
@@ -214,22 +337,18 @@ final class _Fixture {
         cloudFamilyGatewayProvider.overrideWithValue(gateway),
         familyCodeJoinGatewayProvider.overrideWithValue(gateway),
         secureValueStoreProvider.overrideWithValue(this.values),
-        joiningKeyStoreProvider.overrideWithValue(
-          SecureJoiningKeyStore(
-            this.values,
-            seedFactory: (length) => List<int>.generate(length, (i) => i + 1),
-          ),
-        ),
+        joiningKeyStoreProvider.overrideWithValue(_joiningKeys(this.values)),
         approvedFamilyJoinInstallerProvider.overrideWithValue(installer),
         familyJoinEnvelopeCodecProvider.overrideWithValue(codec),
         familyJoinCompletionRecoveryProvider.overrideWithValue(() async {
+          recoveryCalls += 1;
           events.add('complete');
           events.add('deleteJoiningKey');
           return const PendingJoinCompletionState(
             phase: PendingJoinCompletionPhase.complete,
           );
         }),
-        idFactoryProvider.overrideWithValue(() => generatedId),
+        idFactoryProvider.overrideWithValue(idFactory ?? () => generatedId),
         localIdentityProvider.overrideWith((ref) async => null),
       ],
     );
@@ -245,6 +364,7 @@ final class _Fixture {
   final List<String> events;
   final _Installer installer;
   final _Codec codec;
+  var recoveryCalls = 0;
   late final ProviderContainer container;
   late final ProviderSubscription<FamilyJoinState> subscription;
 
@@ -283,6 +403,16 @@ final class _Fixture {
     state: FamilyJoinRequestState.cancelled,
     memberId: state.proposedMemberId!,
     publicKey: state.proposedJoiningPublicKey!,
+    cancelReason: FamilyJoinRequestCancelReason.requester,
+  );
+
+  OwnFamilyJoinRequest cancelledRequestWith(
+    FamilyJoinRequestCancelReason reason,
+  ) => _request(
+    state: FamilyJoinRequestState.cancelled,
+    memberId: state.proposedMemberId!,
+    publicKey: state.proposedJoiningPublicKey!,
+    cancelReason: reason,
   );
 
   Future<void> waitFor(bool Function(FamilyJoinState state) predicate) async {
@@ -315,9 +445,13 @@ final class _Gateway
   final List<FamilyCode> previewedCodes = [];
   final List<FamilyJoinRequestDraft> createdDrafts = [];
   final List<String> cancelledIds = [];
+  final Map<FamilyCode, FamilyJoinPreview> previews = {};
+  OwnFamilyJoinRequest Function(FamilyJoinRequestDraft draft)?
+  createResultBuilder;
   final _auth = StreamController<void>.broadcast(sync: true);
   final _ownInvalidations = StreamController<void>.broadcast(sync: true);
   var ownRequestReads = 0;
+  var watchOwnCalls = 0;
 
   @override
   bool get isConfigured => true;
@@ -338,7 +472,7 @@ final class _Gateway
   @override
   Future<FamilyJoinPreview> previewFamilyByCode(FamilyCode code) async {
     previewedCodes.add(code);
-    return _preview;
+    return previews[code] ?? _preview;
   }
 
   @override
@@ -347,11 +481,13 @@ final class _Gateway
   ) async {
     createdDrafts.add(draft);
     if (createFailures.isNotEmpty) throw createFailures.removeAt(0);
-    return ownRequest = _request(
-      state: FamilyJoinRequestState.pending,
-      memberId: draft.profile.memberId,
-      publicKey: draft.profile.joiningPublicKey,
-    );
+    return ownRequest =
+        createResultBuilder?.call(draft) ??
+        _request(
+          state: FamilyJoinRequestState.pending,
+          memberId: draft.profile.memberId,
+          publicKey: draft.profile.joiningPublicKey,
+        );
   }
 
   @override
@@ -374,7 +510,11 @@ final class _Gateway
   }
 
   @override
-  Stream<void> watchOwnJoinRequest() => _ownInvalidations.stream;
+  Stream<void> watchOwnJoinRequest() {
+    watchOwnCalls += 1;
+    return _ownInvalidations.stream;
+  }
+
   @override
   Future<void> requestEmailOtp(String email) async {}
   @override
@@ -444,6 +584,7 @@ final class _Installer implements ApprovedFamilyJoinInstaller {
   List<String> events;
   var installCalls = 0;
   List<int> familyKey = const [];
+  void Function()? onInstall;
 
   @override
   Future<PendingJoinCompletion> install({
@@ -454,6 +595,7 @@ final class _Installer implements ApprovedFamilyJoinInstaller {
     installCalls += 1;
     events.add('install');
     this.familyKey = familyKey;
+    onInstall?.call();
     return PendingJoinCompletion(
       requestId: approval.requestId,
       familyId: approval.familyId,
@@ -498,25 +640,32 @@ OwnFamilyJoinRequest _request({
   required FamilyJoinRequestState state,
   required String memberId,
   required String publicKey,
+  String requestId = _requestId,
+  String familyId = _familyId,
+  String familyName = 'Rahman family',
+  String requesterAccountId = _accountId,
+  int codeVersion = 1,
+  FamilyJoinRequestCancelReason? cancelReason,
   FamilyJoinApprovalEnvelope? envelope,
 }) => OwnFamilyJoinRequest(
-  requestId: _requestId,
-  familyId: _familyId,
-  familyName: 'Rahman family',
-  requesterAccountId: _accountId,
+  requestId: requestId,
+  familyId: familyId,
+  familyName: familyName,
+  requesterAccountId: requesterAccountId,
   memberId: memberId,
   displayName: 'Mariam',
   demographicRole: FamilyDemographicRole.adult,
   colorToken: 'ochre',
   avatar: AvatarConfig.defaults(seed: memberId),
   joiningPublicKey: publicKey,
-  codeVersion: 1,
+  codeVersion: codeVersion,
   state: state,
+  cancelReason: cancelReason,
   createdAt: DateTime.utc(2026, 9, 7),
   expiresAt: DateTime.utc(2026, 9, 14),
   approvalEnvelope: envelope,
   roster: state == FamilyJoinRequestState.approved
-      ? [_member(memberId)]
+      ? [_member(memberId, familyId: familyId)]
       : const [],
 );
 
@@ -535,29 +684,51 @@ FamilyJoinApprovalEnvelope _envelope({String requestId = _requestId}) =>
       mac: 'AAAAAAAAAAAAAAAAAAAAAA',
     );
 
-FamilyMember _member(String memberId) => FamilyMember(
-  id: memberId,
-  familyId: _familyId,
-  name: 'Mariam',
-  role: 'adult',
-  colorToken: 'ochre',
-  avatar: AvatarConfig.defaults(seed: memberId),
-  joinedAt: DateTime.utc(2026, 9, 7),
-);
+FamilyMember _member(String memberId, {String familyId = _familyId}) =>
+    FamilyMember(
+      id: memberId,
+      familyId: _familyId,
+      name: 'Mariam',
+      role: 'adult',
+      colorToken: 'ochre',
+      avatar: AvatarConfig.defaults(seed: memberId),
+      joinedAt: DateTime.utc(2026, 9, 7),
+    );
 
 final _code = FamilyCode.parse('K7M4-P2Q8');
+final _otherCode = FamilyCode.parse('ABCD-EFGH');
 final _preview = FamilyJoinPreview(
   familyId: _familyId,
   familyName: 'Rahman family',
   codeVersion: 1,
   members: [_member(_existingMemberId)],
 );
+final _otherPreview = FamilyJoinPreview(
+  familyId: _otherFamilyId,
+  familyName: 'Sabati family',
+  codeVersion: 2,
+  members: [_member(_otherExistingMemberId, familyId: _otherFamilyId)],
+);
 
 const _requestId = '11111111-1111-4111-8111-111111111111';
 const _otherRequestId = '11111111-1111-4111-8111-111111111112';
 const _familyId = '22222222-2222-4222-8222-222222222222';
+const _otherFamilyId = '22222222-2222-4222-8222-222222222223';
 const _accountId = '33333333-3333-4333-8333-333333333333';
+const _otherAccountId = '33333333-3333-4333-8333-333333333334';
 const _memberId = '44444444-4444-4444-8444-444444444444';
 const _otherMemberId = '55555555-5555-4555-8555-555555555555';
 const _existingMemberId = '66666666-6666-4666-8666-666666666666';
+const _otherExistingMemberId = '66666666-6666-4666-8666-666666666667';
 const _publicKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+JoiningKeyStore _joiningKeys(SecureValueStore values) {
+  var call = 0;
+  return SecureJoiningKeyStore(
+    values,
+    seedFactory: (length) {
+      call += 1;
+      return List<int>.generate(length, (index) => (index + call) % 256);
+    },
+  );
+}

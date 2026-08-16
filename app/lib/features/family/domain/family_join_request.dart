@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:keepers/features/family/domain/cloud_family_models.dart';
 import 'package:keepers/features/family/domain/family_code.dart';
-import 'package:keepers/features/family/domain/family_join_failure.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 
@@ -16,6 +15,8 @@ enum FamilyJoinRequestState {
   cancelled,
   expired,
 }
+
+enum FamilyJoinRequestCancelReason { requester, codeRegenerated }
 
 final class FamilyJoinPreview {
   FamilyJoinPreview({
@@ -382,6 +383,7 @@ final class OwnFamilyJoinRequest {
     required this.state,
     required DateTime createdAt,
     required DateTime expiresAt,
+    this.cancelReason,
     this.approvalEnvelope,
     List<FamilyMember> roster = const [],
   }) : createdAt = createdAt.toUtc(),
@@ -402,6 +404,7 @@ final class OwnFamilyJoinRequest {
   final FamilyJoinRequestState state;
   final DateTime createdAt;
   final DateTime expiresAt;
+  final FamilyJoinRequestCancelReason? cancelReason;
   final FamilyJoinApprovalEnvelope? approvalEnvelope;
   final List<FamilyMember> roster;
 
@@ -420,6 +423,7 @@ final class OwnFamilyJoinRequest {
     required FamilyJoinRequestState state,
     required DateTime createdAt,
     required DateTime expiresAt,
+    FamilyJoinRequestCancelReason? cancelReason,
     FamilyJoinApprovalEnvelope? approvalEnvelope,
     List<FamilyMember> roster = const [],
   }) {
@@ -443,6 +447,13 @@ final class OwnFamilyJoinRequest {
         approvalEnvelope,
         'approvalEnvelope',
         'Required when approved',
+      );
+    }
+    if ((state == FamilyJoinRequestState.cancelled) != (cancelReason != null)) {
+      throw ArgumentError.value(
+        cancelReason,
+        'cancelReason',
+        'Required only when cancelled',
       );
     }
     if (approvalEnvelope != null) {
@@ -469,6 +480,7 @@ final class OwnFamilyJoinRequest {
       state: state,
       createdAt: createdAt,
       expiresAt: expiresAt,
+      cancelReason: cancelReason,
       approvalEnvelope: approvalEnvelope,
       roster: roster,
     );

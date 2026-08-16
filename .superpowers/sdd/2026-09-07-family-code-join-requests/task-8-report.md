@@ -30,3 +30,12 @@
 
 - The repository-wide analyzer still reports failures in concurrently owned Task 7/9/12 integration files; none are in Task 8's scoped files.
 - Three ordinary-startup fixtures in Task 11-owned `app_test.dart` still need to override `familyJoinCompletionRecoveryProvider` with an idle recovery, because StartupGate now correctly runs Task 3 recovery before identity lookup. Task 11's family-link routing slice is green.
+
+## Review fix round 1
+
+- Account changes now clear all bound request/key state, rebind Realtime, and reload the active code; request, cancel, install, and completion boundaries refuse stale-account work before mutation.
+- StartupGate inspects Task 3 recovery results and blocks identity/setup routing on wrong-account, network, or local recovery failures until Retry succeeds.
+- A resolved request only supersedes an entered code when family ID and code version match; a different valid code rotates to a fresh persisted proposal and can create a new request.
+- Startup-restored pending/approved flows suppress route abandonment. Pending work exits only through authoritative Cancel, while resolved terminal actions rerun StartupGate.
+- Own-request projections now carry a strict nullable `cancelReason`, allowing requester cancellation and code regeneration to remain distinct after restart.
+- Review verification: 76 focused and recovery-regression tests passed; scoped analysis across the 10 touched Dart files reported no issues.

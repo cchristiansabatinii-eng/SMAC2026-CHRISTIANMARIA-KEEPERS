@@ -170,6 +170,46 @@ void main() {
       envelope,
     );
     expect(
+      OwnFamilyJoinRequest.validated(
+        requestId: requestId,
+        familyId: familyId,
+        familyName: 'The Keepers',
+        requesterAccountId: accountId,
+        memberId: memberId,
+        displayName: 'Noura',
+        demographicRole: FamilyDemographicRole.adult,
+        colorToken: 'coral',
+        avatar: avatar,
+        joiningPublicKey: publicKey,
+        codeVersion: 1,
+        state: FamilyJoinRequestState.cancelled,
+        cancelReason: FamilyJoinRequestCancelReason.codeRegenerated,
+        createdAt: now,
+        expiresAt: now.add(const Duration(days: 7)),
+      ).cancelReason,
+      FamilyJoinRequestCancelReason.codeRegenerated,
+    );
+    expect(
+      () => OwnFamilyJoinRequest.validated(
+        requestId: requestId,
+        familyId: familyId,
+        familyName: 'The Keepers',
+        requesterAccountId: accountId,
+        memberId: memberId,
+        displayName: 'Noura',
+        demographicRole: FamilyDemographicRole.adult,
+        colorToken: 'coral',
+        avatar: avatar,
+        joiningPublicKey: publicKey,
+        codeVersion: 1,
+        state: FamilyJoinRequestState.pending,
+        cancelReason: FamilyJoinRequestCancelReason.requester,
+        createdAt: now,
+        expiresAt: now.add(const Duration(days: 7)),
+      ),
+      throwsArgumentError,
+    );
+    expect(
       FamilyJoinDecision.validated(
         requestId: requestId,
         familyId: familyId,

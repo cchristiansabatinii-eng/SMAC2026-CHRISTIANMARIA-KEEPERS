@@ -659,6 +659,7 @@ begin
   return private.pending_family_join_request_json(p_request)
     || pg_catalog.jsonb_build_object(
       'familyName', v_family_name,
+      'cancelReason', p_request.cancel_reason::pg_catalog.text,
       'approvalEnvelope', v_envelope,
       'roster', v_roster
     );

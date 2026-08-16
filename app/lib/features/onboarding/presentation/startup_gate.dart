@@ -87,14 +87,14 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
 
   @override
   Widget build(BuildContext context) {
-    final established = _establishedIdentity;
-    if (established != null) return ObservatoryScreen(identity: established);
-    if (_startupError != null) {
+    if (_startupError case final error?) {
       return StartupError(
-        message: 'Keepers could not open local storage.',
+        message: _startupErrorMessage(error),
         onRetry: _retry,
       );
     }
+    final established = _establishedIdentity;
+    if (established != null) return ObservatoryScreen(identity: established);
     final resolution = _resolution;
     if (resolution == null) {
       return const Scaffold(
@@ -107,6 +107,7 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       StartupDestination.resumeJoin => FamilyJoinScreen.manual(
         resumePendingRequest: true,
         onCompleted: _refreshAfterJoin,
+        onAbandoned: _refreshAfterJoin,
       ),
       StartupDestination.setup => SetupScreen(
         statusMessage: resolution.statusMessage,
@@ -123,8 +124,15 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       });
     }
     try {
-      await _joinRecoveryListener!.read()();
+      final recovery = await _joinRecoveryListener!.read()();
       if (!mounted || generation != _bootGeneration) return;
+      if (recovery.phase != PendingJoinCompletionPhase.idle &&
+          recovery.phase != PendingJoinCompletionPhase.complete) {
+        throw recovery.failure ??
+            const FamilyJoinFailure(
+              FamilyJoinFailureCode.localPersistenceFailed,
+            );
+      }
 
       _identityListener ??= ref.listenManual(localIdentityProvider, (_, next) {
         if (!mounted) return;
@@ -185,8 +193,11 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       FamilyJoinRequestState.declined => const StartupResolution.setup(
         statusMessage: "Your request wasn't accepted",
       ),
-      FamilyJoinRequestState.cancelled => const StartupResolution.setup(
-        statusMessage: 'Your request was cancelled',
+      FamilyJoinRequestState.cancelled => StartupResolution.setup(
+        statusMessage:
+            own.cancelReason == FamilyJoinRequestCancelReason.requester
+            ? 'Your request was cancelled'
+            : 'This family invitation has changed. Ask for the new code.',
       ),
       FamilyJoinRequestState.expired => const StartupResolution.setup(
         statusMessage: 'Your request has expired',
@@ -223,6 +234,20 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
         ref.read(pendingInviteCompletionControllerProvider.notifier).recover();
       }
     });
+  }
+
+  static String _startupErrorMessage(Object error) {
+    if (error case FamilyJoinFailure(:final code)) {
+      return switch (code) {
+        FamilyJoinFailureCode.networkUnavailable => 'Keepers could not finish joining your family. Check your connection and try again.',
+        FamilyJoinFailureCode.forbidden || FamilyJoinFailureCode.signedOut =>
+          'Sign in with the account that requested to join this family.',
+        FamilyJoinFailureCode.localPersistenceFailed =>
+          'Keepers could not open local storage.',
+        _ => 'Keepers could not finish joining your family.',
+      };
+    }
+    return 'Keepers could not open local storage.';
   }
 }
 
