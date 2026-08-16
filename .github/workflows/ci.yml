@@ -1,0 +1,281 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  supabase-database:
+    name: Supabase authorization and concurrency
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
+        with:
+          version: 2.99.0
+
+      - name: Ensure PostgreSQL client is available
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends postgresql-client
+          fi
+
+      - name: Start and reset local Supabase
+        shell: bash
+        run: |
+          supabase start
+          supabase db reset --local
+
+      - name: Run pgTAP database contracts
+        run: supabase test db --local
+
+      - name: Run deterministic two-session race contracts
+        shell: bash
+        run: bash supabase/tests/run_family_code_join_request_races.sh
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup
+
+  posix-storage-security:
+    name: POSIX encrypted-storage security boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Assert Linux x64 native gate
+        shell: bash
+        run: test "$(uname -m)" = "x86_64"
+
+      - name: Run mandatory POSIX storage boundary tests
+        working-directory: app
+        run: >-
+          flutter test --no-pub
+          test/features/capture/data/posix_secure_blob_file_system_test.dart
+          test/features/capture/data/entry_persistence_service_test.dart
+
+  darwin-storage-security-intel:
+    name: macOS Intel encrypted-storage ABI and security boundaries
+    runs-on: macos-26-intel
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Assert macOS Intel native gate
+        shell: bash
+        run: test "$(uname -m)" = "x86_64"
+
+      - name: Run Intel ABI fixtures and production native smoke
+        working-directory: app
+        run: >-
+          flutter test --no-pub
+          test/features/capture/data/secure_file_protocol_test.dart
+          test/features/capture/data/posix_secure_blob_file_system_test.dart
+          test/features/capture/data/entry_persistence_service_test.dart
+
+  darwin-storage-security-arm64:
+    name: macOS arm64 encrypted-storage ABI and security boundaries
+    runs-on: macos-26
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Assert macOS arm64 native gate
+        shell: bash
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Run arm64 ABI fixtures and production native smoke
+        working-directory: app
+        run: >-
+          flutter test --no-pub
+          test/features/capture/data/secure_file_protocol_test.dart
+          test/features/capture/data/posix_secure_blob_file_system_test.dart
+          test/features/capture/data/entry_persistence_service_test.dart
+
+  mobile-storage-android-x64:
+    name: Android x64 storage and family invitation integrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Enable KVM for the Android emulator
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run Android storage and family invitation integrations
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          disable-animations: true
+          script: |
+            test "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" = "x86_64"
+            cd app
+            flutter test --no-pub integration_test/mobile_storage_persistence_test.dart \
+              -d emulator-5554 \
+              --dart-define=EXPECTED_POSIX_ABI=androidX64
+            flutter test --no-pub integration_test/family_invitation_flow_test.dart \
+              -d emulator-5554
+
+  mobile-storage-ios-arm64:
+    name: iOS arm64 simulator build and encrypted-storage persistence
+    runs-on: macos-26
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Validate iOS invitation declarations and simulator build
+        working-directory: app
+        run: |
+          plutil -lint ios/Runner/Info.plist
+          flutter build ios --simulator --debug --no-pub
+
+      - name: Boot a maintained arm64 iPhone simulator
+        shell: bash
+        run: |
+          test "$(uname -m)" = "arm64"
+          device_id="$({ xcrun simctl list devices available; } \
+            | awk -F '[()]' '/iPhone 17/ {print $2; exit}')"
+          test -n "$device_id"
+          xcrun simctl boot "$device_id" || true
+          xcrun simctl bootstatus "$device_id" -b
+          echo "IOS_SIMULATOR_UDID=$device_id" >> "$GITHUB_ENV"
+
+      - name: Run the real iOS storage and persistence smoke
+        working-directory: app
+        run: >-
+          flutter test --no-pub
+          integration_test/mobile_storage_persistence_test.dart
+          -d "$IOS_SIMULATOR_UDID"
+          --dart-define=EXPECTED_POSIX_ABI=iosArm64
+
+  flutter-quality:
+    name: Flutter analyze and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Detect Flutter scaffold
+        id: app
+        shell: bash
+        run: |
+          if [[ -f app/pubspec.yaml ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Flutter scaffold is not present yet; analysis starts with Phase 0 Task 2."
+          fi
+
+      - name: Set up Flutter
+        if: steps.app.outputs.exists == 'true'
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        if: steps.app.outputs.exists == 'true'
+        working-directory: app
+        run: flutter pub get
+
+      - name: Analyze
+        if: steps.app.outputs.exists == 'true'
+        working-directory: app
+        run: flutter analyze --fatal-infos
+
+      - name: Run unit tests
+        if: steps.app.outputs.exists == 'true'
+        working-directory: app
+        run: flutter test

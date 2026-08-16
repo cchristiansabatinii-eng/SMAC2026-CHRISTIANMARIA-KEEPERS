@@ -1,0 +1,8 @@
+.worktrees/
+
+# Local Superpowers SDD coordination and review artifacts.
+.superpowers/sdd/
+
+# Supabase CLI runtime state. Migrations and database tests stay tracked.
+supabase/.branches/
+supabase/.temp/
