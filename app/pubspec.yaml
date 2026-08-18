@@ -39,9 +39,13 @@ flutter:
   uses-material-design: true
   assets:
     - assets/brand/keepers-wordmark.png
+    - assets/brand/keepers-launch-wordmark.png
     - assets/backgrounds/keepers-background-flat.png
+    - assets/memories/weekly_reference_1.png
+    - assets/memories/weekly_reference_2.png
+    - assets/memories/weekly_reference_3.png
     - assets/textures/observatory-grain.png
   fonts:
-    - family: SchibstedGrotesk
+    - family: ModernSociety
       fonts:
-        - asset: assets/fonts/SchibstedGrotesk.ttf
+        - asset: assets/fonts/modern_society/modernsociety-regular.otf
