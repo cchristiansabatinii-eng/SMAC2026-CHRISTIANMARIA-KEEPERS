@@ -458,6 +458,8 @@ void main() {
     await tester.tap(find.text('SEND CODE'));
     await tester.pump();
     expect(controller.requestedEmails, ['Owner@Example.com']);
+    expect(find.textContaining('Open the sign-in link'), findsOneWidget);
+    expect(find.byKey(const Key('invite-owner-otp')), findsOneWidget);
 
     await tester.enterText(find.byKey(const Key('invite-owner-otp')), '12a');
     await tester.tap(find.text('VERIFY CODE'));

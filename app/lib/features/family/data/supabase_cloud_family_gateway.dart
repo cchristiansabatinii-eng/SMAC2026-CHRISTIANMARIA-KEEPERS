@@ -12,6 +12,8 @@ import 'package:keepers/features/members/domain/avatar_catalog.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+const supabaseAuthCallbackUrl = 'keepers://auth-callback';
+
 /// The narrow external boundary used by [SupabaseCloudFamilyGateway].
 ///
 /// Keeping the SDK behind this interface lets adapter tests exercise real
@@ -21,11 +23,15 @@ abstract interface class SupabaseCloudClient {
 
   String? get authenticatedEmail;
 
-  Future<void> requestEmailOtp(String email);
+  Future<void> requestEmailOtp(String email, {required String emailRedirectTo});
 
   Future<void> verifyEmailOtp({required String email, required String token});
 
   Future<Object?> rpc(String function, {required Map<String, Object?> params});
+}
+
+abstract interface class SupabaseCloudAuthClientEvents {
+  Stream<void> get signedInEvents;
 }
 
 /// Optional narrow Realtime capability. Events only invalidate RPC-backed
@@ -37,7 +43,10 @@ abstract interface class SupabaseCloudRealtimeClient {
 }
 
 final class SupabaseCloudClientAdapter
-    implements SupabaseCloudClient, SupabaseCloudRealtimeClient {
+    implements
+        SupabaseCloudClient,
+        SupabaseCloudAuthClientEvents,
+        SupabaseCloudRealtimeClient {
   const SupabaseCloudClientAdapter(this._client);
 
   final SupabaseClient _client;
@@ -49,8 +58,22 @@ final class SupabaseCloudClientAdapter
   String? get authenticatedEmail => _client.auth.currentUser?.email;
 
   @override
-  Future<void> requestEmailOtp(String email) =>
-      _client.auth.signInWithOtp(email: email, shouldCreateUser: true);
+  Future<void> requestEmailOtp(
+    String email, {
+    required String emailRedirectTo,
+  }) => _client.auth.signInWithOtp(
+    email: email,
+    emailRedirectTo: emailRedirectTo,
+    shouldCreateUser: true,
+  );
+
+  @override
+  Stream<void> get signedInEvents => _client.auth.onAuthStateChange
+      .where(
+        (state) =>
+            state.event == AuthChangeEvent.signedIn && state.session != null,
+      )
+      .map((_) {});
 
   @override
   Future<void> verifyEmailOtp({
@@ -88,10 +111,17 @@ final class SupabaseCloudClientAdapter
 }
 
 final class SupabaseCloudFamilyGateway
-    implements CloudFamilyGateway, FamilyCodeJoinGateway {
-  const SupabaseCloudFamilyGateway(this._client);
+    implements
+        CloudFamilyGateway,
+        CloudFamilyAuthEvents,
+        FamilyCodeJoinGateway {
+  const SupabaseCloudFamilyGateway(
+    this._client, {
+    required this._emailRedirectTo,
+  });
 
   final SupabaseCloudClient _client;
+  final String _emailRedirectTo;
 
   @override
   bool get isConfigured => true;
@@ -103,9 +133,20 @@ final class SupabaseCloudFamilyGateway
   String? get authenticatedEmail => _client.authenticatedEmail;
 
   @override
+  Stream<void> get signedInEvents => switch (_client) {
+    SupabaseCloudAuthClientEvents(:final signedInEvents) => signedInEvents,
+    _ => const Stream<void>.empty(),
+  };
+
+  @override
   Future<void> requestEmailOtp(String email) async {
     final normalizedEmail = _normalizeEmail(email);
-    await _guard(() => _client.requestEmailOtp(normalizedEmail));
+    await _guard(
+      () => _client.requestEmailOtp(
+        normalizedEmail,
+        emailRedirectTo: _emailRedirectTo,
+      ),
+    );
   }
 
   @override

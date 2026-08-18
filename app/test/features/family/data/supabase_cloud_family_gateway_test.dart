@@ -14,7 +14,12 @@ void main() {
 
   setUp(() {
     client = _FakeSupabaseCloudClient();
-    gateway = SupabaseCloudFamilyGateway(client);
+    gateway = SupabaseCloudFamilyGateway(
+      client,
+      emailRedirectTo:
+          'https://family-project.supabase.co/functions/v1/'
+          'keepers-auth-bridge',
+    );
   });
 
   test('exposes configured authentication state without session contents', () {
@@ -38,6 +43,10 @@ void main() {
         );
 
         expect(client.requestedEmails, ['person@example.com']);
+        expect(client.requestedRedirects, [
+          'https://family-project.supabase.co/functions/v1/'
+              'keepers-auth-bridge',
+        ]);
         expect(client.verifiedOtps, [
           const _VerifiedOtp('person@example.com', '123456'),
         ]);
@@ -833,6 +842,7 @@ final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
   Object? _rpcValue;
   Object? _rpcError;
   final requestedEmails = <String>[];
+  final requestedRedirects = <String>[];
   final verifiedOtps = <_VerifiedOtp>[];
   final rpcInvocations = <_RpcInvocation>[];
 
@@ -843,8 +853,12 @@ final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
   String? get authenticatedEmail => email;
 
   @override
-  Future<void> requestEmailOtp(String email) async {
+  Future<void> requestEmailOtp(
+    String email, {
+    required String emailRedirectTo,
+  }) async {
     requestedEmails.add(email);
+    requestedRedirects.add(emailRedirectTo);
     if (requestError case final error?) throw error;
   }
 

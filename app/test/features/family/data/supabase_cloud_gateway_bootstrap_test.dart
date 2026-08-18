@@ -20,6 +20,7 @@ void main() {
       String? capturedKey;
       bool? capturedDebug;
       String? capturedLegacyKey;
+      final cloudClient = _FakeSupabaseCloudClient();
 
       final gateway = await configuredCloudFamilyGateway(
         config: CloudConfig.parse(
@@ -44,11 +45,16 @@ void main() {
               capturedDebug = debug;
               capturedAuthOptions = authOptions;
               await authOptions.localStorage!.initialize();
-              return _FakeSupabaseCloudClient();
+              return cloudClient;
             },
       );
 
       expect(gateway, isA<SupabaseCloudFamilyGateway>());
+      await gateway!.requestEmailOtp('person@example.com');
+      expect(cloudClient.requestedRedirects, const [
+        'https://family-project.supabase.co/functions/v1/'
+            'keepers-auth-bridge',
+      ]);
       expect(capturedUrl, 'https://family-project.supabase.co');
       expect(capturedKey, 'sb_publishable_example');
       expect(capturedDebug, isFalse);
@@ -58,7 +64,58 @@ void main() {
         isA<SecureSupabaseAuthStorage>(),
       );
       expect(capturedAuthOptions?.persistSession, isTrue);
-      expect(capturedAuthOptions?.detectSessionInUri, isFalse);
+      expect(capturedAuthOptions?.detectSessionInUri, isTrue);
+      final callbackPredicate =
+          capturedAuthOptions?.detectSessionInUriPredicate;
+      expect(callbackPredicate, isNotNull);
+      expect(
+        callbackPredicate!(
+          Uri.parse('keepers://auth-callback?code=authorization-code'),
+        ),
+        isTrue,
+      );
+      expect(
+        callbackPredicate(
+          Uri.parse('keepers://join?code=invitation-capability'),
+        ),
+        isFalse,
+      );
+      expect(
+        callbackPredicate(
+          Uri.parse('keepers://auth-callback/other?code=authorization-code'),
+        ),
+        isFalse,
+      );
+      for (final rejectedCallback in <String>[
+        'keepers://auth-callback'
+            '#access_token=attacker-session&refresh_token=attacker-refresh',
+        'keepers://auth-callback?access_token=attacker-session',
+        'keepers://auth-callback?code=authorization-code'
+            '&access_token=attacker-session',
+        'keepers://auth-callback?code=first-code&code=second-code',
+        'keepers://auth-callback?code=',
+        'keepers://auth-callback?code=authorization-code#unexpected',
+        'keepers://auth-callback?code=authorization-code#',
+        'keepers://user@auth-callback?code=authorization-code',
+        'keepers://auth-callback:443?code=authorization-code',
+      ]) {
+        expect(
+          callbackPredicate(Uri.parse(rejectedCallback)),
+          isFalse,
+          reason: 'Rejected unsafe auth callback: $rejectedCallback',
+        );
+      }
+      expect(
+        callbackPredicate(
+          Uri(
+            scheme: 'keepers',
+            host: 'auth-callback',
+            queryParameters: {'code': List<String>.filled(2049, 'a').join()},
+          ),
+        ),
+        isFalse,
+        reason: 'Authorization codes larger than the callback limit are unsafe',
+      );
       expect(
         capturedAuthOptions?.pkceAsyncStorage,
         isA<SecureSupabasePkceStorage>(),
@@ -244,6 +301,8 @@ final class _MemoryPkceStorage extends GotrueAsyncStorage {
 }
 
 final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
+  final requestedRedirects = <String>[];
+
   @override
   String? get authenticatedAccountId => null;
 
@@ -251,7 +310,12 @@ final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
   String? get authenticatedEmail => null;
 
   @override
-  Future<void> requestEmailOtp(String email) async {}
+  Future<void> requestEmailOtp(
+    String email, {
+    required String emailRedirectTo,
+  }) async {
+    requestedRedirects.add(emailRedirectTo);
+  }
 
   @override
   Future<Object?> rpc(

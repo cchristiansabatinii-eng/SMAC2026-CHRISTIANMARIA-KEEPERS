@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keepers/features/family/application/cloud_family_providers.dart';
+import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/data/family_key_envelope_codec.dart';
 import 'package:keepers/features/family/data/invite_share_service.dart';
 import 'package:keepers/features/family/domain/cloud_family_models.dart';
@@ -87,11 +88,38 @@ base class FamilyInviteController extends Notifier<FamilyInviteState> {
 
   @override
   FamilyInviteState build() {
+    final gateway = ref.read(cloudFamilyGatewayProvider);
+    if (gateway case CloudFamilyAuthEvents(:final signedInEvents)) {
+      final subscription = signedInEvents.listen(
+        (_) => unawaited(_resumeAfterExternalSignIn()),
+        // Supabase reports recoverable refresh and callback failures through
+        // this stream. The invitation state already owns user-facing recovery.
+        onError: (Object _, StackTrace _) {},
+      );
+      ref.onDispose(subscription.cancel);
+    }
     ref.onDispose(() {
       _generation += 1;
       _clearInvitationMaterial();
     });
     return const FamilyInviteState();
+  }
+
+  Future<void> _resumeAfterExternalSignIn() async {
+    final running = _inFlight;
+    if (running != null) await running;
+    final canResumeAuthentication =
+        state.phase == FamilyInvitePhase.awaitingOtp ||
+        state.phase == FamilyInvitePhase.needsAuthentication ||
+        (state.phase == FamilyInvitePhase.failed &&
+            (state.retryPoint == FamilyInviteRetryPoint.requestOtp ||
+                state.retryPoint == FamilyInviteRetryPoint.verifyOtp));
+    if (!ref.mounted ||
+        !canResumeAuthentication ||
+        ref.read(cloudFamilyGatewayProvider).authenticatedAccountId == null) {
+      return;
+    }
+    await initialize();
   }
 
   Future<void> initialize() => _deduplicate(_initialize);

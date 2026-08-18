@@ -68,20 +68,49 @@ Future<CloudFamilyGateway?> configuredCloudFamilyGateway({
       authOptions: FlutterAuthClientOptions(
         localStorage: authStorage,
         pkceAsyncStorage: pkceStorage,
-        detectSessionInUri: false,
+        detectSessionInUri: true,
+        detectSessionInUriPredicate: _isKeepersAuthCallback,
         persistSession: true,
       ),
       debug: false,
     );
-    return SupabaseCloudFamilyGateway(client);
+    return SupabaseCloudFamilyGateway(
+      client,
+      emailRedirectTo: _authBridgeRedirectUrl(url),
+    );
   } on Object {
     return null;
   }
 }
 
+bool _isKeepersAuthCallback(Uri uri) {
+  if (uri.scheme != 'keepers' ||
+      uri.host != 'auth-callback' ||
+      uri.authority != 'auth-callback' ||
+      uri.path.isNotEmpty ||
+      uri.hasPort ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasFragment) {
+    return false;
+  }
+
+  final parameters = uri.queryParametersAll;
+  if (parameters.length != 1 || !parameters.containsKey('code')) {
+    return false;
+  }
+  final codes = parameters['code']!;
+  return codes.length == 1 &&
+      codes.single.isNotEmpty &&
+      codes.single.length <= 2048;
+}
+
 String _originDigest(Uri url) =>
     base64UrlEncode(const DartSha256().hashSync(utf8.encode(url.origin)).bytes)
         .replaceAll('=', '');
+
+String _authBridgeRedirectUrl(Uri supabaseOrigin) => supabaseOrigin
+    .replace(pathSegments: const ['functions', 'v1', 'keepers-auth-bridge'])
+    .toString();
 
 LocalStorage _sharedPreferencesStorage(String persistSessionKey) =>
     SharedPreferencesLocalStorage(persistSessionKey: persistSessionKey);

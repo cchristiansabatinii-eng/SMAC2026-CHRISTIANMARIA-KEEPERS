@@ -8,6 +8,7 @@ import 'package:keepers/features/family/application/family_invite_controller.dar
 import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/data/invite_share_service.dart';
 import 'package:keepers/features/family/domain/cloud_family_models.dart';
+import 'package:keepers/features/family/domain/family_code.dart';
 import 'package:keepers/features/family/domain/family_invitation.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
@@ -120,6 +121,63 @@ void main() {
       expect(fixture.gateway.bootstrappedOwners, hasLength(1));
     },
   );
+
+  test('owner sign-in link resumes setup without entering the code', () async {
+    final fixture = await _InviteFixture.create(authenticated: false);
+    addTearDown(fixture.dispose);
+    await fixture.controller.initialize();
+    await fixture.controller.requestEmailOtp('owner@example.com');
+
+    fixture.gateway
+      ..accountId = _ownerAccountId
+      ..email = 'owner@example.com'
+      ..emitSignedIn();
+    await _waitForInvitePhase(
+      fixture,
+      (phase) => phase == FamilyInvitePhase.ready,
+    );
+
+    expect(fixture.state.phase, FamilyInvitePhase.ready);
+    expect(fixture.gateway.verifiedEmails, isEmpty);
+    expect(fixture.gateway.bootstrappedOwners, hasLength(1));
+  });
+
+  test('owner sign-in link resumes after an invalid code', () async {
+    final fixture = await _InviteFixture.create(
+      authenticated: false,
+      verifyFailures: const [
+        InvitationFailure(InvitationFailureCode.invalidOtp),
+      ],
+    );
+    addTearDown(fixture.dispose);
+    await fixture.controller.initialize();
+    await fixture.controller.requestEmailOtp('owner@example.com');
+    await fixture.controller.verifyEmailOtp('000000');
+    expect(fixture.state.phase, FamilyInvitePhase.failed);
+    expect(fixture.state.retryPoint, FamilyInviteRetryPoint.verifyOtp);
+
+    fixture.gateway
+      ..accountId = _ownerAccountId
+      ..email = 'owner@example.com'
+      ..emitSignedIn();
+    await _waitForInvitePhase(
+      fixture,
+      (phase) => phase == FamilyInvitePhase.ready,
+    );
+
+    expect(fixture.gateway.bootstrappedOwners, hasLength(1));
+  });
+
+  test('owner auth stream errors stay handled', () async {
+    final fixture = await _InviteFixture.create(authenticated: false);
+    addTearDown(fixture.dispose);
+    await fixture.controller.initialize();
+
+    fixture.gateway.emitAuthError(StateError('refresh failed'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(fixture.state.phase, FamilyInvitePhase.needsAuthentication);
+  });
 
   test('account change during OTP request ignores the stale success', () async {
     final gate = Completer<void>();
@@ -474,6 +532,17 @@ void main() {
   );
 }
 
+Future<void> _waitForInvitePhase(
+  _InviteFixture fixture,
+  bool Function(FamilyInvitePhase phase) predicate,
+) async {
+  for (var attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate(fixture.state.phase)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  fail('Timed out waiting for invite phase; state was ${fixture.state}');
+}
+
 final class _InviteFixture {
   _InviteFixture({
     required this.database,
@@ -502,6 +571,7 @@ final class _InviteFixture {
     bool localMemberIsOwner = true,
     Completer<void>? createGate,
     Completer<void>? otpRequestGate,
+    List<InvitationFailure> verifyFailures = const [],
     List<InvitationFailure> createFailures = const [],
     List<InvitationFailure> revokeFailures = const [],
     List<CreatedInvitation> createdResponses = const [],
@@ -561,6 +631,7 @@ final class _InviteFixture {
       email: authenticated ? 'owner@example.com' : null,
       createGate: createGate,
       otpRequestGate: otpRequestGate,
+      verifyFailures: verifyFailures,
       createFailures: createFailures,
       revokeFailures: revokeFailures,
       createdResponses: createdResponses,
@@ -604,6 +675,7 @@ final class _InviteFixture {
   Future<void> dispose() async {
     subscription.close();
     container.dispose();
+    await gateway.close();
     await database.close();
   }
 }
@@ -627,19 +699,30 @@ final class _FakeInviteShareService implements InviteShareService {
   }
 
   @override
+  Future<void> shareFamilyLink(
+    FamilyCode code, {
+    Rect? sharePositionOrigin,
+  }) => shareInvitation(
+    code.joinUri,
+    sharePositionOrigin: sharePositionOrigin,
+  );
+
+  @override
   Future<void> shareGatheringNudge({Rect? sharePositionOrigin}) async {}
 }
 
-final class _FakeGateway implements CloudFamilyGateway {
+final class _FakeGateway implements CloudFamilyGateway, CloudFamilyAuthEvents {
   _FakeGateway({
     required this.accountId,
     required this.email,
     this.createGate,
     this.otpRequestGate,
+    List<InvitationFailure> verifyFailures = const [],
     List<InvitationFailure> createFailures = const [],
     List<InvitationFailure> revokeFailures = const [],
     List<CreatedInvitation> createdResponses = const [],
-  }) : createFailures = List.of(createFailures),
+  }) : verifyFailures = List.of(verifyFailures),
+       createFailures = List.of(createFailures),
        revokeFailures = List.of(revokeFailures),
        createdResponses = List.of(createdResponses);
 
@@ -648,6 +731,7 @@ final class _FakeGateway implements CloudFamilyGateway {
   Completer<void>? createGate;
   Completer<void>? otpRequestGate;
   Completer<void>? revokeGate;
+  final List<InvitationFailure> verifyFailures;
   final List<InvitationFailure> createFailures;
   final List<InvitationFailure> revokeFailures;
   final List<CreatedInvitation> createdResponses;
@@ -656,6 +740,7 @@ final class _FakeGateway implements CloudFamilyGateway {
   final List<LocalOwnerFamily> bootstrappedOwners = [];
   final List<CloudInvitationDraft> createdDrafts = [];
   final List<String> revokedIds = [];
+  final _signedInEvents = StreamController<void>.broadcast(sync: true);
 
   @override
   bool get isConfigured => true;
@@ -663,6 +748,16 @@ final class _FakeGateway implements CloudFamilyGateway {
   String? get authenticatedAccountId => accountId;
   @override
   String? get authenticatedEmail => email;
+
+  @override
+  Stream<void> get signedInEvents => _signedInEvents.stream;
+
+  void emitSignedIn() => _signedInEvents.add(null);
+
+  void emitAuthError(Object error) =>
+      _signedInEvents.addError(error, StackTrace.current);
+
+  Future<void> close() => _signedInEvents.close();
 
   @override
   Future<void> requestEmailOtp(String email) async {
@@ -676,6 +771,7 @@ final class _FakeGateway implements CloudFamilyGateway {
     required String token,
   }) async {
     verifiedEmails.add(email);
+    if (verifyFailures.isNotEmpty) throw verifyFailures.removeAt(0);
   }
 
   @override

@@ -8,3 +8,6 @@ enabled = true
 
 [db.seed]
 enabled = false
+
+[functions.keepers-auth-bridge]
+verify_jwt = false

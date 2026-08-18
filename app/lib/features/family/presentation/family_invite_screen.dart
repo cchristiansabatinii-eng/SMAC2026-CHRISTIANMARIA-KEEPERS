@@ -176,7 +176,7 @@ final class _FamilyInviteScreenState extends ConsumerState<FamilyInviteScreen> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       KeepersText(
-        'Enter the six-digit code sent to ${_ownerEmail.text.trim()}.',
+        'Open the sign-in link sent to ${_ownerEmail.text.trim()} on this device, or enter the six-digit code below.',
         style: const TextStyle(color: KeepersColors.inkMuted, height: 1.4),
       ),
       const SizedBox(height: 18),
@@ -310,9 +310,10 @@ final class _FamilyInviteScreenState extends ConsumerState<FamilyInviteScreen> {
           'Pending until your relative accepts. Send this private invitation only to them.',
           style: TextStyle(color: KeepersColors.inkMuted, height: 1.4),
         ),
-        SizedBox(
-          height: 124,
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 124),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (state.isSharing)
@@ -513,7 +514,7 @@ final class _InlineError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 12),
+    padding: const EdgeInsets.only(top: 12, bottom: 8),
     child: Semantics(
       liveRegion: true,
       label: message,
@@ -536,10 +537,13 @@ final class _FeedbackSlot extends StatelessWidget {
   final String? message;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 104,
-    child: message == null ? null : _InlineError(message!),
-  );
+  Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: 112 * textScale),
+      child: message == null ? null : _InlineError(message!),
+    );
+  }
 }
 
 final class _Status extends StatelessWidget {
