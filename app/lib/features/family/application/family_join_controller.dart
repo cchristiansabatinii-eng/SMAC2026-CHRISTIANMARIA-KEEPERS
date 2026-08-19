@@ -182,14 +182,6 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
       final preview = await gateway.previewFamilyByCode(code);
       if (!_accountStillCurrent(accountId)) return;
       if (own != null) {
-        final matchesEnteredCode =
-            own.familyId == preview.familyId &&
-            own.codeVersion == preview.codeVersion;
-        if (matchesEnteredCode) {
-          await _restoreProposalForRequest(own);
-          await _applyAuthoritative(own);
-          return;
-        }
         await _rotateProposalAfterResolvedRequest(
           accountId: accountId,
           request: own,

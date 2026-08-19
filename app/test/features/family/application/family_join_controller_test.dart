@@ -224,6 +224,29 @@ void main() {
     },
   );
 
+  test('resolved request for the same code allows a successor', () async {
+    final generatedIds = <String>[_memberId, _otherMemberId].iterator;
+    final fixture = _Fixture(
+      idFactory: () {
+        if (!generatedIds.moveNext()) throw StateError('No generated ID');
+        return generatedIds.current;
+      },
+    );
+    addTearDown(fixture.dispose);
+    await fixture.controller.loadCode(_code);
+    await fixture.controller.requestJoin(fixture.profile());
+    fixture.gateway.ownRequest = fixture.declinedRequest;
+
+    await fixture.controller.loadCode(_code);
+
+    expect(fixture.state.phase, FamilyJoinPhase.preview);
+    expect(fixture.state.request, isNull);
+    expect(fixture.state.proposedMemberId, _otherMemberId);
+    await fixture.controller.requestJoin(fixture.profile());
+    expect(fixture.state.phase, FamilyJoinPhase.pending);
+    expect(fixture.gateway.createdDrafts.last.profile.memberId, _otherMemberId);
+  });
+
   test('authoritative requester cancel survives controller restart', () async {
     final values = _MemorySecureValueStore();
     final first = _Fixture(values: values);
@@ -237,7 +260,7 @@ void main() {
     addTearDown(second.dispose);
     second.gateway.ownRequest = cancelled;
 
-    await second.controller.loadCode(_code);
+    await second.controller.refreshStatus();
 
     expect(second.state.phase, FamilyJoinPhase.cancelled);
   });

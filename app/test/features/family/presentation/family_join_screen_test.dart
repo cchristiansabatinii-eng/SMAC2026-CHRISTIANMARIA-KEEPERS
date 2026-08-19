@@ -26,7 +26,7 @@ void main() {
     await _pumpManual(tester);
     await tester.enterText(
       find.byKey(const Key('family-code-field')),
-      'k7m4 p2-q8',
+      'k 7 m 4 - p 2 - q 8',
     );
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
@@ -68,6 +68,97 @@ void main() {
       tester.getSize(find.byKey(const Key('cancel-join-request'))).height,
       greaterThanOrEqualTo(48),
     );
+  });
+
+  for (final entry in <String, FamilyJoinScreen>{
+    'manual': const FamilyJoinScreen.manual(),
+    'link': FamilyJoinScreen.forCode(_code),
+  }.entries) {
+    testWidgets('${entry.key} entry cannot abandon an unresolved request', (
+      tester,
+    ) async {
+      await _pumpManual(tester, screen: entry.value);
+      if (find.byKey(const Key('family-code-field')).evaluate().isNotEmpty) {
+        await tester.enterText(
+          find.byKey(const Key('family-code-field')),
+          'K7M4-P2Q8',
+        );
+        await tester.tap(find.text('Continue'));
+        await tester.pumpAndSettle();
+      }
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(FamilyJoinScreen)),
+      );
+      final preview = container.read(familyJoinControllerProvider);
+      await container
+          .read(familyJoinControllerProvider.notifier)
+          .requestJoin(
+            FamilyJoinProfileDraft(
+              memberId: preview.proposedMemberId!,
+              displayName: 'Mariam',
+              demographicRole: FamilyDemographicRole.adult,
+              colorToken: 'ochre',
+              avatar: preview.proposedAvatar!,
+              joiningPublicKey: preview.proposedJoiningPublicKey!,
+            ),
+          );
+      await tester.pump();
+
+      expect(find.byKey(const Key('leave-family-join')), findsNothing);
+      expect(
+        tester.widget<PopScope<void>>(find.byType(PopScope<void>)).canPop,
+        isFalse,
+      );
+    });
+  }
+
+  testWidgets('callback-free completion pops the join route', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          familyJoinControllerProvider.overrideWithBuild(
+            (ref, _) => ref.watch(_familyJoinSnapshotProvider),
+          ),
+        ],
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                key: const Key('open-family-join'),
+                onPressed: () => unawaited(
+                  Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const FamilyJoinScreen.manual(),
+                    ),
+                  ),
+                ),
+                child: const Text('Join a family'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('open-family-join')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(FamilyJoinScreen), findsOneWidget);
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(FamilyJoinScreen)),
+    );
+    container
+        .read(_familyJoinSnapshotProvider.notifier)
+        .emit(
+          FamilyJoinState(
+            phase: FamilyJoinPhase.complete,
+            request: _pendingRequest,
+          ),
+        );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(FamilyJoinScreen), findsNothing);
+    expect(find.byKey(const Key('open-family-join')), findsOneWidget);
   });
 
   testWidgets('terminal requester outcomes remain distinct', (tester) async {
@@ -120,6 +211,28 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('recoverable failure moves focus to Retry', (tester) async {
+    await _pumpManual(
+      tester,
+      gateway: _Gateway(
+        previewFailure: const FamilyJoinFailure(
+          FamilyJoinFailureCode.networkUnavailable,
+        ),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('family-code-field')),
+      'K7M4-P2Q8',
+    );
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    final retry = tester.widget<TextButton>(
+      find.widgetWithText(TextButton, 'Retry'),
+    );
+    expect(retry.focusNode?.hasFocus, isTrue);
+  });
+
   testWidgets('malformed route is neutral and cannot create a request', (
     tester,
   ) async {
@@ -131,19 +244,32 @@ void main() {
   });
 }
 
+final _familyJoinSnapshotProvider =
+    NotifierProvider<_FamilyJoinSnapshotController, FamilyJoinState>(
+      _FamilyJoinSnapshotController.new,
+    );
+
+final class _FamilyJoinSnapshotController extends Notifier<FamilyJoinState> {
+  @override
+  FamilyJoinState build() => _pendingState;
+
+  void emit(FamilyJoinState next) => state = next;
+}
+
 Future<void> _pumpManual(
   WidgetTester tester, {
   Widget screen = const FamilyJoinScreen.manual(),
+  _Gateway? gateway,
 }) async {
-  final gateway = _Gateway();
+  final resolvedGateway = gateway ?? _Gateway();
   final values = _MemorySecureValueStore();
-  addTearDown(gateway.dispose);
+  addTearDown(resolvedGateway.dispose);
   await tester.pumpWidget(
     ProviderScope(
       key: UniqueKey(),
       overrides: [
-        cloudFamilyGatewayProvider.overrideWithValue(gateway),
-        familyCodeJoinGatewayProvider.overrideWithValue(gateway),
+        cloudFamilyGatewayProvider.overrideWithValue(resolvedGateway),
+        familyCodeJoinGatewayProvider.overrideWithValue(resolvedGateway),
         secureValueStoreProvider.overrideWithValue(values),
         joiningKeyStoreProvider.overrideWithValue(
           SecureJoiningKeyStore(
@@ -191,6 +317,9 @@ Future<void> _pumpSnapshot(
 }
 
 final class _Gateway implements CloudFamilyGateway, FamilyCodeJoinGateway {
+  _Gateway({this.previewFailure});
+
+  final FamilyJoinFailure? previewFailure;
   final _invalidations = StreamController<void>.broadcast();
   void dispose() => _invalidations.close();
   @override
@@ -202,8 +331,11 @@ final class _Gateway implements CloudFamilyGateway, FamilyCodeJoinGateway {
   @override
   Future<OwnFamilyJoinRequest?> getOwnJoinRequest() async => null;
   @override
-  Future<FamilyJoinPreview> previewFamilyByCode(FamilyCode code) async =>
-      _preview;
+  Future<FamilyJoinPreview> previewFamilyByCode(FamilyCode code) async {
+    if (previewFailure case final failure?) throw failure;
+    return _preview;
+  }
+
   @override
   Stream<void> watchOwnJoinRequest() => _invalidations.stream;
   @override
@@ -245,7 +377,22 @@ final class _Gateway implements CloudFamilyGateway, FamilyCodeJoinGateway {
   @override
   Future<OwnFamilyJoinRequest> createFamilyJoinRequest(
     FamilyJoinRequestDraft draft,
-  ) => throw UnimplementedError();
+  ) async => OwnFamilyJoinRequest.validated(
+    requestId: _requestId,
+    familyId: _preview.familyId,
+    familyName: _preview.familyName,
+    requesterAccountId: _accountId,
+    memberId: draft.profile.memberId,
+    displayName: draft.profile.displayName,
+    demographicRole: draft.profile.demographicRole,
+    colorToken: draft.profile.colorToken,
+    avatar: draft.profile.avatar,
+    joiningPublicKey: draft.profile.joiningPublicKey,
+    codeVersion: _preview.codeVersion,
+    state: FamilyJoinRequestState.pending,
+    createdAt: DateTime.utc(2026, 9, 7),
+    expiresAt: DateTime.utc(2026, 9, 14),
+  );
   @override
   Future<FamilyJoinDecision> declineJoinRequest(String requestId) =>
       throw UnimplementedError();

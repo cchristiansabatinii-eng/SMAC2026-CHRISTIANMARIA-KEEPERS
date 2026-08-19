@@ -135,7 +135,8 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
     });
     _syncDraft(state);
     final canAbandon =
-        !widget.resumePendingRequest || _isResolvedTerminal(state.phase);
+        _isResolvedTerminal(state.phase) ||
+        (!widget.resumePendingRequest && !_hasUnresolvedJoin(state));
 
     return PopScope<void>(
       canPop: canAbandon && widget.onAbandoned == null,
@@ -230,7 +231,6 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
         textInputAction: TextInputAction.done,
         autocorrect: false,
         enableSuggestions: false,
-        inputFormatters: [LengthLimitingTextInputFormatter(12)],
         onSubmitted: (_) => _submitCode(),
         decoration: const InputDecoration(
           border: OutlineInputBorder(),
@@ -631,6 +631,12 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
 
   void _recoverFocus(FamilyJoinState state) {
     if (state.isBusy) return;
+    if (state.failure != null &&
+        state.retryPoint != null &&
+        _terminalMessage(state) == null) {
+      _retryFocus.requestFocus();
+      return;
+    }
     switch (state.phase) {
       case FamilyJoinPhase.enteringCode:
         _codeFocus.requestFocus();
@@ -831,12 +837,30 @@ String? _terminalMessage(FamilyJoinState state) => switch (state.phase) {
 };
 
 bool _isResolvedTerminal(FamilyJoinPhase phase) => switch (phase) {
+  FamilyJoinPhase.complete ||
   FamilyJoinPhase.declined ||
   FamilyJoinPhase.cancelled ||
   FamilyJoinPhase.expired ||
   FamilyJoinPhase.invitationChanged => true,
   _ => false,
 };
+
+bool _hasUnresolvedJoin(FamilyJoinState state) =>
+    switch (state.phase) {
+      FamilyJoinPhase.requesting ||
+      FamilyJoinPhase.pending ||
+      FamilyJoinPhase.installing ||
+      FamilyJoinPhase.complete => true,
+      _ => false,
+    } ||
+    switch (state.request?.state) {
+      FamilyJoinRequestState.pending ||
+      FamilyJoinRequestState.approved ||
+      FamilyJoinRequestState.installed => true,
+      _ => false,
+    } ||
+    (state.failure != null &&
+        state.retryPoint == FamilyJoinRetryPoint.requestJoin);
 
 String? _recoverableMessage(FamilyJoinFailureCode? code) => switch (code) {
   null => null,
