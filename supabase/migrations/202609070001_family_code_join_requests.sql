@@ -10,9 +10,9 @@ exception when duplicate_object then null; end $$;
 
 create or replace function private.is_canonical_base64url(
   p_value pg_catalog.text,
-  p_octets pg_catalog.integer
+  p_octets pg_catalog.int4
 )
-returns pg_catalog.boolean
+returns pg_catalog.bool
 language plpgsql
 immutable
 set search_path = ''
@@ -54,7 +54,7 @@ $function$;
 
 revoke execute on function private.is_canonical_base64url(
   pg_catalog.text,
-  pg_catalog.integer
+  pg_catalog.int4
 ) from public, anon, authenticated;
 
 create table if not exists public.family_join_codes (
@@ -92,11 +92,11 @@ create table if not exists public.family_join_requests (
   color_token pg_catalog.text not null,
   avatar_json pg_catalog.jsonb not null,
   joining_public_key pg_catalog.text not null,
-  code_version pg_catalog.integer not null,
+  code_version pg_catalog.int4 not null,
   state public.family_join_request_state not null default 'pending',
   decision_account_id pg_catalog.uuid
     references auth.users(id) on delete restrict,
-  approval_envelope_version pg_catalog.integer,
+  approval_envelope_version pg_catalog.int4,
   approval_ephemeral_public_key pg_catalog.text,
   approval_nonce pg_catalog.text,
   approval_ciphertext pg_catalog.text,
@@ -233,8 +233,8 @@ create index if not exists family_join_requests_resolved_idx
 create table if not exists private.family_code_account_limits (
   account_id pg_catalog.uuid primary key references auth.users(id) on delete cascade,
   window_started_at pg_catalog.timestamptz not null,
-  attempt_count pg_catalog.integer not null check (attempt_count >= 0),
-  invalid_attempt_count pg_catalog.integer not null default 0
+  attempt_count pg_catalog.int4 not null check (attempt_count >= 0),
+  invalid_attempt_count pg_catalog.int4 not null default 0
     check (invalid_attempt_count >= 0),
   cooldown_until pg_catalog.timestamptz,
   updated_at pg_catalog.timestamptz not null,
@@ -269,9 +269,9 @@ revoke execute on function private.normalize_family_code(pg_catalog.text)
 create or replace function private.is_valid_family_code_envelope(
   p_envelope pg_catalog.jsonb,
   p_family_id pg_catalog.uuid,
-  p_code_version pg_catalog.integer
+  p_code_version pg_catalog.int4
 )
-returns pg_catalog.boolean
+returns pg_catalog.bool
 language plpgsql
 immutable
 set search_path = ''
@@ -307,19 +307,19 @@ $function$;
 revoke execute on function private.is_valid_family_code_envelope(
   pg_catalog.jsonb,
   pg_catalog.uuid,
-  pg_catalog.integer
+  pg_catalog.int4
 ) from public, anon, authenticated;
 
 create or replace function private.expire_family_join_requests_at(
   p_now pg_catalog.timestamptz
 )
-returns pg_catalog.integer
+returns pg_catalog.int4
 language plpgsql
 security definer
 set search_path = ''
 as $function$
 declare
-  v_count pg_catalog.integer;
+  v_count pg_catalog.int4;
 begin
   if p_now is null then
     raise exception using errcode = '22004', message = 'NULL_EXPIRY_CLOCK';
@@ -342,7 +342,7 @@ revoke execute on function private.expire_family_join_requests_at(
 ) from public, anon, authenticated;
 
 create or replace function private.expire_family_join_requests()
-returns pg_catalog.integer
+returns pg_catalog.int4
 language sql
 security definer
 set search_path = ''
@@ -358,13 +358,13 @@ revoke execute on function private.expire_family_join_requests()
 create or replace function private.purge_family_join_requests(
   p_before pg_catalog.timestamptz
 )
-returns pg_catalog.integer
+returns pg_catalog.int4
 language plpgsql
 security definer
 set search_path = ''
 as $function$
 declare
-  v_count pg_catalog.integer;
+  v_count pg_catalog.int4;
 begin
   if p_before is null or p_before > pg_catalog.clock_timestamp() then
     raise exception using errcode = 'P0001', message = 'INVALID_RETENTION_CUTOFF';
@@ -462,7 +462,7 @@ begin
       secs => pg_catalog.least(
         300::pg_catalog.numeric,
         pg_catalog.power(2::pg_catalog.numeric, invalid_attempt_count)
-      )::pg_catalog.integer
+      )::pg_catalog.int4
     ),
     updated_at = v_now
   where account_id = p_account_id;
@@ -1561,7 +1561,7 @@ $function$;
 
 create or replace function public.regenerate_family_join_code(
   p_family_id pg_catalog.uuid,
-  p_expected_version pg_catalog.integer,
+  p_expected_version pg_catalog.int4,
   p_code pg_catalog.text,
   p_code_envelope pg_catalog.jsonb
 )
@@ -1629,7 +1629,7 @@ begin
     set
       code_version = v_existing.code_version + 1,
       code_hash = extensions.digest(v_code, 'sha256'),
-      envelope_version = (p_code_envelope ->> 'codecVersion')::pg_catalog.integer,
+      envelope_version = (p_code_envelope ->> 'codecVersion')::pg_catalog.int4,
       nonce = p_code_envelope ->> 'nonce',
       ciphertext = p_code_envelope ->> 'ciphertext',
       mac = p_code_envelope ->> 'mac',
@@ -1750,13 +1750,13 @@ grant execute on function public.complete_family_join_request(pg_catalog.uuid)
 
 revoke execute on function public.regenerate_family_join_code(
   pg_catalog.uuid,
-  pg_catalog.integer,
+  pg_catalog.int4,
   pg_catalog.text,
   pg_catalog.jsonb
 ) from public, anon, authenticated;
 grant execute on function public.regenerate_family_join_code(
   pg_catalog.uuid,
-  pg_catalog.integer,
+  pg_catalog.int4,
   pg_catalog.text,
   pg_catalog.jsonb
 ) to authenticated;
