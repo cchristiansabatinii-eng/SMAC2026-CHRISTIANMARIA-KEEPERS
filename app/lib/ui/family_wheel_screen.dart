@@ -3,6 +3,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:keepers/design_system/observatory/motion_policy.dart';
+import 'package:keepers/features/ceremony/presentation/pastel_flood.dart';
+import 'package:keepers/features/ceremony/presentation/weekly_experience_card.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/members/presentation/widgets/keepers_avatar.dart';
 import 'package:keepers/theme/keepers_theme.dart';
@@ -20,6 +23,13 @@ enum FamilyPresence {
     FamilyPresence.away => 'away',
   };
 }
+
+/// Controls how Weekly applies the nearby-family requirement.
+///
+/// [temporaryAllowUntilProximityProxy] still computes the normal three-quarter
+/// threshold, but treats that threshold as met until a real proximity signal
+/// is available. Other presence UI continues to show only observed presence.
+enum WeeklyPresencePolicy { enforceNearby, temporaryAllowUntilProximityProxy }
 
 const _presenceToFamilyFieldGap = 16.0;
 
@@ -48,13 +58,22 @@ final class FamilyWheelScreen extends StatefulWidget {
     required this.currentMemberName,
     this.currentMemberAvatar,
     required this.yourContribution,
-    required this.requiredPresence,
     required this.members,
     required this.onCapture,
     required this.onMemberSelected,
     this.onCurrentMemberSelected,
     this.onAddMember,
     this.onNudgeMissingMembers,
+    this.familyCode,
+    this.onFamilyCodeTap,
+    this.pendingJoinRequestName,
+    this.onPendingJoinRequestTap,
+    this.weeklyPhotoCount = 0,
+    this.requiredWeeklyPhotos = 5,
+    this.weeklyPresencePolicy = WeeklyPresencePolicy.enforceNearby,
+    this.weeklyPreviewEnabled = false,
+    this.onOpenWeeklyExperience,
+    this.onPreviewWeeklyExperience,
     this.selectedDestination = KeepersNavDestination.wheel,
     this.enabledDestinations = const {KeepersNavDestination.wheel},
     this.onDestinationSelected,
@@ -65,12 +84,21 @@ final class FamilyWheelScreen extends StatefulWidget {
   final String currentMemberName;
   final AvatarConfig? currentMemberAvatar;
   final double yourContribution;
-  final int requiredPresence;
   final List<FamilyWheelMember> members;
   final VoidCallback onCapture;
   final VoidCallback? onCurrentMemberSelected;
   final VoidCallback? onAddMember;
   final VoidCallback? onNudgeMissingMembers;
+  final String? familyCode;
+  final VoidCallback? onFamilyCodeTap;
+  final String? pendingJoinRequestName;
+  final VoidCallback? onPendingJoinRequestTap;
+  final int weeklyPhotoCount;
+  final int requiredWeeklyPhotos;
+  final WeeklyPresencePolicy weeklyPresencePolicy;
+  final bool weeklyPreviewEnabled;
+  final VoidCallback? onOpenWeeklyExperience;
+  final VoidCallback? onPreviewWeeklyExperience;
   final ValueChanged<FamilyWheelMember> onMemberSelected;
   final KeepersNavDestination selectedDestination;
   final Set<KeepersNavDestination> enabledDestinations;
@@ -81,10 +109,14 @@ final class FamilyWheelScreen extends StatefulWidget {
 }
 
 final class _FamilyWheelScreenState extends State<FamilyWheelScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _ambientController = AnimationController(
     vsync: this,
     duration: const Duration(seconds: 32),
+  );
+  late final AnimationController _weeklyFloodController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 560),
   );
   TransformationController _transformationController =
       TransformationController();
@@ -94,11 +126,12 @@ final class _FamilyWheelScreenState extends State<FamilyWheelScreen>
   bool _reduceMotion = false;
   bool _isInteracting = false;
   bool _memberFocused = false;
+  bool _weeklyFlooding = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final next = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final next = keepersReduceMotion(context);
     if (_reduceMotion != next) {
       _reduceMotion = next;
       if (_reduceMotion) _ambientController.value = 0;
@@ -183,9 +216,25 @@ final class _FamilyWheelScreenState extends State<FamilyWheelScreen>
     widget.onMemberSelected(member);
   }
 
+  Future<void> _openWeeklyExperience(VoidCallback? open) async {
+    if (open == null || _weeklyFlooding) return;
+    if (_reduceMotion) {
+      open();
+      return;
+    }
+    setState(() => _weeklyFlooding = true);
+    await _weeklyFloodController.forward(from: 0);
+    if (!mounted) return;
+    open();
+    if (!mounted) return;
+    setState(() => _weeklyFlooding = false);
+    _weeklyFloodController.reset();
+  }
+
   @override
   void dispose() {
     _ambientController.dispose();
+    _weeklyFloodController.dispose();
     _transformationController.dispose();
     super.dispose();
   }
@@ -200,177 +249,536 @@ final class _FamilyWheelScreenState extends State<FamilyWheelScreen>
         .toList(growable: false);
     final totalMembers = widget.members.length + 1;
     final nearbyCount = nearMembers.length + 1;
+    final requiredPresentMembers = requiredWeeklyFamilyPresence(totalMembers);
+    final weeklyPresentMemberCount = switch (widget.weeklyPresencePolicy) {
+      WeeklyPresencePolicy.enforceNearby => nearbyCount,
+      WeeklyPresencePolicy.temporaryAllowUntilProximityProxy => math.max(
+        nearbyCount,
+        requiredPresentMembers,
+      ),
+    };
+    final weeklyReady =
+        widget.weeklyPhotoCount >= widget.requiredWeeklyPhotos &&
+        weeklyPresentMemberCount >= requiredPresentMembers;
+    final needsAnotherMember = widget.members.isEmpty;
+    final gatheringLabel = waitingMembers.isNotEmpty
+        ? 'Ask ${_formatNames(waitingMembers.map((member) => member.name))} to come'
+        : needsAnotherMember
+        ? 'Ask family to come'
+        : 'Everyone is here';
+    final gatheringAction = waitingMembers.isNotEmpty
+        ? widget.onNudgeMissingMembers
+        : needsAnotherMember
+        ? widget.onAddMember
+        : null;
+    final gatheringFirstColor = waitingMembers.isNotEmpty
+        ? waitingMembers.first.color
+        : needsAnotherMember
+        ? KeepersColors.homeBlue
+        : KeepersColors.homeGreen;
+    final gatheringSecondColor = waitingMembers.length > 1
+        ? waitingMembers[1].color
+        : needsAnotherMember
+        ? KeepersColors.homeMauve
+        : KeepersColors.homeLine;
     _configureFamilyView(
       Size(
         MediaQuery.sizeOf(context).width,
         FamilyWheelGeometry.viewportHeight,
       ),
     );
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      key: const ValueKey('family-wheel-system-ui'),
-      value: const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.dark,
-        statusBarBrightness: Brightness.light,
-        systemNavigationBarColor: Colors.white,
-        systemNavigationBarIconBrightness: Brightness.dark,
-        systemNavigationBarDividerColor: Colors.transparent,
-      ),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Column(
-          children: [
-            const _WheelHeader(),
-            Expanded(
-              child: CustomScrollView(
-                physics: const BouncingScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 28),
-                      child: _FamilyTitle(familyName: widget.familyName),
-                    ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ExcludeSemantics(
+          excluding: _weeklyFlooding,
+          child: AnnotatedRegion<SystemUiOverlayStyle>(
+            key: const ValueKey('family-wheel-system-ui'),
+            value: const SystemUiOverlayStyle(
+              statusBarColor: Colors.transparent,
+              statusBarIconBrightness: Brightness.dark,
+              statusBarBrightness: Brightness.light,
+              systemNavigationBarColor: Colors.white,
+              systemNavigationBarIconBrightness: Brightness.dark,
+              systemNavigationBarDividerColor: Colors.transparent,
+            ),
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: Column(
+                children: [
+                  _WheelHeader(
+                    familyCode: widget.familyCode,
+                    onFamilyCodeTap: widget.onFamilyCodeTap,
                   ),
-                  SliverToBoxAdapter(
-                    child: _PresenceHero(
-                      nearMembers: nearMembers,
-                      nearbyCount: nearbyCount,
-                      totalMembers: totalMembers,
-                    ),
-                  ),
-                  const SliverToBoxAdapter(
-                    child: SizedBox(height: _presenceToFamilyFieldGap),
-                  ),
-                  SliverToBoxAdapter(
-                    child: SizedBox(
-                      height: FamilyWheelGeometry.viewportHeight,
-                      child: KeyedSubtree(
-                        key: ValueKey(
-                          'family-field-generation-$_familyViewGeneration',
-                        ),
-                        child: InteractiveViewer(
-                          key: const ValueKey(
-                            'family-field-interactive-viewer',
+                  Expanded(
+                    child: CustomScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 28),
+                            child: _FamilyTitle(familyName: widget.familyName),
                           ),
-                          transformationController: _transformationController,
-                          constrained: false,
-                          alignment: Alignment.center,
-                          minScale: .85,
-                          maxScale: 1.45,
-                          boundaryMargin: const EdgeInsets.all(72),
-                          clipBehavior: Clip.none,
-                          onInteractionStart: _startInteraction,
-                          onInteractionEnd: _endInteraction,
-                          child: Builder(
-                            builder: (context) {
-                              final fieldSize =
-                                  FamilyWheelGeometry.fieldSizeFor(
-                                    widget.members.length,
-                                  );
-                              return SizedBox.fromSize(
-                                size: fieldSize,
-                                child: AnimatedBuilder(
-                                  animation: _ambientController,
-                                  builder: (context, _) =>
-                                      FamilyWheelPainterHost(
-                                        currentMemberName:
-                                            widget.currentMemberName,
-                                        currentMemberAvatar:
-                                            widget.currentMemberAvatar,
-                                        yourContribution:
-                                            widget.yourContribution,
-                                        members: widget.members,
-                                        pulse: _ambientController.value,
-                                        motionEnabled: !_reduceMotion,
-                                        onCurrentMemberSelected:
-                                            _openCurrentMember,
-                                        onMemberSelected: _openMember,
-                                        onAddMember: widget.onAddMember,
-                                        onFocusChanged: _setMemberFocused,
-                                      ),
+                        ),
+                        SliverToBoxAdapter(
+                          child: _PresenceHero(
+                            nearMembers: nearMembers,
+                            nearbyCount: nearbyCount,
+                            totalMembers: totalMembers,
+                          ),
+                        ),
+                        if (widget.pendingJoinRequestName case final name?)
+                          SliverToBoxAdapter(
+                            child: _FamilyJoinRequestNotice(
+                              name: name,
+                              onTap: widget.onPendingJoinRequestTap,
+                            ),
+                          ),
+                        const SliverToBoxAdapter(
+                          child: SizedBox(height: _presenceToFamilyFieldGap),
+                        ),
+                        SliverToBoxAdapter(
+                          child: SizedBox(
+                            height: FamilyWheelGeometry.viewportHeight,
+                            child: KeyedSubtree(
+                              key: ValueKey(
+                                'family-field-generation-$_familyViewGeneration',
+                              ),
+                              child: InteractiveViewer(
+                                key: const ValueKey(
+                                  'family-field-interactive-viewer',
                                 ),
-                              );
-                            },
+                                transformationController:
+                                    _transformationController,
+                                constrained: false,
+                                alignment: Alignment.center,
+                                minScale: .85,
+                                maxScale: 1.45,
+                                boundaryMargin: const EdgeInsets.all(72),
+                                clipBehavior: Clip.none,
+                                onInteractionStart: _startInteraction,
+                                onInteractionEnd: _endInteraction,
+                                child: Builder(
+                                  builder: (context) {
+                                    final fieldSize =
+                                        FamilyWheelGeometry.fieldSizeFor(
+                                          widget.members.length,
+                                        );
+                                    return SizedBox.fromSize(
+                                      size: fieldSize,
+                                      child: AnimatedBuilder(
+                                        animation: _ambientController,
+                                        builder: (context, _) =>
+                                            FamilyWheelPainterHost(
+                                              currentMemberName:
+                                                  widget.currentMemberName,
+                                              currentMemberAvatar:
+                                                  widget.currentMemberAvatar,
+                                              yourContribution:
+                                                  widget.yourContribution,
+                                              members: widget.members,
+                                              pulse: _ambientController.value,
+                                              motionEnabled: !_reduceMotion,
+                                              onCurrentMemberSelected:
+                                                  _openCurrentMember,
+                                              onMemberSelected: _openMember,
+                                              onAddMember: widget.onAddMember,
+                                              onFocusChanged: _setMemberFocused,
+                                            ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                  ),
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        KeyedSubtree(
-                          key: const ValueKey('home-action-group'),
+                        SliverFillRemaining(
+                          hasScrollBody: false,
                           child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              _GatherPrompt(
-                                waitingMembers: waitingMembers,
-                                onTap: widget.onNudgeMissingMembers,
+                              KeyedSubtree(
+                                key: const ValueKey('home-action-group'),
+                                child: Column(
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 28,
+                                      ),
+                                      child: WeeklyPhotoProgress(
+                                        weeklyPhotoCount:
+                                            widget.weeklyPhotoCount,
+                                        requiredWeeklyPhotos:
+                                            widget.requiredWeeklyPhotos,
+                                        presentMemberCount:
+                                            weeklyPresentMemberCount,
+                                        requiredPresentMembers:
+                                            requiredPresentMembers,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    _GatherPrompt(
+                                      label: gatheringLabel,
+                                      firstColor: gatheringFirstColor,
+                                      secondColor: gatheringSecondColor,
+                                      onTap: gatheringAction,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                      ),
+                                      child: WeeklyExperienceCard(
+                                        presentMemberCount:
+                                            weeklyPresentMemberCount,
+                                        requiredPresentMembers:
+                                            requiredPresentMembers,
+                                        weeklyPhotoCount:
+                                            widget.weeklyPhotoCount,
+                                        requiredWeeklyPhotos:
+                                            widget.requiredWeeklyPhotos,
+                                        onOpen:
+                                            widget.onOpenWeeklyExperience ==
+                                                null
+                                            ? null
+                                            : () => unawaited(
+                                                _openWeeklyExperience(
+                                                  widget.onOpenWeeklyExperience,
+                                                ),
+                                              ),
+                                        onPreview:
+                                            widget.weeklyPreviewEnabled &&
+                                                !weeklyReady &&
+                                                widget.onPreviewWeeklyExperience !=
+                                                    null
+                                            ? () => unawaited(
+                                                _openWeeklyExperience(
+                                                  widget
+                                                      .onPreviewWeeklyExperience,
+                                                ),
+                                              )
+                                            : null,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              const SizedBox(height: 12),
-                              _HomeShortcuts(
-                                legacySubtitle: 'No family condition yet',
-                                capsuleSubtitle: 'No capsule scheduled',
-                                onLegacyTap:
-                                    widget.onDestinationSelected != null &&
-                                        widget.enabledDestinations.contains(
-                                          KeepersNavDestination.locks,
-                                        )
-                                    ? () => widget.onDestinationSelected!.call(
-                                        KeepersNavDestination.locks,
-                                      )
-                                    : null,
-                                onCapsuleTap:
-                                    widget.onDestinationSelected != null &&
-                                        widget.enabledDestinations.contains(
-                                          KeepersNavDestination.ceremony,
-                                        )
-                                    ? () => widget.onDestinationSelected!.call(
-                                        KeepersNavDestination.ceremony,
-                                      )
-                                    : null,
-                              ),
+                              const SizedBox(height: 14),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 14),
                       ],
                     ),
+                  ),
+                  KeepersBottomNav(
+                    selected: widget.selectedDestination,
+                    enabledDestinations: widget.enabledDestinations,
+                    onCapture: _openCapture,
+                    onSelected: widget.onDestinationSelected,
                   ),
                 ],
               ),
             ),
-            KeepersBottomNav(
-              selected: widget.selectedDestination,
-              enabledDestinations: widget.enabledDestinations,
-              onCapture: _openCapture,
-              onSelected: widget.onDestinationSelected,
+          ),
+        ),
+        if (_weeklyFlooding)
+          Positioned.fill(
+            child: BlockSemantics(
+              child: Semantics(
+                container: true,
+                liveRegion: true,
+                label: 'Opening weekly experience',
+                child: AbsorbPointer(
+                  key: const ValueKey('weekly-pastel-flood'),
+                  child: AnimatedBuilder(
+                    animation: _weeklyFloodController,
+                    builder: (context, _) => CustomPaint(
+                      painter: PastelFloodPainter(
+                        progress: _weeklyFloodController.value,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ],
+          ),
+      ],
+    );
+  }
+}
+
+final class _GatherPrompt extends StatelessWidget {
+  const _GatherPrompt({
+    required this.label,
+    required this.firstColor,
+    required this.secondColor,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color firstColor;
+  final Color secondColor;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaWidth = MediaQuery.sizeOf(context).width;
+    final view = View.of(context);
+    final viewportWidth = mediaWidth > 0
+        ? mediaWidth
+        : view.physicalSize.width / view.devicePixelRatio;
+    final availableWidth = math.max(0.0, viewportWidth - 56);
+    final promptWidth = math.min(340.0, availableWidth * .9);
+
+    return Padding(
+      key: const ValueKey('family-gathering-prompt'),
+      padding: const EdgeInsets.symmetric(horizontal: 28),
+      child: Semantics(
+        button: onTap != null,
+        enabled: onTap != null,
+        label: label,
+        onTap: onTap,
+        child: ExcludeSemantics(
+          child: Center(
+            child: SizedBox(
+              width: promptWidth,
+              child: Material(
+                color: KeepersColors.auraIvory,
+                shape: const StadiumBorder(
+                  side: BorderSide(
+                    color: KeepersColors.homeActionLine,
+                    width: 1.25,
+                  ),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: onTap,
+                  customBorder: const StadiumBorder(),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 52),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 36,
+                            child: Stack(
+                              children: [
+                                _GatherDot(color: firstColor),
+                                Positioned(
+                                  left: 14,
+                                  child: _GatherDot(color: secondColor),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: KeepersText(
+                              label,
+                              maxLines: 2,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: KeepersColors.homeInk,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            color: onTap == null
+                                ? KeepersColors.homeTaupe
+                                : KeepersColors.homeActionLine,
+                            size: 23,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-final class _WheelHeader extends StatelessWidget {
-  const _WheelHeader();
+final class _GatherDot extends StatelessWidget {
+  const _GatherDot({required this.color});
+
+  final Color color;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    key: const ValueKey('keepers-home-brand-bar'),
-    width: double.infinity,
-    child: const SafeArea(
-      bottom: false,
-      child: SizedBox(
-        height: 48,
-        child: Center(
-          child: KeepersWordmark(
-            key: ValueKey('keepers-wordmark'),
-            width: 94,
-            height: 38,
+  Widget build(BuildContext context) => Container(
+    width: 23,
+    height: 23,
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .34),
+      shape: BoxShape.circle,
+      border: Border.all(color: KeepersColors.auraIvory, width: 2),
+    ),
+  );
+}
+
+final class _WheelHeader extends StatelessWidget {
+  const _WheelHeader({required this.familyCode, required this.onFamilyCodeTap});
+
+  final String? familyCode;
+  final VoidCallback? onFamilyCodeTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final code = familyCode?.trim();
+    return SizedBox(
+      key: const ValueKey('keepers-home-brand-bar'),
+      width: double.infinity,
+      child: SafeArea(
+        bottom: false,
+        child: SizedBox(
+          height: 48,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              const Center(
+                child: KeepersWordmark(
+                  key: ValueKey('keepers-wordmark'),
+                  width: 94,
+                  height: 38,
+                ),
+              ),
+              if (code != null && code.isNotEmpty)
+                PositionedDirectional(
+                  top: 0,
+                  end: 16,
+                  bottom: 0,
+                  child: SizedBox(
+                    key: const ValueKey('family-code-action'),
+                    width: 116,
+                    height: 48,
+                    child: Semantics(
+                      button: true,
+                      enabled: onFamilyCodeTap != null,
+                      label: 'Family code ${_spokenFamilyCode(code)}',
+                      onTap: onFamilyCodeTap,
+                      child: ExcludeSemantics(
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkResponse(
+                            onTap: onFamilyCodeTap,
+                            containedInkWell: true,
+                            highlightShape: BoxShape.rectangle,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  KeepersText(
+                                    'Family code',
+                                    maxLines: 1,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color: KeepersColors.homeTaupe,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: .5,
+                                          height: 1.1,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  KeepersText(
+                                    code,
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    overflow: TextOverflow.fade,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color: KeepersColors.homeInk,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 1,
+                                          height: 1.1,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _FamilyJoinRequestNotice extends StatelessWidget {
+  const _FamilyJoinRequestNotice({required this.name, required this.onTap});
+
+  final String name;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    key: const ValueKey('family-join-request-notice'),
+    padding: const EdgeInsets.fromLTRB(28, 8, 28, 0),
+    child: Semantics(
+      button: true,
+      enabled: onTap != null,
+      label: '$name wants to join',
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.person_add_alt_1_rounded,
+                    color: KeepersColors.homeTaupe,
+                    size: 19,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: KeepersText(
+                      '$name wants to join',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: KeepersColors.homeInk,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: KeepersColors.homeActionLine,
+                    size: 23,
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -568,6 +976,24 @@ final class FamilyWheelPainterHost extends StatefulWidget {
 
 final class _FamilyWheelPainterHostState extends State<FamilyWheelPainterHost> {
   String? _focusedMemberId;
+  late final Set<String> _knownMemberIds;
+  final Set<String> _arrivingMemberIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _knownMemberIds = widget.members.map((member) => member.id).toSet();
+  }
+
+  @override
+  void didUpdateWidget(covariant FamilyWheelPainterHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final currentIds = widget.members.map((member) => member.id).toSet();
+    _arrivingMemberIds
+      ..retainAll(currentIds)
+      ..addAll(currentIds.difference(_knownMemberIds));
+    _knownMemberIds.addAll(currentIds);
+  }
 
   Future<void> _focusMember(FamilyWheelMember member) async {
     if (_focusedMemberId != null) return;
@@ -639,30 +1065,41 @@ final class _FamilyWheelPainterHostState extends State<FamilyWheelPainterHost> {
       if (distance > 0) focusOffset = vector / distance * 4;
     }
     final isFocused = _focusedMemberId == member.id;
+    final memberNode = Transform.translate(
+      key: ValueKey('family-member-motion-${member.id}'),
+      offset: drift + focusOffset,
+      child: TweenAnimationBuilder<double>(
+        duration: widget.motionEnabled
+            ? const Duration(milliseconds: 220)
+            : Duration.zero,
+        curve: Curves.easeOutCubic,
+        tween: Tween(end: isFocused ? 1.05 : 1),
+        builder: (context, scale, child) =>
+            Transform.scale(scale: scale, child: child),
+        child: _FamilyMemberNode(
+          member: member,
+          nodeSize: nodeSize,
+          onTap: () => unawaited(_focusMember(member)),
+        ),
+      ),
+    );
     return Positioned(
       key: ValueKey('family-wheel-member-${member.id}'),
       left: center.dx - boxWidth / 2,
       top: center.dy - nodeSize / 2,
       width: boxWidth,
       height: boxHeight,
-      child: Transform.translate(
-        key: ValueKey('family-member-motion-${member.id}'),
-        offset: drift + focusOffset,
-        child: TweenAnimationBuilder<double>(
-          duration: widget.motionEnabled
-              ? const Duration(milliseconds: 220)
-              : Duration.zero,
-          curve: Curves.easeOutCubic,
-          tween: Tween(end: isFocused ? 1.05 : 1),
-          builder: (context, scale, child) =>
-              Transform.scale(scale: scale, child: child),
-          child: _FamilyMemberNode(
-            member: member,
-            nodeSize: nodeSize,
-            onTap: () => unawaited(_focusMember(member)),
-          ),
-        ),
-      ),
+      child: _arrivingMemberIds.contains(member.id)
+          ? _MemberArrival(
+              memberId: member.id,
+              motionEnabled: widget.motionEnabled,
+              onComplete: () {
+                if (!mounted || !_arrivingMemberIds.remove(member.id)) return;
+                setState(() {});
+              },
+              child: memberNode,
+            )
+          : memberNode,
     );
   }
 
@@ -675,6 +1112,76 @@ final class _FamilyWheelPainterHostState extends State<FamilyWheelPainterHost> {
       math.cos(phase * .83 + index * .62) * amplitude * .72,
     );
   }
+}
+
+final class _MemberArrival extends StatefulWidget {
+  const _MemberArrival({
+    required this.memberId,
+    required this.motionEnabled,
+    required this.onComplete,
+    required this.child,
+  });
+
+  final String memberId;
+  final bool motionEnabled;
+  final VoidCallback onComplete;
+  final Widget child;
+
+  @override
+  State<_MemberArrival> createState() => _MemberArrivalState();
+}
+
+final class _MemberArrivalState extends State<_MemberArrival>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _arrival;
+  var _didComplete = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: widget.motionEnabled
+          ? const Duration(milliseconds: 220)
+          : const Duration(milliseconds: 90),
+      animationBehavior: AnimationBehavior.preserve,
+    )..addStatusListener(_handleStatus);
+    _arrival = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+    _controller.forward();
+  }
+
+  void _handleStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed || _didComplete) return;
+    _didComplete = true;
+    widget.onComplete();
+  }
+
+  @override
+  void dispose() {
+    _controller
+      ..removeStatusListener(_handleStatus)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    key: ValueKey('family-member-arrival-${widget.memberId}'),
+    animation: _arrival,
+    child: widget.child,
+    builder: (context, child) => Transform.translate(
+      key: ValueKey('family-member-arrival-offset-${widget.memberId}'),
+      offset: widget.motionEnabled
+          ? Offset(0, (1 - _arrival.value) * 10)
+          : Offset.zero,
+      child: Opacity(
+        key: ValueKey('family-member-arrival-opacity-${widget.memberId}'),
+        opacity: _arrival.value,
+        child: child,
+      ),
+    ),
+  );
 }
 
 abstract final class FamilyWheelGeometry {
@@ -1156,248 +1663,18 @@ final class _DashedCirclePainter extends CustomPainter {
   bool shouldRepaint(covariant _DashedCirclePainter oldDelegate) => false;
 }
 
-final class _GatherPrompt extends StatelessWidget {
-  const _GatherPrompt({required this.waitingMembers, required this.onTap});
-
-  final List<FamilyWheelMember> waitingMembers;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final names = _formatNames(waitingMembers.map((member) => member.name));
-    final label = waitingMembers.isEmpty
-        ? 'Everyone is here'
-        : 'Ask $names to come';
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 28),
-      child: Semantics(
-        button: waitingMembers.isNotEmpty,
-        enabled: waitingMembers.isNotEmpty && onTap != null,
-        label: label,
-        onTap: waitingMembers.isEmpty ? null : onTap,
-        child: ExcludeSemantics(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 300),
-              child: Material(
-                color: KeepersColors.auraIvory.withValues(alpha: .7),
-                shape: StadiumBorder(
-                  side: BorderSide(
-                    color: KeepersColors.homeGold.withValues(alpha: .45),
-                  ),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: waitingMembers.isEmpty ? null : onTap,
-                  customBorder: const StadiumBorder(),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 52),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 36,
-                            child: Stack(
-                              children: [
-                                _GatherDot(
-                                  color: waitingMembers.isEmpty
-                                      ? KeepersColors.homeGreen
-                                      : waitingMembers.first.color,
-                                ),
-                                Positioned(
-                                  left: 14,
-                                  child: _GatherDot(
-                                    color: waitingMembers.length > 1
-                                        ? waitingMembers[1].color
-                                        : KeepersColors.homeLine,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Expanded(
-                            child: KeepersText(
-                              label,
-                              maxLines: 2,
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(
-                                    color: KeepersColors.homeInk,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(
-                            Icons.chevron_right_rounded,
-                            color: KeepersColors.homeGold,
-                            size: 23,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-final class _GatherDot extends StatelessWidget {
-  const _GatherDot({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: 23,
-    height: 23,
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: .34),
-      shape: BoxShape.circle,
-      border: Border.all(color: KeepersColors.auraIvory, width: 2),
-    ),
-  );
-}
-
-final class _HomeShortcuts extends StatelessWidget {
-  const _HomeShortcuts({
-    required this.legacySubtitle,
-    required this.capsuleSubtitle,
-    required this.onLegacyTap,
-    required this.onCapsuleTap,
-  });
-
-  final String legacySubtitle;
-  final String capsuleSubtitle;
-  final VoidCallback? onLegacyTap;
-  final VoidCallback? onCapsuleTap;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 28),
-    child: IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: _ShortcutCard(
-              title: 'LEGACY LOCK',
-              subtitle: legacySubtitle,
-              icon: Icons.lock_outline_rounded,
-              accent: KeepersColors.legacyOlive,
-              onTap: onLegacyTap,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _ShortcutCard(
-              title: 'CAPSULE',
-              subtitle: capsuleSubtitle,
-              icon: Icons.hourglass_empty_rounded,
-              accent: KeepersColors.homeGold,
-              onTap: onCapsuleTap,
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-final class _ShortcutCard extends StatelessWidget {
-  const _ShortcutCard({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.accent,
-    required this.onTap,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color accent;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    enabled: onTap != null,
-    label: '$title. $subtitle',
-    child: ExcludeSemantics(
-      child: Material(
-        color: KeepersColors.auraIvory.withValues(alpha: .92),
-        borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 68),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              child: Row(
-                children: [
-                  Container(
-                    width: 30,
-                    height: 30,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: accent.withValues(alpha: .38)),
-                    ),
-                    child: Icon(icon, color: accent, size: 18),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        KeepersText(
-                          title,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: accent,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1.8,
-                              ),
-                        ),
-                        const SizedBox(height: 3),
-                        KeepersText(
-                          subtitle,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: KeepersColors.homeInk,
-                                fontSize: 9.2,
-                                height: 1.15,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
 String _formatNames(Iterable<String> names) {
   final list = names.toList(growable: false);
   if (list.isEmpty) return '';
   if (list.length == 1) return list.first;
   if (list.length == 2) return '${list.first} & ${list.last}';
   return '${list.take(list.length - 1).join(', ')} & ${list.last}';
+}
+
+String _familyLabel(String value) {
+  final name = _sentenceCase(value);
+  if (name.isEmpty) return 'Family';
+  return name.endsWith(' family') ? name : '$name family';
 }
 
 String _sentenceCase(String value) {
@@ -1408,11 +1685,11 @@ String _sentenceCase(String value) {
       '${String.fromCharCodes(runes.skip(1)).toLowerCase()}';
 }
 
-String _familyLabel(String value) {
-  final name = _sentenceCase(value);
-  if (name.isEmpty) return 'Family';
-  return name.endsWith(' family') ? name : '$name family';
-}
+String _spokenFamilyCode(String value) => value
+    .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+    .toUpperCase()
+    .split('')
+    .join(' ');
 
 String _numberWord(int number) => switch (number) {
   0 => 'ZERO',

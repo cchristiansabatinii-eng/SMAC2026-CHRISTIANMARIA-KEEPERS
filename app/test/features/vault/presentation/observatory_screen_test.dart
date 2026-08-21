@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,15 +10,23 @@ import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/archive/presentation/archive_screen.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/ceremony/presentation/ceremony_screen.dart';
+import 'package:keepers/features/family/application/family_code_controller.dart';
+import 'package:keepers/features/family/application/family_join_controller.dart';
+import 'package:keepers/features/family/application/family_join_requests_controller.dart';
 import 'package:keepers/features/family/application/family_roster_provider.dart';
+import 'package:keepers/features/family/application/pending_join_completion_controller.dart';
 import 'package:keepers/features/family/data/invite_share_service.dart';
+import 'package:keepers/features/family/domain/cloud_family_models.dart';
 import 'package:keepers/features/family/domain/family_invitation.dart';
+import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
-import 'package:keepers/features/family/presentation/family_invite_screen.dart';
+import 'package:keepers/features/family/presentation/family_invite_sheet.dart';
+import 'package:keepers/features/family/presentation/family_join_request_sheet.dart';
 import 'package:keepers/features/locks/presentation/locks_screen.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/members/presentation/member_page_screen.dart';
 import 'package:keepers/features/members/presentation/your_memories_screen.dart';
+import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/features/onboarding/domain/local_identity.dart';
 import 'package:keepers/features/vault/application/vault_providers.dart';
 import 'package:keepers/features/vault/domain/vault_models.dart';
@@ -55,6 +64,31 @@ final _defaultRoster = <FamilyMember>[
   _relative('layla', 'Layla', 'sage'),
 ];
 
+final _observatoryRosterStateProvider =
+    NotifierProvider<_ObservatoryRosterStateController, FamilyRosterState>(
+      () => _ObservatoryRosterStateController(
+        FamilyRosterState(members: _defaultRoster, hasLoadedLocal: true),
+      ),
+    );
+
+final _pendingJoinRequest = PendingFamilyJoinRequest(
+  requestId: '22222222-2222-4222-8222-222222222222',
+  familyId: _identity.familyId,
+  requesterAccountId: '33333333-3333-4333-8333-333333333333',
+  memberId: '44444444-4444-4444-8444-444444444444',
+  displayName: 'Amina',
+  demographicRole: FamilyDemographicRole.adult,
+  colorToken: 'clay',
+  avatar: const AvatarConfig.defaults(
+    seed: '44444444-4444-4444-8444-444444444444',
+  ),
+  joiningPublicKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  codeVersion: 1,
+  state: FamilyJoinRequestState.pending,
+  createdAt: DateTime.utc(2026, 9, 7),
+  expiresAt: DateTime.utc(2026, 9, 14),
+);
+
 FamilyMember _relative(String id, String name, String colorToken) =>
     FamilyMember(
       id: id,
@@ -66,7 +100,97 @@ FamilyMember _relative(String id, String name, String colorToken) =>
       joinedAt: DateTime.utc(2026, 9, 2),
     );
 
+FamilyMember _activatedPendingMember() => FamilyMember(
+  id: _pendingJoinRequest.memberId,
+  familyId: _identity.familyId,
+  name: _pendingJoinRequest.displayName,
+  role: _pendingJoinRequest.demographicRole.name,
+  colorToken: _pendingJoinRequest.colorToken,
+  avatar: _pendingJoinRequest.avatar,
+  joinedAt: DateTime.utc(2026, 9, 7),
+);
+
 void main() {
+  test('live Weekly loading is sequential and preserves entry order', () async {
+    final entries = [
+      _metadata(MemoryFormat.text, 1),
+      _metadata(MemoryFormat.text, 2),
+    ];
+    final first = Completer<MemoryOpenResult>();
+    final second = Completer<MemoryOpenResult>();
+    final calls = <String>[];
+
+    final loading = loadWeeklyMemoriesSequentially(entries, (entry) {
+      calls.add(entry.id);
+      return entry.id == entries.first.id ? first.future : second.future;
+    });
+
+    expect(calls, [entries.first.id]);
+    first.complete(_openedText(entries.first, 'First memory'));
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, [entries.first.id, entries.last.id]);
+
+    second.complete(_openedText(entries.last, 'Second memory'));
+    final opened = await loading;
+    expect(opened.map((memory) => memory.metadata.id), [
+      entries.first.id,
+      entries.last.id,
+    ]);
+  });
+
+  test('an unavailable Weekly memory fails the whole load safely', () async {
+    final entries = [
+      _metadata(MemoryFormat.photo, 1),
+      _metadata(MemoryFormat.photo, 2),
+      _metadata(MemoryFormat.photo, 3),
+    ];
+    final decryptedBytes = Uint8List.fromList([11, 22, 33]);
+    final calls = <String>[];
+
+    final loading = loadWeeklyMemoriesSequentially(entries, (entry) async {
+      calls.add(entry.id);
+      if (entry.id == entries.first.id) {
+        return _openedPhoto(entries.first, decryptedBytes);
+      }
+      return const UnavailableMemory('Unavailable');
+    });
+
+    await expectLater(loading, throwsA(isA<WeeklyMemoryLoadFailure>()));
+    expect(calls, [entries.first.id, entries[1].id]);
+    expect(decryptedBytes, everyElement(0));
+  });
+
+  test(
+    'Weekly payload lease clears media when the experience closes',
+    () async {
+      final metadata = _metadata(MemoryFormat.photo, 1);
+      final bytes = Uint8List.fromList([7, 8, 9]);
+      final lease = WeeklyMemoryPayloadLease();
+
+      await lease.own(Future.value([_openedPhoto(metadata, bytes)]));
+      lease.release();
+
+      expect(bytes, everyElement(0));
+    },
+  );
+
+  test(
+    'Weekly payload lease clears a load that finishes after closing',
+    () async {
+      final metadata = _metadata(MemoryFormat.photo, 1);
+      final bytes = Uint8List.fromList([7, 8, 9]);
+      final pending = Completer<List<OpenedMemory>>();
+      final lease = WeeklyMemoryPayloadLease();
+      final owned = lease.own(pending.future);
+
+      lease.release();
+      pending.complete([_openedPhoto(metadata, bytes)]);
+      await owned;
+
+      expect(bytes, everyElement(0));
+    },
+  );
+
   testWidgets('established identity renders the approved family members', (
     tester,
   ) async {
@@ -371,30 +495,30 @@ void main() {
     expect(haptics, isEmpty);
   });
 
-  testWidgets('home controls and shortcuts open every confirmed interface', (
+  testWidgets('canonical entries open every confirmed interface', (
     tester,
   ) async {
     await tester.pumpWidget(_observatory(entries: const []));
     await tester.pump();
 
-    await tester.ensureVisible(find.text('CAPSULE'));
-    await tester.pump();
-    await tester.tap(find.text('CAPSULE'));
+    expect(find.byKey(const ValueKey('weekly-recap-mode')), findsOneWidget);
+    expect(find.text('LEGACY LOCK'), findsNothing);
+    expect(find.text('CAPSULE'), findsNothing);
+
+    await tester.tap(find.bySemanticsLabel('Memory Key'));
     await tester.pump();
     expect(find.byType(CeremonyScreen), findsOneWidget);
+    expect(find.text('LEGACY LOCK'), findsOneWidget);
+    expect(find.text('CAPSULE'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('memory-key-legacy-entry')));
+    await tester.pump();
+    expect(find.byType(LocksScreen), findsOneWidget);
 
     await tester.tap(find.bySemanticsLabel('Archive'));
     await tester.pump();
     expect(find.byType(ArchiveScreen), findsOneWidget);
     expect(find.text('Nothing kept yet'), findsOneWidget);
-
-    await tester.tap(find.bySemanticsLabel('Wheel'));
-    await tester.pump();
-    await tester.ensureVisible(find.text('LEGACY LOCK'));
-    await tester.pump();
-    await tester.tap(find.text('LEGACY LOCK'));
-    await tester.pump();
-    expect(find.byType(LocksScreen), findsOneWidget);
 
     await tester.tap(find.bySemanticsLabel('Wheel'));
     await tester.pump();
@@ -407,46 +531,317 @@ void main() {
     expect(find.text('Sabati'), findsOneWidget);
   });
 
-  testWidgets('Invite route and gathering nudge remain separate operations', (
+  testWidgets(
+    'wheel and header open the same offline non-creator invite sheet',
+    (tester) async {
+      final share = _NudgeShareService();
+      var rosterRefreshes = 0;
+      await tester.pumpWidget(
+        _observatoryWithOverride(
+          vaultEntriesProvider.overrideWithValue(
+            const AsyncValue.data(<VaultEntryMetadata>[]),
+          ),
+          shareService: share,
+          refreshRoster: () async => rosterRefreshes += 1,
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('family-invite-node-action')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FamilyInviteSheet), findsOneWidget);
+      expect(find.byKey(const Key('family-code-display')), findsOneWidget);
+      expect(find.text('Regenerate code'), findsNothing);
+      expect(share.nudges, 0);
+
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      expect(rosterRefreshes, 1);
+
+      await tester.tap(find.bySemanticsLabel('Family code K 7 M 4 P 2 Q 8'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FamilyInviteSheet), findsOneWidget);
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      expect(rosterRefreshes, 2);
+
+      const gatherLabel = 'Ask Noura, Mariam, Youssef & Layla to come';
+      await tester.ensureVisible(find.text(gatherLabel));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(gatherLabel));
+      await tester.pump();
+      expect(share.nudges, 1);
+      expect(find.byType(FamilyInviteSheet), findsNothing);
+    },
+  );
+
+  testWidgets('pending family request notice opens its resolution sheet', (
     tester,
   ) async {
-    final share = _NudgeShareService();
+    final requests = _ObservatoryJoinRequestsController(
+      FamilyJoinRequestsState(requests: [_pendingJoinRequest]),
+    );
     var rosterRefreshes = 0;
+    await tester.pumpWidget(
+      _observatory(
+        entries: const [],
+        requestsController: requests,
+        refreshRoster: () async => rosterRefreshes += 1,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Amina wants to join'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('family-join-request-notice')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(FamilyJoinRequestSheet), findsOneWidget);
+    expect(find.text('Amina wants to join'), findsWidgets);
+    await tester.tap(find.byKey(const Key('approve-join-request')));
+    await tester.pumpAndSettle();
+    expect(requests.approveCalls, 1);
+    expect(find.byType(FamilyJoinRequestSheet), findsNothing);
+    expect(rosterRefreshes, 1);
+  });
+
+  testWidgets('a disappeared pending request refreshes authoritative roster', (
+    tester,
+  ) async {
+    final requests = _ObservatoryJoinRequestsController(
+      FamilyJoinRequestsState(requests: [_pendingJoinRequest]),
+    );
+    var rosterRefreshes = 0;
+    await tester.pumpWidget(
+      _observatory(
+        entries: const [],
+        requestsController: requests,
+        refreshRoster: () async => rosterRefreshes += 1,
+      ),
+    );
+    await tester.pump();
+
+    requests.emit(const FamilyJoinRequestsState());
+    await tester.pump();
+
+    expect(rosterRefreshes, 1);
+    expect(find.text('Amina wants to join'), findsNothing);
+  });
+
+  testWidgets(
+    'a recent approval polls until delayed membership activation appears',
+    (tester) async {
+      final requests = _ObservatoryJoinRequestsController(
+        FamilyJoinRequestsState(requests: [_pendingJoinRequest]),
+      );
+      final roster = _ObservatoryRosterStateController(
+        FamilyRosterState(members: _defaultRoster, hasLoadedLocal: true),
+      );
+      var activationIsVisible = false;
+      var rosterRefreshes = 0;
+
+      await tester.pumpWidget(
+        _observatory(
+          entries: const [],
+          requestsController: requests,
+          rosterController: roster,
+          refreshRoster: () async {
+            rosterRefreshes += 1;
+            if (activationIsVisible) {
+              roster.emit(
+                FamilyRosterState(
+                  members: [..._defaultRoster, _activatedPendingMember()],
+                  hasLoadedLocal: true,
+                ),
+              );
+            }
+          },
+        ),
+      );
+      await tester.pump();
+
+      requests.emit(const FamilyJoinRequestsState());
+      await tester.pump();
+      expect(rosterRefreshes, 1);
+
+      activationIsVisible = true;
+      await tester.pump(const Duration(minutes: 1));
+      await tester.pump();
+
+      expect(rosterRefreshes, greaterThan(1));
+      final wheel = tester.widget<FamilyWheelScreen>(
+        find.byType(FamilyWheelScreen),
+      );
+      expect(
+        wheel.members.map((member) => member.id),
+        contains(_pendingJoinRequest.memberId),
+      );
+
+      final refreshesAfterActivation = rosterRefreshes;
+      await tester.pump(const Duration(hours: 1));
+      await tester.pump();
+      expect(rosterRefreshes, refreshesAfterActivation);
+    },
+  );
+
+  testWidgets(
+    'activation beyond one minute reconciles without another request signal',
+    (tester) async {
+      final requests = _ObservatoryJoinRequestsController(
+        FamilyJoinRequestsState(requests: [_pendingJoinRequest]),
+      );
+      final roster = _ObservatoryRosterStateController(
+        FamilyRosterState(members: _defaultRoster, hasLoadedLocal: true),
+      );
+      var activationIsVisible = false;
+      var rosterRefreshes = 0;
+
+      await tester.pumpWidget(
+        _observatory(
+          entries: const [],
+          requestsController: requests,
+          rosterController: roster,
+          refreshRoster: () async {
+            rosterRefreshes += 1;
+            if (activationIsVisible) {
+              roster.emit(
+                FamilyRosterState(
+                  members: [..._defaultRoster, _activatedPendingMember()],
+                  hasLoadedLocal: true,
+                ),
+              );
+            }
+          },
+        ),
+      );
+      await tester.pump();
+
+      requests.emit(const FamilyJoinRequestsState());
+      await tester.pump();
+      expect(rosterRefreshes, 1);
+
+      for (final delay in const [
+        Duration(seconds: 15),
+        Duration(seconds: 30),
+        Duration(minutes: 1),
+        Duration(minutes: 2),
+        Duration(minutes: 5),
+        Duration(minutes: 5),
+      ]) {
+        await tester.pump(delay);
+        await tester.pump();
+      }
+      expect(rosterRefreshes, greaterThan(5));
+
+      activationIsVisible = true;
+      await tester.pump(const Duration(minutes: 5));
+      await tester.pump();
+
+      final wheel = tester.widget<FamilyWheelScreen>(
+        find.byType(FamilyWheelScreen),
+      );
+      expect(
+        wheel.members.map((member) => member.id),
+        contains(_pendingJoinRequest.memberId),
+      );
+
+      final refreshesAfterActivation = rosterRefreshes;
+      await tester.pump(const Duration(hours: 1));
+      await tester.pump();
+      expect(rosterRefreshes, refreshesAfterActivation);
+    },
+  );
+
+  testWidgets('activation backoff stays quiet and disposal cancels it', (
+    tester,
+  ) async {
+    final requests = _ObservatoryJoinRequestsController(
+      FamilyJoinRequestsState(requests: [_pendingJoinRequest]),
+    );
+    var rosterRefreshes = 0;
+    await tester.pumpWidget(
+      _observatory(
+        entries: const [],
+        requestsController: requests,
+        refreshRoster: () async => rosterRefreshes += 1,
+      ),
+    );
+    await tester.pump();
+
+    requests.emit(const FamilyJoinRequestsState());
+    await tester.pump();
+    for (final delay in const [
+      Duration(seconds: 15),
+      Duration(seconds: 30),
+      Duration(minutes: 1),
+      Duration(minutes: 2),
+      Duration(minutes: 5),
+      Duration(minutes: 5),
+    ]) {
+      await tester.pump(delay);
+      await tester.pump();
+    }
+
+    expect(rosterRefreshes, greaterThan(5));
+    expect(rosterRefreshes, lessThan(12));
+    final refreshesBeforeDisposal = rosterRefreshes;
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(hours: 1));
+    expect(rosterRefreshes, refreshesBeforeDisposal);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('gathering nudge prevents duplicate shares and reports failure', (
+    tester,
+  ) async {
+    final share = _ControlledNudgeShareService();
     await tester.pumpWidget(
       _observatoryWithOverride(
         vaultEntriesProvider.overrideWithValue(
           const AsyncValue.data(<VaultEntryMetadata>[]),
         ),
         shareService: share,
-        refreshRoster: () async => rosterRefreshes += 1,
       ),
     );
     await tester.pump();
 
-    await tester.tap(find.byKey(const ValueKey('family-invite-node-action')));
-    await tester.pumpAndSettle();
-    expect(find.byType(FamilyInviteScreen), findsOneWidget);
-    expect(share.nudges, 0);
-
-    Navigator.of(tester.element(find.byType(FamilyInviteScreen))).pop();
-    await tester.pumpAndSettle();
-    expect(rosterRefreshes, 1);
     const gatherLabel = 'Ask Noura, Mariam, Youssef & Layla to come';
     await tester.ensureVisible(find.text(gatherLabel));
+    await tester.pumpAndSettle();
     await tester.tap(find.text(gatherLabel));
+    await tester.tap(find.text(gatherLabel), warnIfMissed: false);
     await tester.pump();
     expect(share.nudges, 1);
-    expect(find.byType(FamilyInviteScreen), findsNothing);
+
+    share.pending.completeError(StateError('share unavailable'));
+    await tester.pump();
+    expect(
+      find.text('Sharing could not be opened. Try again.'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('resuming the app refreshes the synchronized roster', (
+  testWidgets('resume refreshes family code, joins, roster, and vault', (
     tester,
   ) async {
     var rosterRefreshes = 0;
+    var vaultLoads = 0;
+    var completionRecoveries = 0;
+    final code = _ObservatoryFamilyCodeController();
+    final requests = _ObservatoryJoinRequestsController();
     await tester.pumpWidget(
-      _observatory(
-        entries: const [],
+      _observatoryWithOverride(
+        vaultEntriesProvider.overrideWith((ref) async {
+          vaultLoads += 1;
+          return const [];
+        }),
         refreshRoster: () async => rosterRefreshes += 1,
+        codeController: code,
+        requestsController: requests,
+        recoverJoin: () async {
+          completionRecoveries += 1;
+          return const PendingJoinCompletionState();
+        },
       ),
     );
     await tester.pump();
@@ -456,9 +851,13 @@ void main() {
     await tester.pump();
 
     expect(rosterRefreshes, 1);
+    expect(vaultLoads, 2);
+    expect(code.loadCalls, 1);
+    expect(requests.refreshCalls, 1);
+    expect(completionRecoveries, 1);
   });
 
-  testWidgets('large synchronized families remain available on both surfaces', (
+  testWidgets('large synchronized families remain available on the wheel', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -501,17 +900,15 @@ void main() {
     );
     expect(tester.takeException(), isNull);
 
+    expect(find.byKey(const ValueKey('weekly-recap-mode')), findsOneWidget);
+
     await tester.tap(find.bySemanticsLabel('Memory Key'));
     await tester.pump();
-    for (final relative in relatives) {
-      expect(find.bySemanticsLabel('${relative.name}, away'), findsOneWidget);
-    }
-    final lastMember = find.bySemanticsLabel('Relative 17, away');
-    expect(lastMember.hitTestable(), findsNothing);
-    await tester.ensureVisible(lastMember);
-    await tester.pump();
-    expect(lastMember.hitTestable(), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const ValueKey('memory-key-legacy-entry')),
+      findsOneWidget,
+    );
+    expect(find.bySemanticsLabel('Relative 17, away'), findsNothing);
   });
 
   testWidgets('persisted remote profile omits device-local activity claims', (
@@ -562,9 +959,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.ensureVisible(find.text('CAPSULE'));
-    await tester.pump();
-    await tester.tap(find.text('CAPSULE'));
+    await tester.tap(find.bySemanticsLabel('Memory Key'));
     await tester.pump();
     await tester.tap(find.bySemanticsLabel('Keep a memory'));
     await tester.pump();
@@ -579,7 +974,7 @@ void main() {
     expect(captures, 3);
   });
 
-  testWidgets('memory key receives real kept vault memories for random draw', (
+  testWidgets('archive receives real kept vault memories for random draw', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -589,21 +984,117 @@ void main() {
     );
     await tester.pump();
 
-    await tester.ensureVisible(find.text('CAPSULE'));
-    await tester.pump();
-    await tester.tap(find.text('CAPSULE'));
+    await tester.tap(find.bySemanticsLabel('Archive'));
     await tester.pump();
 
-    expect(find.text('1 kept — one comes back at random'), findsOneWidget);
+    expect(find.byType(ArchiveScreen), findsOneWidget);
+    expect(find.text('Draw a memory'), findsOneWidget);
+    expect(find.bySemanticsLabel('1 memory kept forever'), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Memory Key'));
+    await tester.pump();
+    expect(find.text('Draw a memory'), findsNothing);
+  });
+
+  testWidgets('archive attributes kept memories to roster members', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _observatory(
+        entries: [
+          _metadata(
+            MemoryFormat.voice,
+            13,
+          ).copyWith(authorId: 'noura', state: 'kept'),
+        ],
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.bySemanticsLabel('Archive'));
+    await tester.pump();
+
+    expect(find.textContaining('Noura · Voices'), findsOneWidget);
+    expect(find.textContaining('Family member · Voices'), findsNothing);
+  });
+
+  testWidgets('weekly progress counts same-week pending reveal photos only', (
+    tester,
+  ) async {
+    final thisWeek = DateTime.now().toUtc();
+    await tester.pumpWidget(
+      _observatory(
+        entries: [
+          _metadata(MemoryFormat.photo, 1).copyWith(createdAt: thisWeek),
+          _metadata(MemoryFormat.voice, 2).copyWith(createdAt: thisWeek),
+          _metadata(MemoryFormat.text, 3).copyWith(createdAt: thisWeek),
+        ],
+      ),
+    );
+    await tester.pump();
+
+    final wheel = tester.widget<FamilyWheelScreen>(
+      find.byType(FamilyWheelScreen),
+    );
+    expect(wheel.weeklyPhotoCount, 1);
+  });
+
+  testWidgets('weekly photos reset at device-local Monday', (tester) async {
+    final localMonday = DateTime(2026, 9, 7);
+    await tester.pumpWidget(
+      _observatory(
+        entries: [
+          _metadata(MemoryFormat.photo, 4).copyWith(
+            createdAt: localMonday
+                .subtract(const Duration(microseconds: 1))
+                .toUtc(),
+          ),
+          _metadata(
+            MemoryFormat.photo,
+            5,
+          ).copyWith(createdAt: localMonday.toUtc()),
+        ],
+        now: localMonday.add(const Duration(hours: 1)),
+      ),
+    );
+    await tester.pump();
+
+    final wheel = tester.widget<FamilyWheelScreen>(
+      find.byType(FamilyWheelScreen),
+    );
+    expect(wheel.weeklyPhotoCount, 1);
+  });
+
+  testWidgets('weekly photos exclude timestamps after the supplied time', (
+    tester,
+  ) async {
+    final now = DateTime(2026, 9, 9, 12);
+    await tester.pumpWidget(
+      _observatory(
+        entries: [
+          _metadata(
+            MemoryFormat.photo,
+            6,
+          ).copyWith(createdAt: now.subtract(const Duration(hours: 1)).toUtc()),
+          _metadata(MemoryFormat.photo, 7).copyWith(
+            createdAt: now.add(const Duration(microseconds: 1)).toUtc(),
+          ),
+        ],
+        now: now,
+      ),
+    );
+    await tester.pump();
+
+    final wheel = tester.widget<FamilyWheelScreen>(
+      find.byType(FamilyWheelScreen),
+    );
+    expect(wheel.weeklyPhotoCount, 1);
   });
 
   testWidgets(
     'single-device app can preview Weekly without unlocking the real recap',
     (tester) async {
       await tester.pumpWidget(_observatory(entries: const []));
-      await tester.pump();
-
-      await tester.tap(find.bySemanticsLabel('Memory Key'));
       await tester.pump();
 
       final weeklyCard = find.byKey(const ValueKey('weekly-recap-mode'));
@@ -614,7 +1105,16 @@ void main() {
         ),
       );
       expect(weeklyOpen.onPressed, isNull);
-      expect(find.text('1 of 2 devices'), findsOneWidget);
+      final progress = find.bySemanticsLabel('Weekly photo progress');
+      expect(progress, findsOneWidget);
+      expect(
+        tester.getSemantics(progress).getSemanticsData().value,
+        '0 of 5 photos. 5 photos needed',
+      );
+      expect(
+        find.textContaining('family member needs to be present'),
+        findsNothing,
+      );
 
       final preview = find.byKey(const ValueKey('weekly-recap-preview'));
       expect(preview, findsOneWidget);
@@ -626,6 +1126,8 @@ void main() {
         findsOneWidget,
       );
 
+      await tester.ensureVisible(preview);
+      await tester.pump();
       await tester.tap(preview);
       await tester.pumpAndSettle();
 
@@ -634,6 +1136,79 @@ void main() {
       expect(find.text('REHEARSAL MODE'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'debug app temporarily opens a full Weekly vault without proximity data',
+    (tester) async {
+      final now = DateTime(2026, 9, 9, 12);
+      final entries = List.generate(
+        5,
+        (index) => _metadata(
+          MemoryFormat.photo,
+          index + 1,
+        ).copyWith(createdAt: now.subtract(Duration(hours: index + 1)).toUtc()),
+      );
+
+      await tester.pumpWidget(_observatory(entries: entries, now: now));
+      await tester.pump();
+
+      final wheel = tester.widget<FamilyWheelScreen>(
+        find.byType(FamilyWheelScreen),
+      );
+      expect(
+        wheel.weeklyPresencePolicy,
+        WeeklyPresencePolicy.temporaryAllowUntilProximityProxy,
+      );
+
+      final open = find.byKey(const ValueKey('weekly-recap-open'));
+      await tester.ensureVisible(open);
+      await tester.pump();
+      expect(
+        tester
+            .getSemantics(open)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      expect(
+        find.text('Ask Noura, Mariam, Youssef & Layla to come'),
+        findsOneWidget,
+      );
+    },
+    semanticsEnabled: true,
+  );
+
+  testWidgets('real Weekly callback never opens the rehearsal fixture', (
+    tester,
+  ) async {
+    final now = DateTime(2026, 9, 9, 12);
+    final entries = List.generate(
+      5,
+      (index) => _metadata(
+        MemoryFormat.photo,
+        index + 1,
+      ).copyWith(createdAt: now.subtract(Duration(hours: index + 1)).toUtc()),
+    );
+    await tester.pumpWidget(_observatory(entries: entries, now: now));
+    await tester.pump();
+
+    tester
+        .widget<FamilyWheelScreen>(find.byType(FamilyWheelScreen))
+        .onOpenWeeklyExperience!
+        .call();
+    await tester.pump();
+
+    final ceremony = tester.widget<CeremonyScreen>(find.byType(CeremonyScreen));
+    expect(ceremony.weeklyPreview, isFalse);
+    expect(ceremony.weeklyMemories, isNotNull);
+    expect(ceremony.onWeeklyDecision, isNotNull);
+    expect(
+      find.byKey(const ValueKey('weekly-experience-loading')),
+      findsOneWidget,
+    );
+    expect(find.text('REHEARSAL MODE'), findsNothing);
+    expect(find.text('A small moment'), findsNothing);
+  });
 
   testWidgets('destination shell stays stable at phone width and 1.4x text', (
     tester,
@@ -653,9 +1228,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.ensureVisible(find.text('CAPSULE'));
-    await tester.pump();
-    await tester.tap(find.text('CAPSULE'));
+    await tester.tap(find.bySemanticsLabel('Memory Key'));
     await tester.pump();
     expect(tester.takeException(), isNull, reason: 'Memory Key');
 
@@ -671,12 +1244,22 @@ Widget _observatory({
   required List<VaultEntryMetadata> entries,
   MediaQueryData? mediaQuery,
   FamilyRosterState? rosterState,
+  _ObservatoryRosterStateController? rosterController,
   FamilyRosterRefresh? refreshRoster,
+  _ObservatoryFamilyCodeController? codeController,
+  _ObservatoryJoinRequestsController? requestsController,
+  FamilyJoinCompletionRecovery? recoverJoin,
+  DateTime? now,
 }) => _observatoryWithOverride(
   vaultEntriesProvider.overrideWithValue(AsyncValue.data(entries)),
   mediaQuery: mediaQuery,
   rosterState: rosterState,
+  rosterController: rosterController,
   refreshRoster: refreshRoster,
+  codeController: codeController,
+  requestsController: requestsController,
+  recoverJoin: recoverJoin,
+  now: now,
 );
 
 Widget _observatoryWithOverride(
@@ -685,18 +1268,40 @@ Widget _observatoryWithOverride(
   Future<EntryMetadata?> Function(BuildContext)? showCapture,
   InviteShareService? shareService,
   FamilyRosterState? rosterState,
+  _ObservatoryRosterStateController? rosterController,
   FamilyRosterRefresh? refreshRoster,
+  _ObservatoryFamilyCodeController? codeController,
+  _ObservatoryJoinRequestsController? requestsController,
+  FamilyJoinCompletionRecovery? recoverJoin,
+  DateTime? now,
 }) {
   final effectiveRoster =
       rosterState ??
       FamilyRosterState(members: _defaultRoster, hasLoadedLocal: true);
+  final effectiveRosterController =
+      rosterController ?? _ObservatoryRosterStateController(effectiveRoster);
+  final effectiveCode = codeController ?? _ObservatoryFamilyCodeController();
+  final effectiveRequests =
+      requestsController ?? _ObservatoryJoinRequestsController();
   return ProviderScope(
     overrides: [
       override,
-      familyRosterProvider(_identity.familyId)
-          .overrideWithBuild((ref, notifier) => effectiveRoster),
+      _observatoryRosterStateProvider.overrideWith(
+        () => effectiveRosterController,
+      ),
+      familyRosterProvider(_identity.familyId).overrideWithBuild(
+        (ref, notifier) => ref.watch(_observatoryRosterStateProvider),
+      ),
       familyRosterRefreshProvider(_identity.familyId)
           .overrideWithValue(refreshRoster ?? () async {}),
+      familyCodeControllerProvider(_identity.familyId)
+          .overrideWith(() => effectiveCode),
+      familyJoinRequestsControllerProvider(_identity.familyId)
+          .overrideWith(() => effectiveRequests),
+      familyJoinCompletionRecoveryProvider.overrideWithValue(
+        recoverJoin ?? () async => const PendingJoinCompletionState(),
+      ),
+      if (now != null) utcNowProvider.overrideWithValue(() => now.toUtc()),
       if (shareService != null)
         inviteShareServiceProvider.overrideWithValue(shareService),
     ],
@@ -710,12 +1315,83 @@ Widget _observatoryWithOverride(
   );
 }
 
-final class _NudgeShareService implements InviteShareService {
+final class _ObservatoryRosterStateController
+    extends Notifier<FamilyRosterState> {
+  _ObservatoryRosterStateController(this.initial);
+
+  final FamilyRosterState initial;
+
+  @override
+  FamilyRosterState build() => initial;
+
+  void emit(FamilyRosterState next) => state = next;
+}
+
+final class _ObservatoryFamilyCodeController extends FamilyCodeController {
+  _ObservatoryFamilyCodeController() : super(_identity.familyId);
+
+  var loadCalls = 0;
+
+  @override
+  FamilyCodeState build() => const FamilyCodeState(
+    phase: FamilyCodePhase.ready,
+    displayCode: 'K7M4-P2Q8',
+    codeVersion: 1,
+    isOffline: true,
+  );
+
+  @override
+  Future<void> load() async => loadCalls += 1;
+}
+
+final class _ObservatoryJoinRequestsController
+    extends FamilyJoinRequestsController {
+  _ObservatoryJoinRequestsController([
+    this.initial = const FamilyJoinRequestsState(),
+  ]) : super(_identity.familyId);
+
+  final FamilyJoinRequestsState initial;
+  var refreshCalls = 0;
+  var approveCalls = 0;
+
+  @override
+  FamilyJoinRequestsState build() => initial;
+
+  void emit(FamilyJoinRequestsState next) => state = next;
+
+  @override
+  Future<void> approve(String requestId) async {
+    approveCalls += 1;
+    state = const FamilyJoinRequestsState();
+  }
+
+  @override
+  Future<void> refresh() async => refreshCalls += 1;
+}
+
+final class _NudgeShareService extends InviteShareService {
   var nudges = 0;
 
   @override
   Future<void> shareGatheringNudge({Rect? sharePositionOrigin}) async {
     nudges += 1;
+  }
+
+  @override
+  Future<void> shareInvitation(
+    Uri invitationUri, {
+    Rect? sharePositionOrigin,
+  }) => throw UnimplementedError();
+}
+
+final class _ControlledNudgeShareService extends InviteShareService {
+  var nudges = 0;
+  final pending = Completer<void>();
+
+  @override
+  Future<void> shareGatheringNudge({Rect? sharePositionOrigin}) {
+    nudges += 1;
+    return pending.future;
   }
 
   @override
@@ -746,3 +1422,29 @@ EntryMetadata _entryMetadata(MemoryFormat format, int day) => EntryMetadata(
   privacy: PrivacyTier.reveal,
   blobRef: 'entries/blobs/entry-${format.name}-$day.keeper',
 );
+
+OpenedMemory _openedText(VaultEntryMetadata metadata, String text) =>
+    OpenedMemory(
+      metadata: metadata,
+      payload: EntryPayload(
+        format: MemoryFormat.text,
+        primaryBytes: null,
+        text: text,
+        caption: null,
+        mediaExtension: null,
+        mediaDurationMs: null,
+      ),
+    );
+
+OpenedMemory _openedPhoto(VaultEntryMetadata metadata, Uint8List bytes) =>
+    OpenedMemory(
+      metadata: metadata,
+      payload: EntryPayload(
+        format: MemoryFormat.photo,
+        primaryBytes: bytes,
+        text: null,
+        caption: null,
+        mediaExtension: 'jpg',
+        mediaDurationMs: null,
+      ),
+    );

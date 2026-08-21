@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,19 +11,27 @@ import 'package:keepers/features/capture/application/capture_providers.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/capture/presentation/capture_sheet.dart';
 import 'package:keepers/features/ceremony/presentation/ceremony_screen.dart';
+import 'package:keepers/features/family/application/cloud_family_providers.dart';
+import 'package:keepers/features/family/application/family_code_controller.dart';
+import 'package:keepers/features/family/application/family_join_controller.dart';
+import 'package:keepers/features/family/application/family_join_requests_controller.dart';
 import 'package:keepers/features/family/application/family_roster_provider.dart';
 import 'package:keepers/features/family/data/invite_share_service.dart';
 import 'package:keepers/features/family/domain/family_invitation.dart';
+import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
-import 'package:keepers/features/family/presentation/family_invite_screen.dart';
+import 'package:keepers/features/family/presentation/family_invite_sheet.dart';
+import 'package:keepers/features/family/presentation/family_join_request_sheet.dart';
 import 'package:keepers/features/locks/presentation/locks_screen.dart';
 import 'package:keepers/features/members/presentation/member_page_screen.dart';
 import 'package:keepers/features/members/presentation/your_memories_screen.dart';
+import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/features/onboarding/domain/local_identity.dart';
 import 'package:keepers/features/settings/presentation/settings_screen.dart';
 import 'package:keepers/features/vault/application/vault_providers.dart';
 import 'package:keepers/features/vault/domain/vault_models.dart';
 import 'package:keepers/features/vault/presentation/memory_viewer.dart';
+import 'package:keepers/storage/database_providers.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/family_wheel_screen.dart';
 import 'package:keepers/ui/keepers_bottom_nav.dart';
@@ -31,6 +40,74 @@ import 'package:keepers/ui/keepers_destination_scaffold.dart';
 typedef CaptureSheetLauncher = Future<EntryMetadata?> Function(
   BuildContext context,
 );
+
+enum _WeeklyExperienceMode { preview, live }
+
+final class WeeklyMemoryLoadFailure implements Exception {
+  const WeeklyMemoryLoadFailure();
+
+  @override
+  String toString() => 'WeeklyMemoryLoadFailure';
+}
+
+@visibleForTesting
+Future<List<OpenedMemory>> loadWeeklyMemoriesSequentially(
+  Iterable<VaultEntryMetadata> entries,
+  Future<MemoryOpenResult> Function(VaultEntryMetadata metadata) open,
+) async {
+  final opened = <OpenedMemory>[];
+  try {
+    for (final entry in entries) {
+      final result = await open(entry);
+      if (result is! OpenedMemory) {
+        throw const WeeklyMemoryLoadFailure();
+      }
+      opened.add(result);
+    }
+    return List<OpenedMemory>.unmodifiable(opened);
+  } on WeeklyMemoryLoadFailure {
+    _clearOpenedPrimaryBytes(opened);
+    rethrow;
+  } on Object {
+    _clearOpenedPrimaryBytes(opened);
+    throw const WeeklyMemoryLoadFailure();
+  }
+}
+
+void _clearOpenedPrimaryBytes(Iterable<OpenedMemory> opened) {
+  for (final memory in opened) {
+    final bytes = memory.payload.primaryBytes;
+    bytes?.fillRange(0, bytes.length, 0);
+  }
+}
+
+/// Owns decrypted Weekly media for exactly one on-screen experience.
+///
+/// A late load is cleared too, so closing while decryption is in flight cannot
+/// leave private image or voice bytes retained by the completed future.
+@visibleForTesting
+final class WeeklyMemoryPayloadLease {
+  List<OpenedMemory>? _opened;
+  bool _released = false;
+
+  Future<List<OpenedMemory>> own(Future<List<OpenedMemory>> loading) async {
+    final opened = await loading;
+    if (_released) {
+      _clearOpenedPrimaryBytes(opened);
+    } else {
+      _opened = opened;
+    }
+    return opened;
+  }
+
+  void release() {
+    if (_released) return;
+    _released = true;
+    final opened = _opened;
+    _opened = null;
+    if (opened != null) _clearOpenedPrimaryBytes(opened);
+  }
+}
 
 final class ObservatoryScreen extends ConsumerStatefulWidget {
   const ObservatoryScreen({
@@ -48,8 +125,27 @@ final class ObservatoryScreen extends ConsumerStatefulWidget {
 
 final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     with WidgetsBindingObserver {
+  static const _activationRefreshBackoff = [
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(minutes: 1),
+    Duration(minutes: 2),
+    Duration(minutes: 5),
+  ];
+
   bool _captureInFlight = false;
+  bool _nudgeInFlight = false;
   KeepersNavDestination _selectedDestination = KeepersNavDestination.wheel;
+  _WeeklyExperienceMode? _weeklyExperienceMode;
+  Future<List<OpenedMemory>>? _weeklyMemories;
+  WeeklyMemoryPayloadLease? _weeklyPayloadLease;
+  final Set<String> _awaitingActivationMemberIds = {};
+  Timer? _activationRefreshTimer;
+  String? _activationFamilyId;
+  String? _activationAccountId;
+  var _activationRefreshDelayIndex = 0;
+  int? _activationRefreshInFlightEpoch;
+  var _activationEpoch = 0;
 
   @override
   void initState() {
@@ -59,14 +155,43 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
 
   @override
   void dispose() {
+    _stopActivationReconciliation();
+    _releaseWeeklyPayloads();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   @override
+  void didUpdateWidget(covariant ObservatoryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.identity.familyId != widget.identity.familyId ||
+        oldWidget.identity.accountId != widget.identity.accountId ||
+        oldWidget.identity.memberId != widget.identity.memberId) {
+      _stopActivationReconciliation();
+    }
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      ref.invalidate(vaultEntriesProvider);
       unawaited(_refreshRoster());
+      unawaited(
+        ref
+            .read(
+              familyCodeControllerProvider(widget.identity.familyId).notifier,
+            )
+            .load(),
+      );
+      unawaited(ref.read(familyJoinCompletionRecoveryProvider)());
+      unawaited(
+        ref
+            .read(
+              familyJoinRequestsControllerProvider(widget.identity.familyId)
+                  .notifier,
+            )
+            .refresh(),
+      );
     }
   }
 
@@ -93,30 +218,261 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
   }
 
   void _selectDestination(KeepersNavDestination destination) {
-    if (_selectedDestination == destination) return;
-    setState(() => _selectedDestination = destination);
+    if (_selectedDestination == destination) {
+      if (destination != KeepersNavDestination.ceremony ||
+          _weeklyExperienceMode == null) {
+        return;
+      }
+      _releaseWeeklyPayloads();
+      setState(() {
+        _weeklyExperienceMode = null;
+        _weeklyMemories = null;
+      });
+      return;
+    }
+    _releaseWeeklyPayloads();
+    setState(() {
+      _selectedDestination = destination;
+      _weeklyExperienceMode = null;
+      _weeklyMemories = null;
+    });
+  }
+
+  void _previewWeeklyExperience() {
+    _releaseWeeklyPayloads();
+    setState(() {
+      _weeklyExperienceMode = _WeeklyExperienceMode.preview;
+      _weeklyMemories = null;
+      _selectedDestination = KeepersNavDestination.ceremony;
+    });
+  }
+
+  void _openWeeklyExperience(List<VaultEntryMetadata> entries) {
+    _releaseWeeklyPayloads();
+    final lease = WeeklyMemoryPayloadLease();
+    _weeklyPayloadLease = lease;
+    final memories = lease.own(_loadWeeklyMemories(entries));
+    setState(() {
+      _weeklyExperienceMode = _WeeklyExperienceMode.live;
+      _weeklyMemories = memories;
+      _selectedDestination = KeepersNavDestination.ceremony;
+    });
+  }
+
+  void _releaseWeeklyPayloads() {
+    _weeklyPayloadLease?.release();
+    _weeklyPayloadLease = null;
+  }
+
+  Future<List<OpenedMemory>> _loadWeeklyMemories(
+    List<VaultEntryMetadata> entries,
+  ) async {
+    final controller = await ref.read(vaultControllerProvider.future);
+    return loadWeeklyMemoriesSequentially(entries, controller.open);
+  }
+
+  Future<void> _resolveWeeklyMemory(
+    VaultEntryMetadata metadata,
+    WeeklyMemoryDisposition disposition,
+  ) async {
+    final database = await ref.read(databaseProvider.future);
+    final updated = await ref
+        .read(vaultRepositoryProvider)
+        .resolveWeeklyEntry(
+          database,
+          entry: metadata,
+          disposition: disposition,
+          decidedAt: ref.read(utcNowProvider)().toUtc(),
+        );
+    if (!updated) {
+      throw StateError('The Weekly memory was already resolved.');
+    }
+    ref.invalidate(vaultEntriesProvider);
   }
 
   Future<void> _addMember() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        settings: const RouteSettings(name: '/family/invite'),
-        builder: (context) => Theme(
-          data: KeepersTheme.daylight(),
-          child: const FamilyInviteScreen(),
-        ),
-      ),
-    );
+    await FamilyInviteSheet.show(context, familyId: widget.identity.familyId);
     if (mounted) await _refreshRoster();
   }
 
-  void _nudgeMissingMembers() {
-    unawaited(
-      ref
-          .read(inviteShareServiceProvider)
-          .shareGatheringNudge()
-          .onError((_, _) {}),
+  Future<void> _openJoinRequest(PendingFamilyJoinRequest request) =>
+      FamilyJoinRequestSheet.show(
+        context,
+        familyId: widget.identity.familyId,
+        request: request,
+      );
+
+  void _handleJoinRequestsChanged(
+    FamilyJoinRequestsState? previous,
+    FamilyJoinRequestsState next,
+  ) {
+    if (previous == null) return;
+    final nextIds = next.requests.map((request) => request.requestId).toSet();
+    final disappeared = previous.requests.where(
+      (request) =>
+          request.familyId == widget.identity.familyId &&
+          !nextIds.contains(request.requestId),
     );
+    if (disappeared.isNotEmpty && next.failure == null) {
+      _beginActivationReconciliation(disappeared);
+    }
+  }
+
+  void _beginActivationReconciliation(
+    Iterable<PendingFamilyJoinRequest> disappeared,
+  ) {
+    final identityAccountId = widget.identity.accountId;
+    final rosterAccountId = ref
+        .read(cloudFamilyGatewayProvider)
+        .authenticatedAccountId;
+    final requestsAccountId = ref
+        .read(familyCodeJoinGatewayProvider)
+        .authenticatedAccountId;
+    if (identityAccountId != rosterAccountId ||
+        identityAccountId != requestsAccountId) {
+      _stopActivationReconciliation();
+      return;
+    }
+
+    final familyId = widget.identity.familyId;
+    if (_activationFamilyId != familyId ||
+        _activationAccountId != identityAccountId) {
+      _stopActivationReconciliation();
+      _activationFamilyId = familyId;
+      _activationAccountId = identityAccountId;
+    }
+    _awaitingActivationMemberIds.addAll(
+      disappeared.map((request) => request.memberId),
+    );
+    _pruneActivatedMembers(ref.read(familyRosterProvider(familyId)).members);
+    if (_awaitingActivationMemberIds.isEmpty) return;
+
+    _activationRefreshTimer?.cancel();
+    _activationRefreshTimer = null;
+    _activationRefreshDelayIndex = 0;
+    final epoch = _activationEpoch;
+    unawaited(_refreshAwaitingActivationRoster());
+    _scheduleActivationRefresh(epoch);
+  }
+
+  void _scheduleActivationRefresh(int epoch) {
+    if (epoch != _activationEpoch ||
+        _activationRefreshTimer != null ||
+        _awaitingActivationMemberIds.isEmpty ||
+        !_activationScopeIsCurrent) {
+      return;
+    }
+    final lastIndex = _activationRefreshBackoff.length - 1;
+    final delayIndex = _activationRefreshDelayIndex > lastIndex
+        ? lastIndex
+        : _activationRefreshDelayIndex;
+    final delay = _activationRefreshBackoff[delayIndex];
+    if (_activationRefreshDelayIndex < lastIndex) {
+      _activationRefreshDelayIndex += 1;
+    }
+    late final Timer timer;
+    timer = Timer(delay, () {
+      if (!identical(_activationRefreshTimer, timer)) return;
+      _activationRefreshTimer = null;
+      if (epoch != _activationEpoch) return;
+      if (!_activationScopeIsCurrent) {
+        _stopActivationReconciliation();
+        return;
+      }
+      unawaited(_refreshAwaitingActivationRoster());
+      _scheduleActivationRefresh(epoch);
+    });
+    _activationRefreshTimer = timer;
+  }
+
+  Future<void> _refreshAwaitingActivationRoster() async {
+    final epoch = _activationEpoch;
+    if (_activationRefreshInFlightEpoch == epoch ||
+        _awaitingActivationMemberIds.isEmpty ||
+        !_activationScopeIsCurrent) {
+      return;
+    }
+    _activationRefreshInFlightEpoch = epoch;
+    try {
+      await _refreshRoster();
+    } on Object {
+      // The roster state owns its retry affordance. This bounded refresh is an
+      // invalidation hint while the requester's phase-two install catches up.
+    } finally {
+      if (_activationRefreshInFlightEpoch == epoch) {
+        _activationRefreshInFlightEpoch = null;
+      }
+      if (mounted && epoch == _activationEpoch && _activationScopeIsCurrent) {
+        _pruneActivatedMembers(
+          ref.read(familyRosterProvider(widget.identity.familyId)).members,
+        );
+      }
+    }
+  }
+
+  bool get _activationScopeIsCurrent {
+    if (!mounted || _activationFamilyId != widget.identity.familyId) {
+      return false;
+    }
+    final accountId = _activationAccountId;
+    return widget.identity.accountId == accountId &&
+        ref.read(cloudFamilyGatewayProvider).authenticatedAccountId ==
+            accountId &&
+        ref.read(familyCodeJoinGatewayProvider).authenticatedAccountId ==
+            accountId;
+  }
+
+  void _handleRosterChanged(
+    FamilyRosterState? previous,
+    FamilyRosterState next,
+  ) {
+    if (_awaitingActivationMemberIds.isNotEmpty) {
+      _pruneActivatedMembers(next.members);
+    }
+  }
+
+  void _pruneActivatedMembers(Iterable<FamilyMember> members) {
+    final familyId = _activationFamilyId;
+    if (familyId == null) return;
+    final activeIds = members
+        .where((member) => member.familyId == familyId)
+        .map((member) => member.id)
+        .toSet();
+    _awaitingActivationMemberIds.removeAll(activeIds);
+    if (_awaitingActivationMemberIds.isEmpty) {
+      _stopActivationReconciliation();
+    }
+  }
+
+  void _stopActivationReconciliation() {
+    _activationEpoch += 1;
+    _activationRefreshTimer?.cancel();
+    _activationRefreshTimer = null;
+    _activationRefreshDelayIndex = 0;
+    _awaitingActivationMemberIds.clear();
+    _activationFamilyId = null;
+    _activationAccountId = null;
+  }
+
+  Future<void> _nudgeMissingMembers() async {
+    if (_nudgeInFlight) return;
+    setState(() => _nudgeInFlight = true);
+    try {
+      await ref.read(inviteShareServiceProvider).shareGatheringNudge();
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: KeepersText('Sharing could not be opened. Try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _nudgeInFlight = false);
+      } else {
+        _nudgeInFlight = false;
+      }
+    }
   }
 
   void _openMember(FamilyWheelMember member, List<VaultEntryMetadata> entries) {
@@ -203,9 +559,16 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
 
   @override
   Widget build(BuildContext context) {
-    final rosterState = ref.watch(
-      familyRosterProvider(widget.identity.familyId),
+    final codeProvider = familyCodeControllerProvider(widget.identity.familyId);
+    final requestsProvider = familyJoinRequestsControllerProvider(
+      widget.identity.familyId,
     );
+    final familyCode = ref.watch(codeProvider);
+    final joinRequests = ref.watch(requestsProvider);
+    ref.listen(requestsProvider, _handleJoinRequestsChanged);
+    final rosterProvider = familyRosterProvider(widget.identity.familyId);
+    final rosterState = ref.watch(rosterProvider);
+    ref.listen(rosterProvider, _handleRosterChanged);
     if (!rosterState.hasLoadedLocal) {
       return _RosterGate(
         failure: rosterState.refreshFailure,
@@ -218,17 +581,21 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     }
     final entriesState = ref.watch(vaultEntriesProvider);
     final entries = entriesState.asData?.value ?? const [];
-    final keptEntries = entries
-        .where((entry) => entry.state == 'kept')
-        .toList();
-    final startOfWeek = _startOfWeek(DateTime.now().toUtc());
-    final weeklyMemoryCount = entries
-        .where(
-          (entry) =>
-              entry.privacy == PrivacyTier.reveal &&
-              entry.state == 'pending' &&
-              !entry.createdAt.isBefore(startOfWeek),
-        )
+    final now = ref.watch(utcNowProvider)().toUtc();
+    final startOfWeek = _startOfLocalWeek(now).toUtc();
+    final weeklyEntries =
+        entries
+            .where(
+              (entry) =>
+                  entry.privacy == PrivacyTier.reveal &&
+                  entry.state == 'pending' &&
+                  !entry.createdAt.toUtc().isBefore(startOfWeek) &&
+                  !entry.createdAt.toUtc().isAfter(now),
+            )
+            .toList(growable: false)
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final weeklyPhotoCount = weeklyEntries
+        .where((entry) => entry.format == MemoryFormat.photo)
         .length;
     final contribution = math.min(
       1.0,
@@ -238,6 +605,13 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
           5,
     );
     final members = _presentationMembers(context, rosterState.members);
+    final pendingJoinRequest = joinRequests.requests.isEmpty
+        ? null
+        : joinRequests.requests.first;
+    final authorNames = <String, String>{
+      for (final member in rosterState.members) member.id: member.name,
+      widget.identity.memberId: widget.identity.memberName,
+    };
 
     final destination = switch (_selectedDestination) {
       KeepersNavDestination.wheel => FamilyWheelScreen(
@@ -245,35 +619,50 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
         currentMemberName: widget.identity.memberName,
         currentMemberAvatar: widget.identity.avatar,
         yourContribution: contribution,
-        requiredPresence: 2,
         members: members,
         onCapture: _captureInFlight ? () {} : () => unawaited(_capture()),
         onCurrentMemberSelected: () => _openYourMemories(entries),
         onMemberSelected: (member) => _openMember(member, entries),
         onAddMember: _addMember,
-        onNudgeMissingMembers: _nudgeMissingMembers,
+        familyCode: familyCode.displayCode,
+        onFamilyCodeTap: _addMember,
+        pendingJoinRequestName: pendingJoinRequest?.displayName,
+        onPendingJoinRequestTap: pendingJoinRequest == null
+            ? null
+            : () => unawaited(_openJoinRequest(pendingJoinRequest)),
+        onNudgeMissingMembers: _nudgeInFlight
+            ? null
+            : () => unawaited(_nudgeMissingMembers()),
+        weeklyPhotoCount: weeklyPhotoCount,
+        // TODO(keepers-proximity): Enforce nearby presence in debug builds as
+        // soon as the real device-proximity source replaces roster-only data.
+        weeklyPresencePolicy: kDebugMode
+            ? WeeklyPresencePolicy.temporaryAllowUntilProximityProxy
+            : WeeklyPresencePolicy.enforceNearby,
+        weeklyPreviewEnabled: true,
+        onOpenWeeklyExperience: () => _openWeeklyExperience(weeklyEntries),
+        onPreviewWeeklyExperience: _previewWeeklyExperience,
         selectedDestination: _selectedDestination,
         enabledDestinations: keepersEnabledDestinations,
         onDestinationSelected: _selectDestination,
       ),
       KeepersNavDestination.ceremony => CeremonyScreen(
+        key: ValueKey(
+          _weeklyExperienceMode != null ? 'weekly-experience' : 'memory-key',
+        ),
         familyName: widget.identity.familyName,
         currentMemberName: widget.identity.memberName,
-        weeklyPreviewEnabled: true,
-        nearbyDeviceCount: 1,
-        weeklyMemoryCount: weeklyMemoryCount,
-        members: [for (final member in members) MemoryKeyMember.from(member)],
+        startInWeekly: _weeklyExperienceMode != null,
+        weeklyPreview: _weeklyExperienceMode == _WeeklyExperienceMode.preview,
+        weeklyMemories: _weeklyMemories,
+        weeklyAuthorNames: authorNames,
+        weeklyPlayback: ref.read(audioPlaybackAdapterProvider),
+        onWeeklyDecision: _resolveWeeklyMemory,
+        navigationDestination: _weeklyExperienceMode != null
+            ? KeepersNavDestination.wheel
+            : KeepersNavDestination.ceremony,
         lockedMemories: const [],
         timeCapsule: null,
-        randomMemories: keptEntries.map(_memoryKeySummary).toList(),
-        onOpenRandomMemory: (summary) {
-          final metadata = keptEntries.firstWhere(
-            (entry) => entry.id == summary.id,
-          );
-          _openMemory(metadata);
-        },
-        onAddMember: _addMember,
-        onNudgeMissingMembers: _nudgeMissingMembers,
         onCapture: _captureInFlight ? () {} : () => unawaited(_capture()),
         onDestinationSelected: _selectDestination,
       ),
@@ -283,7 +672,7 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
           familyName: widget.identity.familyName,
           memories: entries
               .where((entry) => entry.state == 'kept')
-              .map((entry) => _archiveSummary(entry, widget.identity))
+              .map((entry) => _archiveSummary(entry, authorNames))
               .toList(),
           loading: entriesState.isLoading,
           errorMessage: entriesState.hasError
@@ -445,13 +834,11 @@ final class _RosterRefreshNotice extends StatelessWidget {
 
 ArchiveMemorySummary _archiveSummary(
   VaultEntryMetadata entry,
-  LocalIdentity identity,
+  Map<String, String> authorNames,
 ) => ArchiveMemorySummary(
   id: entry.id,
   title: '${entry.format.vaultLabel} · ${_shortDate(entry.createdAt)}',
-  authorName: entry.authorId == identity.memberId
-      ? identity.memberName
-      : 'Family member',
+  authorName: authorNames[entry.authorId] ?? 'Family member',
   theme: switch (entry.format) {
     MemoryFormat.photo => 'Photographs',
     MemoryFormat.voice => 'Voices',
@@ -487,13 +874,8 @@ YourMemorySummary _yourMemorySummary(VaultEntryMetadata entry) =>
 String _shortDate(DateTime date) =>
     '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
 
-MemoryKeyMemory _memoryKeySummary(VaultEntryMetadata entry) => MemoryKeyMemory(
-  id: entry.id,
-  title: '${entry.format.vaultLabel} · ${_shortDate(entry.createdAt)}',
-  formatLabel: entry.format.vaultLabel,
-);
-
-DateTime _startOfWeek(DateTime value) {
-  final day = DateTime.utc(value.year, value.month, value.day);
-  return day.subtract(Duration(days: value.weekday - DateTime.monday));
+DateTime _startOfLocalWeek(DateTime value) {
+  final local = value.toLocal();
+  final day = DateTime(local.year, local.month, local.day);
+  return day.subtract(Duration(days: local.weekday - DateTime.monday));
 }

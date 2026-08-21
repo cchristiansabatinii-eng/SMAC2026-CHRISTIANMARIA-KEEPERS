@@ -1,5 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderParagraph;
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:humation_flutter/humation_flutter.dart';
@@ -22,7 +23,6 @@ void main() {
           familyName: 'Sabati family',
           currentMemberName: 'Chris',
           yourContribution: 0,
-          requiredPresence: 1,
           members: const [],
           onCapture: () {},
           onMemberSelected: (_) {},
@@ -94,6 +94,73 @@ void main() {
     );
   });
 
+  testWidgets('keeps wordmark centered while code is top-right', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _testWheel(
+        familyCode: 'K7M4-P2Q8',
+        onFamilyCodeTap: () {},
+        mediaQueryData: const MediaQueryData(
+          size: Size(390, 844),
+          padding: EdgeInsets.only(top: 24, bottom: 24),
+          disableAnimations: true,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Family code'), findsOneWidget);
+    expect(find.text('K7M4-P2Q8'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Family code K 7 M 4 P 2 Q 8'),
+      findsOneWidget,
+    );
+    final wordmark = tester.getCenter(
+      find.byKey(const ValueKey('keepers-wordmark')),
+    );
+    expect(wordmark.dx, closeTo(195, 1));
+    expect(
+      tester.getSize(find.byKey(const ValueKey('family-code-action'))).height,
+      greaterThanOrEqualTo(48),
+    );
+  });
+
+  testWidgets('places a join notice between presence and the bubble field', (
+    tester,
+  ) async {
+    var taps = 0;
+    await tester.pumpWidget(
+      _testWheel(
+        pendingJoinRequestName: 'Mariam',
+        onPendingJoinRequestTap: () => taps += 1,
+      ),
+    );
+    await tester.pump();
+
+    final presence = find.byKey(const ValueKey('family-presence-meter'));
+    final notice = find.byKey(const ValueKey('family-join-request-notice'));
+    final field = find.byKey(const ValueKey('family-field-interactive-viewer'));
+    expect(find.text('Mariam wants to join'), findsOneWidget);
+    expect(
+      tester.getBottomLeft(presence).dy,
+      lessThanOrEqualTo(tester.getTopLeft(notice).dy),
+    );
+    expect(
+      tester.getBottomLeft(notice).dy,
+      lessThanOrEqualTo(tester.getTopLeft(field).dy),
+    );
+    expect(tester.getSize(notice).height, greaterThanOrEqualTo(48));
+
+    await tester.tap(notice);
+    expect(taps, 1);
+  });
+
   testWidgets('family title no longer carries the segmented mark', (
     tester,
   ) async {
@@ -125,18 +192,31 @@ void main() {
   });
 
   testWidgets(
-    'family title stays uppercase after the kept total moves to archive',
+    'family title renders in title case after the kept total moves to archive',
     (tester) async {
       await tester.pumpWidget(_testWheel(familyName: 'RAHMAN'));
       await tester.pump();
 
       final familyName = tester.widget<Text>(find.text('RAHMAN FAMILY'));
+      final paintedFamilyName = tester.widget<RichText>(
+        find.descendant(
+          of: find.byKey(const ValueKey('home-family-title')),
+          matching: find.byType(RichText),
+        ),
+      );
 
       expect(familyName.style?.fontSize, 20);
       expect(familyName.style?.fontFamily, KeepersType.primary);
       expect(familyName.style?.fontWeight, FontWeight.w600);
-      expect(familyName.style?.letterSpacing, 4.1);
+      expect(
+        familyName.style?.letterSpacing,
+        KeepersType.heading.letterSpacing,
+      );
       expect(familyName.style?.height, 1);
+      expect(
+        (paintedFamilyName.text as TextSpan).toPlainText(),
+        'Rahman Family',
+      );
       expect(
         find.byKey(const ValueKey('home-family-summary-row')),
         findsNothing,
@@ -188,7 +268,7 @@ void main() {
   });
 
   testWidgets(
-    'family title leads presence and the invite leads the shortcuts',
+    'family title leads presence and the weekly experience follows the field',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -210,8 +290,10 @@ void main() {
 
       final familyTitle = find.byKey(const ValueKey('home-family-title'));
       final presenceSentence = find.bySemanticsLabel('Noura, you are here');
-      final invitePrompt = find.bySemanticsLabel('Ask Mariam to come');
-      final firstShortcut = find.text('LEGACY LOCK');
+      final familyField = find.byKey(
+        const ValueKey('family-field-interactive-viewer'),
+      );
+      final weekly = find.byKey(const ValueKey('weekly-recap-mode'));
 
       expect(familyTitle, findsOneWidget);
       expect(find.text('RAHMAN FAMILY'), findsOneWidget);
@@ -230,9 +312,11 @@ void main() {
         inInclusiveRange(8, 18),
       );
       expect(
-        tester.getBottomLeft(invitePrompt).dy,
-        lessThanOrEqualTo(tester.getTopLeft(firstShortcut).dy),
+        tester.getBottomLeft(familyField).dy,
+        lessThanOrEqualTo(tester.getTopLeft(weekly).dy),
       );
+      expect(find.text('LEGACY LOCK'), findsNothing);
+      expect(find.text('CAPSULE'), findsNothing);
     },
   );
 
@@ -265,9 +349,7 @@ void main() {
     final familyField = find.byKey(
       const ValueKey('family-field-interactive-viewer'),
     );
-    final invitePrompt = find.text('Ask Mariam to come');
-    final firstShortcut = find.text('LEGACY LOCK');
-    final secondShortcut = find.text('CAPSULE');
+    final weekly = find.byKey(const ValueKey('weekly-recap-mode'));
     final actions = find.byKey(const ValueKey('home-action-group'));
 
     expect(
@@ -298,15 +380,7 @@ void main() {
     expect(tester.getSize(familyField).height, 318);
     expect(
       tester.getBottomLeft(familyField).dy,
-      lessThanOrEqualTo(tester.getTopLeft(invitePrompt).dy),
-    );
-    expect(
-      tester.getBottomLeft(invitePrompt).dy,
-      lessThanOrEqualTo(tester.getTopLeft(firstShortcut).dy),
-    );
-    expect(
-      tester.getBottomLeft(invitePrompt).dy,
-      lessThanOrEqualTo(tester.getTopLeft(secondShortcut).dy),
+      lessThanOrEqualTo(tester.getTopLeft(weekly).dy),
     );
     expect(
       find.descendant(
@@ -321,7 +395,65 @@ void main() {
     );
   });
 
-  testWidgets('invite prompt and shortcuts sit above the bottom navigation', (
+  testWidgets(
+    'weekly photo progress sits between the family field and gathering prompt',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        _testWheel(
+          members: _members,
+          weeklyPhotoCount: 3,
+          mediaQueryData: const MediaQueryData(
+            size: Size(390, 844),
+            padding: EdgeInsets.only(top: 24, bottom: 24),
+            disableAnimations: true,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final familyField = find.byKey(
+        const ValueKey('family-field-interactive-viewer'),
+      );
+      final progress = find.byKey(const ValueKey('weekly-photo-progress'));
+      final gatheringPrompt = find.byKey(
+        const ValueKey('family-gathering-prompt'),
+      );
+      final weeklyRecap = find.byKey(const ValueKey('weekly-recap-mode'));
+      final navigation = find.byKey(const ValueKey('keepers-bottom-nav'));
+
+      await tester.ensureVisible(weeklyRecap);
+      await tester.pumpAndSettle();
+
+      expect(familyField, findsOneWidget);
+      expect(progress, findsOneWidget);
+      expect(gatheringPrompt, findsOneWidget);
+      expect(weeklyRecap, findsOneWidget);
+      expect(navigation, findsOneWidget);
+      expect(
+        tester.getBottomLeft(familyField).dy,
+        lessThanOrEqualTo(tester.getTopLeft(progress).dy),
+      );
+      expect(
+        tester.getTopLeft(progress).dy,
+        lessThanOrEqualTo(tester.getTopLeft(gatheringPrompt).dy),
+      );
+      expect(
+        tester.getTopLeft(gatheringPrompt).dy,
+        lessThanOrEqualTo(tester.getTopLeft(weeklyRecap).dy),
+      );
+      expect(
+        tester.getTopLeft(weeklyRecap).dy,
+        lessThanOrEqualTo(tester.getTopLeft(navigation).dy),
+      );
+    },
+  );
+
+  testWidgets('weekly experience sits above the bottom navigation', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -346,21 +478,26 @@ void main() {
 
     expect(actions, findsOneWidget);
     expect(navigation, findsOneWidget);
+    await tester.ensureVisible(actions);
+    await tester.pumpAndSettle();
     final bottomGap =
         tester.getTopLeft(navigation).dy - tester.getBottomLeft(actions).dy;
     expect(bottomGap, inInclusiveRange(8, 20));
-    expect(find.text('LEGACY LOCK').hitTestable(), findsOneWidget);
-    expect(find.text('CAPSULE').hitTestable(), findsOneWidget);
+    final weeklyPanel = find.byKey(const ValueKey('weekly-recap-open'));
+    expect(find.byKey(const ValueKey('weekly-recap-mode')), findsOneWidget);
+    expect(tester.getSize(weeklyPanel).width, 358);
+    expect(find.text('LEGACY LOCK'), findsNothing);
+    expect(find.text('CAPSULE'), findsNothing);
   });
 
-  testWidgets('home shortcut copy wraps without clipping at phone large text', (
+  testWidgets('weekly progress stays compact at phone large text', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    KeepersNavDestination? selected;
+    var nudged = false;
     await tester.pumpWidget(
       MaterialApp(
         theme: KeepersTheme.dark(),
@@ -375,40 +512,36 @@ void main() {
             familyName: 'Sabati family',
             currentMemberName: 'Chris',
             yourContribution: .6,
-            requiredPresence: 3,
             members: _members,
             onCapture: () {},
             onMemberSelected: (_) {},
-            enabledDestinations: KeepersNavDestination.values.toSet(),
-            onDestinationSelected: (destination) => selected = destination,
+            onNudgeMissingMembers: () => nudged = true,
           ),
         ),
       ),
     );
     await tester.pump();
 
-    final card = find.bySemanticsLabel('LEGACY LOCK. No family condition yet');
-    await tester.ensureVisible(card);
-    await tester.pump();
-    final title = _renderedParagraph(find.text('LEGACY LOCK'));
-    final subtitle = _renderedParagraph(find.text('No family condition yet'));
-    final cardRect = tester.getRect(card);
+    final progress = find.byKey(const ValueKey('weekly-photo-progress'));
+    final action = find.byKey(const ValueKey('family-gathering-prompt'));
+    await tester.ensureVisible(action);
+    await tester.pumpAndSettle();
+    final progressRect = tester.getRect(progress);
 
-    for (final text in [title, subtitle]) {
-      final paragraph = tester.renderObject<RenderParagraph>(text);
-      expect(paragraph.didExceedMaxLines, isFalse);
-      expect(cardRect.contains(tester.getRect(text).topLeft), isTrue);
-      expect(
-        cardRect.contains(
-          tester.getRect(text).bottomRight - const Offset(.01, .01),
-        ),
-        isTrue,
-      );
-    }
-    expect(card.hitTestable(), findsOneWidget);
-    await tester.tap(card);
+    expect(progressRect.height, 6);
+    expect(find.text('Weekly vault'), findsNothing);
+    expect(
+      find.textContaining('family member needs to be present'),
+      findsNothing,
+    );
+    expect(action.hitTestable(), findsOneWidget);
+    expect(
+      find.descendant(of: action, matching: find.text('Ask Mariam to come')),
+      findsOneWidget,
+    );
+    await tester.tap(action);
     await tester.pump();
-    expect(selected, KeepersNavDestination.locks);
+    expect(nudged, isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -426,7 +559,6 @@ void main() {
             familyName: 'Sabati family',
             currentMemberName: 'Chris',
             yourContribution: .6,
-            requiredPresence: 3,
             members: [
               FamilyWheelMember(
                 id: 'noura',
@@ -478,8 +610,11 @@ void main() {
     expect(find.textContaining('NOURA'), findsWidgets);
     expect(find.text('Ask Mariam & Youssef to come'), findsOneWidget);
     expect(find.text('INVITE'), findsOneWidget);
-    expect(find.text('LEGACY LOCK'), findsOneWidget);
-    expect(find.text('CAPSULE'), findsOneWidget);
+    expect(find.bySemanticsLabel('Weekly photo progress'), findsOneWidget);
+    expect(find.text('0 of 5 photos'), findsNothing);
+    expect(find.bySemanticsLabel('Weekly experience locked'), findsOneWidget);
+    expect(find.text('LEGACY LOCK'), findsNothing);
+    expect(find.text('CAPSULE'), findsNothing);
     expect(find.byIcon(Icons.camera_alt), findsNothing);
     expect(find.byIcon(Icons.camera_alt_outlined), findsNothing);
 
@@ -515,7 +650,6 @@ void main() {
             familyName: 'Sabati family with a long name',
             currentMemberName: 'Christopher',
             yourContribution: .4,
-            requiredPresence: 2,
             members: [
               FamilyWheelMember(
                 id: 'one',
@@ -576,14 +710,15 @@ void main() {
       lessThanOrEqualTo(tester.getTopLeft(presence).dy),
     );
 
-    final gather = find.bySemanticsLabel('Ask Mohammed & Elizabeth to come');
-    await tester.ensureVisible(gather);
+    final weekly = find.byKey(const ValueKey('weekly-recap-mode'));
+    await tester.ensureVisible(weekly);
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
     expect(find.byKey(const ValueKey('home-kept-forever-strip')), findsNothing);
-    expect(find.text('LEGACY LOCK').hitTestable(), findsOneWidget);
-    expect(find.text('CAPSULE').hitTestable(), findsOneWidget);
+    expect(find.byKey(const ValueKey('weekly-recap-mode')), findsOneWidget);
+    expect(find.text('LEGACY LOCK'), findsNothing);
+    expect(find.text('CAPSULE'), findsNothing);
   });
 
   testWidgets('invite node adds a member while gathering prompt only nudges', (
@@ -613,7 +748,20 @@ void main() {
     expect(added, 1);
     expect(nudged, 0);
 
-    await tester.tap(find.bySemanticsLabel('Ask Mariam to come'));
+    final nudge = find.byKey(const ValueKey('family-gathering-prompt'));
+    await tester.ensureVisible(nudge);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: nudge, matching: find.text('Ask Mariam to come')),
+      findsOneWidget,
+    );
+    expect(
+      tester.getBottomLeft(nudge).dy,
+      lessThanOrEqualTo(
+        tester.getTopLeft(find.byKey(const ValueKey('weekly-recap-mode'))).dy,
+      ),
+    );
+    await tester.tap(nudge);
 
     expect(added, 1);
     expect(nudged, 1);
@@ -631,7 +779,6 @@ void main() {
             familyName: 'Sabati family',
             currentMemberName: 'Chris',
             yourContribution: 0,
-            requiredPresence: 1,
             members: const [],
             onCapture: () {},
             onMemberSelected: (_) {},
@@ -655,6 +802,261 @@ void main() {
     expect(find.bySemanticsLabel('Settings'), findsOneWidget);
     expect(find.bySemanticsLabel('Locks'), findsNothing);
   });
+
+  testWidgets('a one-person family can ask family to come through Invite', (
+    tester,
+  ) async {
+    var invites = 0;
+    var nudges = 0;
+    await tester.pumpWidget(
+      _testWheel(
+        onAddMember: () => invites += 1,
+        onNudgeMissingMembers: () => nudges += 1,
+      ),
+    );
+
+    final invite = find.byKey(const ValueKey('family-gathering-prompt'));
+    await tester.ensureVisible(invite);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: invite, matching: find.text('Ask family to come')),
+      findsOneWidget,
+    );
+    await tester.tap(invite);
+
+    expect(invites, 1);
+    expect(nudges, 0);
+    expect(find.text('Everyone is here'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('weekly-recap-mode')),
+        matching: find.widgetWithText(FilledButton, 'Ask family to come'),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('gathering prompt uses the warm neutral reference treatment', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _testWheel(
+        onAddMember: () {},
+        mediaQueryData: const MediaQueryData(
+          size: Size(430, 932),
+          padding: EdgeInsets.only(top: 24, bottom: 24),
+          disableAnimations: true,
+        ),
+      ),
+    );
+
+    final prompt = find.byKey(const ValueKey('family-gathering-prompt'));
+    await tester.ensureVisible(prompt);
+    await tester.pumpAndSettle();
+
+    final surfaceFinder = find.descendant(
+      of: prompt,
+      matching: find.byType(Material),
+    );
+    final surface = tester.widget<Material>(surfaceFinder);
+    final shape = surface.shape! as StadiumBorder;
+    final chevron = tester.widget<Icon>(
+      find.descendant(
+        of: prompt,
+        matching: find.byIcon(Icons.chevron_right_rounded),
+      ),
+    );
+
+    expect(surface.color, KeepersColors.auraIvory);
+    expect(tester.getSize(surfaceFinder).width, closeTo(336.6, .1));
+    expect(shape.side.color, const Color(0xFFD4BBAC));
+    expect(shape.side.width, 1.25);
+    expect(chevron.color, const Color(0xFFD4BBAC));
+  });
+
+  testWidgets('weekly reveal blocks underlying actions until it completes', (
+    tester,
+  ) async {
+    var captures = 0;
+    var weeklyOpens = 0;
+    await tester.pumpWidget(
+      _testWheel(
+        disableAnimations: false,
+        weeklyPhotoCount: 5,
+        members: [
+          FamilyWheelMember(
+            id: 'mariam',
+            name: 'Mariam',
+            color: KeepersColors.homeGreen,
+            avatar: AvatarConfig.defaults(seed: 'mariam'),
+            contribution: .4,
+            presence: FamilyPresence.near,
+          ),
+        ],
+        onCapture: () => captures += 1,
+        onOpenWeeklyExperience: () => weeklyOpens += 1,
+      ),
+    );
+
+    final open = find.byKey(const ValueKey('weekly-recap-open'));
+    await tester.ensureVisible(open);
+    await tester.pump();
+    await tester.tap(open);
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('weekly-pastel-flood')), findsOneWidget);
+    expect(find.semantics.byLabel('Keep a memory'), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('keepers-nav-capture')),
+      warnIfMissed: false,
+    );
+    expect(captures, 0);
+
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+    expect(weeklyOpens, 1);
+  });
+
+  testWidgets('weekly reveal requires three quarters of the family present', (
+    tester,
+  ) async {
+    var opens = 0;
+    final twoOfFourPresent = [
+      FamilyWheelMember(
+        id: 'near',
+        name: 'Near',
+        color: KeepersColors.homeGreen,
+        avatar: AvatarConfig.defaults(seed: 'near'),
+        contribution: .4,
+        presence: FamilyPresence.near,
+      ),
+      FamilyWheelMember(
+        id: 'away-one',
+        name: 'Away one',
+        color: KeepersColors.homeBlue,
+        avatar: AvatarConfig.defaults(seed: 'away-one'),
+        contribution: .2,
+        presence: FamilyPresence.away,
+      ),
+      FamilyWheelMember(
+        id: 'away-two',
+        name: 'Away two',
+        color: KeepersColors.homeMauve,
+        avatar: AvatarConfig.defaults(seed: 'away-two'),
+        contribution: .1,
+        presence: FamilyPresence.away,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      _testWheel(
+        members: twoOfFourPresent,
+        weeklyPhotoCount: 5,
+        onOpenWeeklyExperience: () => opens += 1,
+      ),
+    );
+
+    var panel = find.byKey(const ValueKey('weekly-recap-open'));
+    await tester.ensureVisible(panel);
+    await tester.pump();
+    expect(
+      tester
+          .getSemantics(panel)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isFalse,
+    );
+
+    final threeOfFourPresent = [
+      twoOfFourPresent.first,
+      FamilyWheelMember(
+        id: 'near-two',
+        name: 'Near two',
+        color: KeepersColors.homeBlue,
+        avatar: AvatarConfig.defaults(seed: 'near-two'),
+        contribution: .2,
+        presence: FamilyPresence.near,
+      ),
+      twoOfFourPresent.last,
+    ];
+    await tester.pumpWidget(
+      _testWheel(
+        members: threeOfFourPresent,
+        weeklyPhotoCount: 5,
+        onOpenWeeklyExperience: () => opens += 1,
+      ),
+    );
+
+    panel = find.byKey(const ValueKey('weekly-recap-open'));
+    await tester.ensureVisible(panel);
+    await tester.pump();
+    expect(
+      tester
+          .getSemantics(panel)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isTrue,
+    );
+  }, semanticsEnabled: true);
+
+  testWidgets(
+    'temporary proximity policy unlocks at the same three-quarter threshold',
+    (tester) async {
+      var opens = 0;
+      final awayMembers = [
+        for (final (id, name) in const [
+          ('noura', 'Noura'),
+          ('mariam', 'Mariam'),
+          ('layla', 'Layla'),
+        ])
+          FamilyWheelMember(
+            id: id,
+            name: name,
+            color: KeepersColors.homeBlue,
+            avatar: AvatarConfig.defaults(seed: id),
+            contribution: null,
+            presence: FamilyPresence.away,
+          ),
+      ];
+
+      await tester.pumpWidget(
+        _testWheel(
+          members: awayMembers,
+          weeklyPhotoCount: 5,
+          weeklyPresencePolicy:
+              WeeklyPresencePolicy.temporaryAllowUntilProximityProxy,
+          onOpenWeeklyExperience: () => opens += 1,
+        ),
+      );
+
+      final panel = find.byKey(const ValueKey('weekly-recap-open'));
+      await tester.ensureVisible(panel);
+      await tester.pump();
+
+      expect(
+        tester
+            .getSemantics(panel)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      expect(
+        find.text('Ask Noura, Mariam & Layla to come'),
+        findsOneWidget,
+        reason: 'The temporary gate must not pretend away members are nearby.',
+      );
+
+      await tester.tap(panel);
+      await tester.pump();
+      expect(opens, 1);
+    },
+    semanticsEnabled: true,
+  );
 
   test('member centers form a deterministic sparse constellation', () {
     final size = FamilyWheelGeometry.fieldSizeFor(3);
@@ -890,6 +1292,7 @@ void main() {
           ),
         );
         await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
 
         final viewport = tester.getRect(
           find.byKey(const ValueKey('family-field-interactive-viewer')),
@@ -1037,10 +1440,11 @@ void main() {
     },
   );
 
-  testWidgets('home shortcuts open the existing lock and capsule routes', (
+  testWidgets('family wheel owns weekly recap instead of legacy or capsule', (
     tester,
   ) async {
-    KeepersNavDestination? selected;
+    var openedWeekly = false;
+    var openedPreview = false;
     await tester.pumpWidget(
       MaterialApp(
         theme: KeepersTheme.dark(),
@@ -1050,26 +1454,39 @@ void main() {
             familyName: 'Sabati',
             currentMemberName: 'Chris',
             yourContribution: .6,
-            requiredPresence: 3,
             members: _members,
             onCapture: () {},
             onMemberSelected: (_) {},
+            weeklyPhotoCount: 4,
+            weeklyPreviewEnabled: true,
+            onOpenWeeklyExperience: () => openedWeekly = true,
+            onPreviewWeeklyExperience: () => openedPreview = true,
             enabledDestinations: KeepersNavDestination.values.toSet(),
-            onDestinationSelected: (destination) => selected = destination,
+            onDestinationSelected: (_) {},
           ),
         ),
       ),
     );
     await tester.pump();
 
-    await tester.ensureVisible(find.text('LEGACY LOCK'));
-    await tester.pump();
-    await tester.tap(find.text('LEGACY LOCK'));
-    expect(selected, KeepersNavDestination.locks);
-    await tester.ensureVisible(find.text('CAPSULE'));
-    await tester.pump();
-    await tester.tap(find.text('CAPSULE'));
-    expect(selected, KeepersNavDestination.ceremony);
+    final weekly = find.byKey(const ValueKey('weekly-recap-mode'));
+    expect(weekly, findsOneWidget);
+    final progress = find.bySemanticsLabel('Weekly photo progress');
+    expect(
+      tester.getSemantics(progress).getSemanticsData().value,
+      '4 of 5 photos. 1 photo needed. 1 more family member needs to be present',
+    );
+    expect(find.text('4 of 5 photos'), findsNothing);
+    expect(find.text('LEGACY LOCK'), findsNothing);
+    expect(find.text('CAPSULE'), findsNothing);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('weekly-recap-preview')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('weekly-recap-preview')));
+    expect(openedPreview, isTrue);
+    expect(openedWeekly, isFalse);
   });
 
   testWidgets('family field paints no orbit or connector geometry', (
@@ -1217,6 +1634,97 @@ void main() {
     expect(after.y, closeTo(before.y, .001));
   });
 
+  testWidgets(
+    'only a newly added roster id settles inside its positioned box',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final roster = ValueNotifier<List<FamilyWheelMember>>([_members.first]);
+      addTearDown(roster.dispose);
+
+      await tester.pumpWidget(_updatingWheel(roster, reduceMotion: false));
+      await tester.pump();
+      final fieldSize = tester.getSize(
+        find.byKey(const ValueKey('family-field-interactive-viewer')),
+      );
+      expect(
+        find.byKey(const ValueKey('family-member-arrival-opacity-noura')),
+        findsNothing,
+      );
+
+      roster.value = _members;
+      await tester.pump();
+
+      final opacity = find.byKey(
+        const ValueKey('family-member-arrival-opacity-mariam'),
+      );
+      final offset = find.byKey(
+        const ValueKey('family-member-arrival-offset-mariam'),
+      );
+      expect(tester.widget<Opacity>(opacity).opacity, 0);
+      expect(
+        tester.widget<Transform>(offset).transform.getTranslation().y,
+        greaterThan(0),
+      );
+      expect(
+        find.byKey(const ValueKey('family-member-arrival-opacity-noura')),
+        findsNothing,
+      );
+      expect(
+        tester.getSize(
+          find.byKey(const ValueKey('family-field-interactive-viewer')),
+        ),
+        fieldSize,
+      );
+
+      await tester.pump(const Duration(milliseconds: 110));
+      expect(tester.widget<Opacity>(opacity).opacity, inExclusiveRange(0, 1));
+      await tester.pump(const Duration(milliseconds: 140));
+      expect(opacity, findsNothing);
+
+      roster.value = List<FamilyWheelMember>.of(_members);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('family-member-arrival-opacity-mariam')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets('reduced motion gives a new roster id a stationary short fade', (
+    tester,
+  ) async {
+    final roster = ValueNotifier<List<FamilyWheelMember>>([_members.first]);
+    addTearDown(roster.dispose);
+    await tester.pumpWidget(_updatingWheel(roster, reduceMotion: true));
+    await tester.pump();
+
+    roster.value = _members;
+    await tester.pump();
+
+    final opacity = find.byKey(
+      const ValueKey('family-member-arrival-opacity-mariam'),
+    );
+    final offset = find.byKey(
+      const ValueKey('family-member-arrival-offset-mariam'),
+    );
+    final translation = tester
+        .widget<Transform>(offset)
+        .transform
+        .getTranslation();
+    expect(tester.widget<Opacity>(opacity).opacity, 0);
+    expect(translation.x, 0);
+    expect(translation.y, 0);
+
+    await tester.pump(const Duration(milliseconds: 45));
+    expect(tester.widget<Opacity>(opacity).opacity, inExclusiveRange(0, 1));
+    expect(tester.widget<Transform>(offset).transform.getTranslation().y, 0);
+    await tester.pump(const Duration(milliseconds: 55));
+    expect(opacity, findsNothing);
+  });
+
   testWidgets('relative tap finishes focus motion before opening the member', (
     tester,
   ) async {
@@ -1290,6 +1798,31 @@ Rect _maximumAnimatedMemberBox({required Offset center, required int index}) {
   );
 }
 
+Widget _updatingWheel(
+  ValueListenable<List<FamilyWheelMember>> roster, {
+  required bool reduceMotion,
+}) => MaterialApp(
+  theme: KeepersTheme.dark(),
+  home: MediaQuery(
+    data: MediaQueryData(
+      size: const Size(390, 844),
+      padding: const EdgeInsets.only(top: 24, bottom: 24),
+      disableAnimations: reduceMotion,
+    ),
+    child: ValueListenableBuilder<List<FamilyWheelMember>>(
+      valueListenable: roster,
+      builder: (context, members, _) => FamilyWheelScreen(
+        familyName: 'Sabati family',
+        currentMemberName: 'Chris',
+        yourContribution: .6,
+        members: members,
+        onCapture: () {},
+        onMemberSelected: (_) {},
+      ),
+    ),
+  ),
+);
+
 Widget _testWheel({
   List<FamilyWheelMember> members = const [],
   bool disableAnimations = true,
@@ -1301,6 +1834,16 @@ Widget _testWheel({
   MediaQueryData? mediaQueryData,
   VoidCallback? onAddMember,
   VoidCallback? onNudgeMissingMembers,
+  String? familyCode,
+  VoidCallback? onFamilyCodeTap,
+  String? pendingJoinRequestName,
+  VoidCallback? onPendingJoinRequestTap,
+  int weeklyPhotoCount = 0,
+  WeeklyPresencePolicy weeklyPresencePolicy =
+      WeeklyPresencePolicy.enforceNearby,
+  bool weeklyPreviewEnabled = false,
+  VoidCallback? onOpenWeeklyExperience,
+  VoidCallback? onPreviewWeeklyExperience,
 }) => MaterialApp(
   theme: KeepersTheme.dark(),
   home: MediaQuery(
@@ -1311,16 +1854,21 @@ Widget _testWheel({
       currentMemberName: 'Chris',
       currentMemberAvatar: currentMemberAvatar,
       yourContribution: .6,
-      requiredPresence: 2,
       members: members,
       onCapture: onCapture ?? () {},
       onCurrentMemberSelected: onCurrentMemberSelected,
       onMemberSelected: onMemberSelected ?? (_) {},
       onAddMember: onAddMember,
       onNudgeMissingMembers: onNudgeMissingMembers,
+      familyCode: familyCode,
+      onFamilyCodeTap: onFamilyCodeTap,
+      pendingJoinRequestName: pendingJoinRequestName,
+      onPendingJoinRequestTap: onPendingJoinRequestTap,
+      weeklyPhotoCount: weeklyPhotoCount,
+      weeklyPresencePolicy: weeklyPresencePolicy,
+      weeklyPreviewEnabled: weeklyPreviewEnabled,
+      onOpenWeeklyExperience: onOpenWeeklyExperience,
+      onPreviewWeeklyExperience: onPreviewWeeklyExperience,
     ),
   ),
 );
-
-Finder _renderedParagraph(Finder sourceText) =>
-    find.descendant(of: sourceText, matching: find.byType(RichText));
