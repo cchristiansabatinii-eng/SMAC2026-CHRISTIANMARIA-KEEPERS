@@ -3,7 +3,6 @@ import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:keepers/features/family/data/joining_key_store.dart';
-import 'package:keepers/features/family/domain/family_join_failure.dart';
 import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:uuid/uuid.dart';
 

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
-import 'package:keepers/features/family/domain/family_join_failure.dart';
 import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/storage/database_key_store.dart';
 
@@ -15,8 +14,8 @@ final class StoredJoiningKey {
   const StoredJoiningKey._({
     required this.reference,
     required this.publicKey,
-    required JoiningKeyOperation use,
-  }) : _use = use;
+    required this._use,
+  });
 
   final String reference;
   final String publicKey;
@@ -211,7 +210,7 @@ final class SecureJoiningKeyStore implements JoiningKeyStore {
     } finally {
       complete.complete();
       if (identical(_referenceTails[reference], complete.future)) {
-        _referenceTails.remove(reference);
+        final _ = _referenceTails.remove(reference);
       }
     }
   }
