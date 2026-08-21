@@ -3,29 +3,29 @@ import 'dart:io';
 import 'package:integration_test/integration_test_driver_extended.dart';
 import 'package:path/path.dart' as p;
 
-const _safeScreenshotNames = <String>{
-  'family-invitation-flow-success',
-  'setup-choice-390x844-text-1_4',
-  'setup-manual-join-390x844-text-1_4',
-  'wheel-local-only-390x844-text-1_4',
-  'invite-unconfigured-390x844-text-1_4',
-  'invite-owner-email-390x844-text-1_4',
-  'invite-owner-otp-390x844-text-1_4',
-  'invite-owner-ready-recipient-entry-390x844-text-1_4',
-  'invite-creating-390x844-text-1_4',
-  'invite-pending-390x844-text-1_4',
-  'invite-sharing-390x844-text-1_4',
-  'invite-revoke-failure-390x844-text-1_4',
-  'join-loading-390x844-text-1_4',
-  'join-email-390x844-text-1_4',
-  'join-otp-390x844-text-1_4',
-  'join-preview-390x844-text-1_4',
-  'join-joining-390x844-text-1_4',
-  'join-keyboard-open-390x844-text-1_4',
-  'join-recoverable-failure-390x844-text-1_4',
-  'join-protected-failure-390x844-text-1_4',
-  'join-long-content-reduced-motion-390x844-text-1_4',
-  'wheel-post-acceptance-reduced-motion-390x844-text-1_4',
+const _qaStates = <String>{
+  'main-code-loaded',
+  'main-code-offline',
+  'noncreator-code-sheet',
+  'creator-regeneration-confirmation',
+  'manual-code-entry',
+  'family-preview',
+  'pending-cancel',
+  'join-request-notice',
+  'approval-sheet',
+  'decline',
+  'expiry',
+  'invitation-changed',
+  'network-failure-retry',
+  'installed-avatar-arrival',
+};
+
+const _qaSizes = <String>{'390x844', '430x932'};
+
+final _safeScreenshotNames = <String>{
+  'family-code-flow-success',
+  for (final size in _qaSizes)
+    for (final state in _qaStates) '$state-$size-text-1_4-reduced-motion',
 };
 
 Future<void> main() async {
