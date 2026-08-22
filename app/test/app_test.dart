@@ -4,20 +4,76 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/app.dart';
+import 'package:keepers/features/family/application/family_join_controller.dart';
 import 'package:keepers/features/family/application/family_roster_provider.dart';
+import 'package:keepers/features/family/application/pending_join_completion_controller.dart';
 import 'package:keepers/features/family/data/invite_link_coordinator.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/family/presentation/family_join_screen.dart';
+import 'package:keepers/features/launch/presentation/keepers_launch_sequence.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/features/onboarding/domain/local_identity.dart';
 import 'package:keepers/features/vault/application/vault_providers.dart';
 
 void main() {
+  testWidgets(
+    'ordinary cold launch begins with the Keepers wordmark on black',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            familyJoinCompletionRecoveryProvider.overrideWithValue(
+              _idleJoinRecovery,
+            ),
+            localIdentityProvider.overrideWithValue(
+              const AsyncValue.data(null),
+            ),
+          ],
+          child: const KeepersApp(playLaunchSequence: true),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('keepers-launch-sequence')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('keepers-launch-logo')), findsOneWidget);
+      expect(find.text('CREATE A FAMILY').hitTestable(), findsNothing);
+    },
+  );
+
+  testWidgets('ordinary launch hands control to the resolved app after intro', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          familyJoinCompletionRecoveryProvider.overrideWithValue(
+            _idleJoinRecovery,
+          ),
+          localIdentityProvider.overrideWithValue(const AsyncValue.data(null)),
+        ],
+        child: const KeepersApp(playLaunchSequence: true),
+      ),
+    );
+    await _finishLaunchLogoPrecache(tester);
+
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('keepers-launch-sequence')), findsNothing);
+    expect(find.text('CREATE A FAMILY').hitTestable(), findsOneWidget);
+  });
+
   testWidgets('routes a first run to the family setup', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          familyJoinCompletionRecoveryProvider.overrideWithValue(
+            _idleJoinRecovery,
+          ),
           localIdentityProvider.overrideWithValue(const AsyncValue.data(null)),
         ],
         child: const KeepersApp(),
@@ -39,6 +95,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          familyJoinCompletionRecoveryProvider.overrideWithValue(
+            _idleJoinRecovery,
+          ),
           localIdentityProvider.overrideWithValue(
             const AsyncValue.data(
               LocalIdentity(
@@ -369,6 +428,20 @@ void main() {
 
     expect(find.byType(FamilyJoinScreen, skipOffstage: false), findsNothing);
   });
+}
+
+Future<PendingJoinCompletionState> _idleJoinRecovery() async =>
+    const PendingJoinCompletionState();
+
+Future<void> _finishLaunchLogoPrecache(WidgetTester tester) async {
+  await tester.runAsync(
+    () => precacheImage(
+      const AssetImage(keepersLaunchWordmarkAsset),
+      tester.element(find.byType(KeepersLaunchSequence)),
+    ),
+  );
+  await tester.pump();
+  await tester.pump();
 }
 
 Future<void> _pumpRoot(WidgetTester tester) async {

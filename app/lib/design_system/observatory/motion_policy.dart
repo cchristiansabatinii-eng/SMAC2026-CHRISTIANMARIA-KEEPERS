@@ -1,6 +1,14 @@
 import 'package:flutter/widgets.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
 
+bool keepersReduceMotion(BuildContext context) {
+  final media = MediaQuery.maybeOf(context);
+  final platform = View.of(context).platformDispatcher.accessibilityFeatures;
+  return (media?.disableAnimations ?? false) ||
+      (media?.accessibleNavigation ?? false) ||
+      platform.reduceMotion;
+}
+
 final class MotionPolicy {
   const MotionPolicy({
     required this.idleDrift,

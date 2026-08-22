@@ -5,6 +5,7 @@ import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/family/data/invite_link_coordinator.dart';
 import 'package:keepers/features/family/domain/family_code.dart';
 import 'package:keepers/features/family/presentation/family_join_screen.dart';
+import 'package:keepers/features/launch/presentation/keepers_launch_sequence.dart';
 import 'package:keepers/features/onboarding/presentation/startup_gate.dart';
 import 'package:keepers/ui/keepers_app_background.dart';
 
@@ -13,12 +14,16 @@ class KeepersApp extends StatefulWidget {
     super.key,
     this.inviteUriSource,
     this.inviteLinkCoordinator,
+    this.playLaunchSequence = false,
+    this.onLaunchReady,
   });
 
   static const joinRouteName = '/family/join';
 
   final InviteUriSource? inviteUriSource;
   final InviteLinkCoordinator? inviteLinkCoordinator;
+  final bool playLaunchSequence;
+  final VoidCallback? onLaunchReady;
 
   @override
   State<KeepersApp> createState() => _KeepersAppState();
@@ -38,6 +43,7 @@ class _KeepersAppState extends State<KeepersApp> {
   var _malformedJoinActive = false;
   var _warmFlushScheduled = false;
   var _hasRetriedWarmFlush = false;
+  late var _launchSequenceVisible = widget.playLaunchSequence;
 
   @override
   void initState() {
@@ -215,6 +221,11 @@ class _KeepersAppState extends State<KeepersApp> {
     _flushWarm();
   }
 
+  void _completeLaunchSequence() {
+    if (!mounted || !_launchSequenceVisible) return;
+    setState(() => _launchSequenceVisible = false);
+  }
+
   @override
   void dispose() {
     unawaited(_subscription?.cancel());
@@ -236,7 +247,19 @@ class _KeepersAppState extends State<KeepersApp> {
         }
         return KeepersAppBackground(
           key: const ValueKey('keepers-global-background'),
-          child: child ?? const SizedBox.shrink(),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              child ?? const SizedBox.shrink(),
+              if (_launchSequenceVisible)
+                BlockSemantics(
+                  child: KeepersLaunchSequence(
+                    onCompleted: _completeLaunchSequence,
+                    onReady: widget.onLaunchReady,
+                  ),
+                ),
+            ],
+          ),
         );
       },
       home: !_initialResolved

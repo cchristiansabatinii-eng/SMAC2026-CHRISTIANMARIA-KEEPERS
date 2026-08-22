@@ -53,6 +53,29 @@ void main() {
     expect(policy.useSealTravel, isFalse);
   });
 
+  testWidgets('platform reduce motion is honored outside launch', (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(reduceMotion: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+
+    late bool reduced;
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(),
+        child: Builder(
+          builder: (context) {
+            reduced = keepersReduceMotion(context);
+            return const SizedBox();
+          },
+        ),
+      ),
+    );
+
+    expect(reduced, isTrue);
+  });
+
   testWidgets('default policy uses bounded v0 Observatory motion', (
     tester,
   ) async {
