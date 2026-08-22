@@ -14,6 +14,11 @@ void main() {
     'clean setup saves default-reveal text and reopens it after app restart',
     (tester) async {
       await tester.pumpWidget(const ProviderScope(child: KeepersApp()));
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('create-family-choice')),
+      );
+      await tester.tap(find.byKey(const Key('create-family-choice')));
       await _pumpUntilFound(tester, find.byKey(const Key('family-name')));
 
       expect(find.byKey(const Key('member-name')), findsOneWidget);
@@ -26,9 +31,13 @@ void main() {
         'Gate Member',
       );
       await tester.tap(find.text('Enter the Observatory'));
-      await _pumpUntilFound(tester, find.text('Add a memory'));
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const ValueKey('keepers-nav-capture')),
+      );
 
-      await tester.tap(find.text('Add a memory'));
+      expect(find.bySemanticsLabel('Keep a memory'), findsOneWidget);
+      await tester.tap(find.bySemanticsLabel('Keep a memory'));
       await _pumpUntilFound(tester, find.text('Text'));
       await tester.tap(find.text('Text'));
       await tester.pump();
@@ -48,13 +57,27 @@ void main() {
             .groupValue,
         PrivacyTier.reveal,
       );
-      final sealMemory = find.widgetWithText(FilledButton, 'Seal memory');
-      await tester.ensureVisible(sealMemory);
+      final continueButton = find.widgetWithText(FilledButton, 'Continue');
+      await tester.ensureVisible(continueButton);
       await tester.pump();
-      await tester.tap(sealMemory);
-      await _pumpUntilFound(tester, find.text('Text memory'));
-      await tester.pump(const Duration(seconds: 1));
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(continueButton);
+      await _pumpUntilFound(tester, find.text('Who can open it?'));
+      expect(
+        tester
+            .widget<RadioListTile<PrivacyTier>>(
+              find.byKey(const Key('privacy-reveal')),
+            )
+            .groupValue,
+        PrivacyTier.reveal,
+      );
+      final keepMemory = find.widgetWithText(FilledButton, 'Keep memory');
+      await tester.ensureVisible(keepMemory);
+      await tester.pump();
+      await tester.tap(keepMemory);
+      await _pumpUntilFound(
+        tester,
+        find.bySemanticsLabel('You, Gate Member, 20% sealed'),
+      );
 
       // Unmounting disposes the first ProviderScope and its database-backed
       // providers, matching the persistence boundary crossed by an app launch.
@@ -63,16 +86,18 @@ void main() {
       await tester.pumpWidget(const ProviderScope(child: KeepersApp()));
       await _pumpUntilFound(
         tester,
-        find.bySemanticsLabel('Current member Gate Member'),
+        find.bySemanticsLabel('You, Gate Member, 20% sealed'),
       );
 
+      await tester.tap(find.bySemanticsLabel('You, Gate Member, 20% sealed'));
+      await _pumpUntilFound(tester, find.text('Your memories'));
       final savedMemory = find.text('Text memory');
       await tester.ensureVisible(savedMemory);
       await tester.pump();
       await tester.tap(savedMemory);
       await _pumpUntilFound(
         tester,
-        find.text('Persists after provider restart'),
+        find.bySemanticsLabel('Persists after provider restart'),
       );
       expect(find.text('Encrypted caption'), findsOneWidget);
     },

@@ -1,31 +1,51 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:keepers/features/members/domain/avatar_config.dart';
-import 'package:keepers/features/members/presentation/widgets/keepers_avatar.dart';
+import 'package:keepers/design_system/observatory/motion_policy.dart';
+import 'package:keepers/features/capture/data/audio_playback_adapter.dart';
+import 'package:keepers/features/capture/domain/capture_models.dart';
+import 'package:keepers/features/ceremony/presentation/pastel_flood.dart';
+import 'package:keepers/features/vault/domain/vault_models.dart';
 import 'package:keepers/theme/keepers_theme.dart';
-import 'package:keepers/ui/family_wheel_screen.dart';
 import 'package:keepers/ui/keepers_bottom_nav.dart';
 import 'package:keepers/ui/keepers_destination_scaffold.dart';
 
-enum _CeremonyStage { key, reel, keeping, randomEmpty }
+enum _CeremonyStage { key, reel, keeping }
 
 enum _RehearsalFormat { photo, voice, text }
+
+typedef WeeklyMemoryDecisionCallback = Future<void> Function(
+  VaultEntryMetadata metadata,
+  WeeklyMemoryDisposition disposition,
+);
 
 @immutable
 final class _RehearsalMemory {
   const _RehearsalMemory({
     required this.author,
     required this.format,
+    required this.title,
     required this.caption,
+    required this.dateLabel,
     required this.color,
+    this.imageAsset,
+    this.primaryBytes,
+    this.metadata,
+    this.preview = true,
   });
 
   final String author;
   final _RehearsalFormat format;
+  final String title;
   final String caption;
+  final String dateLabel;
+  final String? imageAsset;
+  final Uint8List? primaryBytes;
+  final VaultEntryMetadata? metadata;
   final Color color;
+  final bool preview;
 }
 
 enum LockedMemoryChallengeState { locked, submitted, approved }
@@ -54,41 +74,6 @@ final class LockedMemoryChallenge {
 }
 
 @immutable
-final class MemoryKeyMemory {
-  const MemoryKeyMemory({
-    required this.id,
-    required this.title,
-    required this.formatLabel,
-  });
-
-  final String id;
-  final String title;
-  final String formatLabel;
-}
-
-@immutable
-final class MemoryKeyMember {
-  const MemoryKeyMember({
-    required this.name,
-    this.id,
-    this.avatar,
-    this.color = KeepersColors.homeClay,
-  });
-
-  factory MemoryKeyMember.from(FamilyWheelMember member) => MemoryKeyMember(
-    id: member.id,
-    name: member.name,
-    avatar: member.avatar,
-    color: member.color,
-  );
-
-  final String? id;
-  final String name;
-  final AvatarConfig? avatar;
-  final Color color;
-}
-
-@immutable
 final class MemoryKeyCapsule {
   const MemoryKeyCapsule({
     required this.from,
@@ -110,38 +95,39 @@ final class CeremonyScreen extends StatefulWidget {
     required this.onDestinationSelected,
     this.onCapture,
     this.startInKeeping = false,
-    this.weeklyPreviewEnabled = false,
-    this.nearbyDeviceCount = 1,
-    this.requiredNearbyDevices = 2,
-    this.weeklyMemoryCount = 0,
-    this.randomMemories = const [],
-    this.members = const [],
+    this.startInWeekly = false,
+    this.weeklyPreview = true,
+    this.weeklyMemories,
+    this.weeklyAuthorNames = const {},
+    this.weeklyPlayback,
+    this.onWeeklyDecision,
+    this.navigationDestination = KeepersNavDestination.ceremony,
     this.lockedMemories = const [],
     this.timeCapsule,
-    this.onOpenRandomMemory,
     this.onOpenLockedMemory,
-    this.onAddMember,
-    this.onNudgeMissingMembers,
     super.key,
-  });
+  }) : assert(!(startInKeeping && startInWeekly)),
+       assert(
+         !startInWeekly ||
+             weeklyPreview ||
+             (weeklyMemories != null && onWeeklyDecision != null),
+       );
 
   final String familyName;
   final String currentMemberName;
   final ValueChanged<KeepersNavDestination> onDestinationSelected;
   final VoidCallback? onCapture;
   final bool startInKeeping;
-  final bool weeklyPreviewEnabled;
-  final int nearbyDeviceCount;
-  final int requiredNearbyDevices;
-  final int weeklyMemoryCount;
-  final List<MemoryKeyMemory> randomMemories;
-  final List<MemoryKeyMember> members;
+  final bool startInWeekly;
+  final bool weeklyPreview;
+  final Future<List<OpenedMemory>>? weeklyMemories;
+  final Map<String, String> weeklyAuthorNames;
+  final AudioPlaybackAdapter? weeklyPlayback;
+  final WeeklyMemoryDecisionCallback? onWeeklyDecision;
+  final KeepersNavDestination navigationDestination;
   final List<LockedMemoryChallenge> lockedMemories;
   final MemoryKeyCapsule? timeCapsule;
-  final ValueChanged<MemoryKeyMemory>? onOpenRandomMemory;
   final ValueChanged<LockedMemoryChallenge>? onOpenLockedMemory;
-  final VoidCallback? onAddMember;
-  final VoidCallback? onNudgeMissingMembers;
 
   @override
   State<CeremonyScreen> createState() => _CeremonyScreenState();
@@ -151,49 +137,56 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
     with SingleTickerProviderStateMixin {
   late _CeremonyStage _stage = widget.startInKeeping
       ? _CeremonyStage.keeping
+      : widget.startInWeekly
+      ? _CeremonyStage.reel
       : _CeremonyStage.key;
-  late final PageController _pageController = PageController();
   late final AnimationController _pastelFlood = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 560),
   );
-  final math.Random _random = math.Random();
   int _memoryIndex = 0;
-  int? _lastRandomIndex;
   bool _echoOpen = false;
   bool _flooding = false;
 
-  late final List<_RehearsalMemory> _memories = [
+  late final List<_RehearsalMemory> _previewMemories = [
     const _RehearsalMemory(
       author: 'A family member',
       format: _RehearsalFormat.photo,
+      title: 'A small moment',
       caption: 'A small moment, held in the light.',
+      dateLabel: '16 May, 2025',
+      imageAsset: 'assets/memories/weekly_reference_1.png',
       color: Color(0xFFE4626F),
     ),
     const _RehearsalMemory(
       author: 'A family member',
       format: _RehearsalFormat.voice,
+      title: 'A voice together',
       caption: 'A voice the room can hear together.',
+      dateLabel: '18 May, 2025',
+      imageAsset: 'assets/memories/weekly_reference_2.png',
       color: Color(0xFF3EB8A5),
     ),
     _RehearsalMemory(
       author: widget.currentMemberName,
       format: _RehearsalFormat.text,
+      title: 'What should we remember?',
       caption: 'What should this family remember from this week?',
+      dateLabel: '21 May, 2025',
+      imageAsset: 'assets/memories/weekly_reference_3.png',
       color: const Color(0xFF9B6BD5),
     ),
   ];
 
   @override
   void dispose() {
-    _pageController.dispose();
     _pastelFlood.dispose();
     super.dispose();
   }
 
   Future<void> _openWithPastelFlood(VoidCallback open) async {
     if (_flooding) return;
-    if (MediaQuery.disableAnimationsOf(context)) {
+    if (keepersReduceMotion(context)) {
       open();
       return;
     }
@@ -206,141 +199,81 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
     _pastelFlood.reset();
   }
 
-  void _openRandomMemory() {
-    if (widget.randomMemories.isEmpty) {
-      setState(() => _stage = _CeremonyStage.randomEmpty);
-      return;
-    }
-    final length = widget.randomMemories.length;
-    var index = _random.nextInt(length);
-    if (length > 1 && index == _lastRandomIndex) {
-      index = (index + 1) % length;
-    }
-    _lastRandomIndex = index;
-    widget.onOpenRandomMemory?.call(widget.randomMemories[index]);
-  }
-
-  void _addMember() => widget.onAddMember?.call();
-
-  void _nudgeMissingMembers() => widget.onNudgeMissingMembers?.call();
-
-  Future<void> _nextMemory() async {
-    if (_memoryIndex >= _memories.length - 1) return;
-    final next = _memoryIndex + 1;
+  void _selectMemory(int index, int memoryCount) {
+    if (index < 0 || index >= memoryCount || index == _memoryIndex) return;
     setState(() {
-      _memoryIndex = next;
+      _memoryIndex = index;
       _echoOpen = false;
     });
-    if (MediaQuery.disableAnimationsOf(context)) {
-      _pageController.jumpToPage(next);
-    } else {
-      await _pageController.animateToPage(
-        next,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
-      );
-    }
   }
 
-  Future<void> _previousMemory() async {
+  void _nextMemory(int memoryCount) {
+    if (_memoryIndex >= memoryCount - 1) return;
+    _selectMemory(_memoryIndex + 1, memoryCount);
+  }
+
+  void _previousMemory(int memoryCount) {
     if (_memoryIndex == 0) return;
-    final previous = _memoryIndex - 1;
-    setState(() {
-      _memoryIndex = previous;
-      _echoOpen = false;
-    });
-    if (MediaQuery.disableAnimationsOf(context)) {
-      _pageController.jumpToPage(previous);
-    } else {
-      await _pageController.animateToPage(
-        previous,
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-      );
-    }
+    _selectMemory(_memoryIndex - 1, memoryCount);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_stage != _CeremonyStage.key) {
+      if (widget.weeklyPreview) {
+        return _buildWeeklyExperience(_previewMemories, preview: true);
+      }
+      return FutureBuilder<List<OpenedMemory>>(
+        future: widget.weeklyMemories,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return _weeklyStatus(
+              key: const ValueKey('weekly-experience-error'),
+              message: 'This week could not be opened safely.',
+            );
+          }
+          if (!snapshot.hasData) {
+            return _weeklyStatus(
+              key: const ValueKey('weekly-experience-loading'),
+              message: 'Opening this week…',
+              loading: true,
+            );
+          }
+          final memories = _openedMemories(snapshot.data!);
+          if (memories.isEmpty) {
+            return _weeklyStatus(
+              key: const ValueKey('weekly-experience-empty'),
+              message: 'No available memories were found for this week.',
+            );
+          }
+          return _buildWeeklyExperience(memories, preview: false);
+        },
+      );
+    }
+
     final scaffold = KeepersDestinationScaffold(
-      destination: KeepersNavDestination.ceremony,
-      kicker: _stage == _CeremonyStage.key
-          ? 'Open together'
-          : _stage == _CeremonyStage.reel
-          ? 'Family reel'
-          : _stage == _CeremonyStage.keeping
-          ? 'The keeping'
-          : 'From the vault',
-      title: _stage == _CeremonyStage.key
-          ? 'Memory Key'
-          : _stage == _CeremonyStage.reel
-          ? widget.familyName
-          : _stage == _CeremonyStage.keeping
-          ? 'What stays with us?'
-          : 'Random memory',
-      subtitle: _stage == _CeremonyStage.keeping
-          ? 'Swipe or use the named actions below.'
-          : null,
-      compactHeader: _stage == _CeremonyStage.key,
+      destination: widget.navigationDestination,
+      kicker: 'Open together',
+      title: 'Memory Key',
+      compactHeader: true,
       onDestinationSelected: widget.onDestinationSelected,
       onCapture: widget.onCapture,
-      trailing:
-          _stage == _CeremonyStage.key || _stage == _CeremonyStage.randomEmpty
-          ? null
-          : const _RehearsalBadge(),
-      child: AnimatedSwitcher(
-        duration: MediaQuery.disableAnimationsOf(context)
-            ? Duration.zero
-            : const Duration(milliseconds: 260),
-        child: switch (_stage) {
-          _CeremonyStage.key => _MemoryKeyLanding(
-            key: const ValueKey('memory-key-landing'),
-            nearbyDeviceCount: widget.nearbyDeviceCount,
-            requiredNearbyDevices: widget.requiredNearbyDevices,
-            weeklyMemoryCount: widget.weeklyMemoryCount,
-            randomMemoryCount: widget.randomMemories.length,
-            members: widget.members,
-            lockedMemories: widget.lockedMemories,
-            timeCapsule: widget.timeCapsule,
-            weeklyPreviewEnabled: widget.weeklyPreviewEnabled,
-            onWeekly: () => unawaited(
-              _openWithPastelFlood(
-                () => setState(() => _stage = _CeremonyStage.reel),
-              ),
-            ),
-            onRandom: () => unawaited(_openWithPastelFlood(_openRandomMemory)),
-            onAddMember: _addMember,
-            onNudgeMissingMembers: _nudgeMissingMembers,
-            onOpenLocks: () =>
-                widget.onDestinationSelected(KeepersNavDestination.locks),
-            onOpenLockedMemory: widget.onOpenLockedMemory == null
-                ? null
-                : (challenge) => unawaited(
-                    _openWithPastelFlood(
-                      () => widget.onOpenLockedMemory!(challenge),
-                    ),
+      child: Align(
+        key: const ValueKey('memory-key-landing'),
+        alignment: Alignment.topCenter,
+        child: _MemoryKeyLanding(
+          lockedMemories: widget.lockedMemories,
+          timeCapsule: widget.timeCapsule,
+          onOpenLocks: () =>
+              widget.onDestinationSelected(KeepersNavDestination.locks),
+          onOpenLockedMemory: widget.onOpenLockedMemory == null
+              ? null
+              : (challenge) => unawaited(
+                  _openWithPastelFlood(
+                    () => widget.onOpenLockedMemory!(challenge),
                   ),
-          ),
-          _CeremonyStage.reel => _Reel(
-            key: const ValueKey('ceremony-reel'),
-            controller: _pageController,
-            memories: _memories,
-            currentIndex: _memoryIndex,
-            echoOpen: _echoOpen,
-            onEcho: () => setState(() => _echoOpen = true),
-            onBack: _previousMemory,
-            onNext: _nextMemory,
-            onKeeping: () => setState(() => _stage = _CeremonyStage.keeping),
-          ),
-          _CeremonyStage.keeping => _KeepingView(
-            key: const ValueKey('ceremony-keeping'),
-            memories: _memories,
-          ),
-          _CeremonyStage.randomEmpty => _RandomMemoryEmpty(
-            key: const ValueKey('random-memory-empty'),
-            onBack: () => setState(() => _stage = _CeremonyStage.key),
-          ),
-        },
+                ),
+        ),
       ),
     );
     return Stack(
@@ -354,7 +287,7 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
               child: AnimatedBuilder(
                 animation: _pastelFlood,
                 builder: (context, _) => CustomPaint(
-                  painter: _PastelFloodPainter(progress: _pastelFlood.value),
+                  painter: PastelFloodPainter(progress: _pastelFlood.value),
                 ),
               ),
             ),
@@ -362,155 +295,259 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
       ],
     );
   }
-}
 
-final class _PastelFloodPainter extends CustomPainter {
-  const _PastelFloodPainter({required this.progress});
-
-  final double progress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final eased = Curves.easeOutCubic.transform(progress);
-    final longest = math.max(size.width, size.height);
-    final colors = <Color>[
-      KeepersColors.memberPalette[1],
-      KeepersColors.memberPalette[5],
-      KeepersColors.memberPalette[3],
-      KeepersColors.memberPalette[2],
-      const Color(0xFFF2D86B),
-    ];
-    final centers = <Offset>[
-      Offset(size.width * .08, size.height * .72),
-      Offset(size.width * .88, size.height * .64),
-      Offset(size.width * .22, size.height * .28),
-      Offset(size.width * .76, size.height * .22),
-      Offset(size.width * .5, size.height * .48),
-    ];
-    final floodPath = Path();
-    for (var index = 0; index < colors.length; index++) {
-      final stagger = (eased - index * .045).clamp(0.0, 1.0);
-      final radius = longest * stagger * (.82 + index * .025);
-      floodPath.addOval(
-        Rect.fromCircle(center: centers[index], radius: radius),
-      );
-    }
-    final pastels = [
-      for (final color in colors) Color.lerp(color, Colors.white, .48)!,
-    ];
-    canvas.save();
-    canvas.clipPath(floodPath);
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: pastels,
-          stops: const [0, .22, .47, .72, 1],
-        ).createShader(Offset.zero & size),
+  Widget _buildWeeklyExperience(
+    List<_RehearsalMemory> memories, {
+    required bool preview,
+  }) {
+    final safeIndex = math.min(_memoryIndex, memories.length - 1);
+    final weeklyTitle = _stage == _CeremonyStage.reel
+        ? memories[safeIndex].title
+        : 'What stays with us?';
+    return _WeeklyExperienceShell(
+      title: weeklyTitle,
+      modeLabel: preview ? 'REHEARSAL MODE' : 'THIS WEEK',
+      onClose: () => widget.onDestinationSelected(KeepersNavDestination.wheel),
+      child: AnimatedSwitcher(
+        duration: keepersReduceMotion(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 180),
+        layoutBuilder: (currentChild, previousChildren) => Stack(
+          fit: StackFit.expand,
+          children: [...previousChildren, ?currentChild],
+        ),
+        child: _stage == _CeremonyStage.reel
+            ? _Reel(
+                key: const ValueKey('ceremony-reel'),
+                memories: memories,
+                currentIndex: safeIndex,
+                echoOpen: _echoOpen,
+                preview: preview,
+                playback: widget.weeklyPlayback,
+                onEcho: () => setState(() => _echoOpen = true),
+                onSelect: (index) => _selectMemory(index, memories.length),
+                onBack: () => _previousMemory(memories.length),
+                onNext: () => _nextMemory(memories.length),
+                onKeeping: () =>
+                    setState(() => _stage = _CeremonyStage.keeping),
+              )
+            : _KeepingView(
+                key: const ValueKey('ceremony-keeping'),
+                memories: memories,
+                preview: preview,
+                onDecision: preview ? null : widget.onWeeklyDecision,
+                onComplete: () =>
+                    widget.onDestinationSelected(KeepersNavDestination.wheel),
+              ),
+      ),
     );
-    canvas.restore();
   }
 
-  @override
-  bool shouldRepaint(covariant _PastelFloodPainter oldDelegate) =>
-      oldDelegate.progress != progress;
+  Widget _weeklyStatus({
+    required Key key,
+    required String message,
+    bool loading = false,
+  }) => _WeeklyExperienceShell(
+    title: 'This week',
+    modeLabel: 'THIS WEEK',
+    onClose: () => widget.onDestinationSelected(KeepersNavDestination.wheel),
+    child: Center(
+      key: key,
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (loading) ...[
+              const CircularProgressIndicator.adaptive(),
+              const SizedBox(height: 20),
+            ],
+            KeepersText(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: KeepersColors.inkMuted),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  List<_RehearsalMemory> _openedMemories(List<OpenedMemory> opened) {
+    const colors = [
+      KeepersColors.homeClay,
+      KeepersColors.homeGreen,
+      KeepersColors.homeBlue,
+      KeepersColors.homeMauve,
+      KeepersColors.brass,
+    ];
+    return List<_RehearsalMemory>.generate(opened.length, (index) {
+      final memory = opened[index];
+      final payload = memory.payload;
+      final author =
+          widget.weeklyAuthorNames[memory.metadata.authorId] ??
+          'A family member';
+      final caption = switch (payload.format) {
+        MemoryFormat.text => _nonEmpty(payload.text) ?? 'A written memory',
+        MemoryFormat.photo =>
+          _nonEmpty(payload.caption) ?? 'A photo shared by $author',
+        MemoryFormat.voice =>
+          _nonEmpty(payload.caption) ?? 'A voice shared by $author',
+      };
+      final title =
+          _nonEmpty(payload.caption) ??
+          switch (payload.format) {
+            MemoryFormat.photo => 'A photo from $author',
+            MemoryFormat.voice => 'A voice from $author',
+            MemoryFormat.text => 'A note from $author',
+          };
+      return _RehearsalMemory(
+        author: author,
+        format: switch (payload.format) {
+          MemoryFormat.photo => _RehearsalFormat.photo,
+          MemoryFormat.voice => _RehearsalFormat.voice,
+          MemoryFormat.text => _RehearsalFormat.text,
+        },
+        title: title,
+        caption: caption,
+        dateLabel: _formatWeeklyDate(memory.metadata.createdAt),
+        color: colors[index % colors.length],
+        primaryBytes: payload.primaryBytes,
+        metadata: memory.metadata,
+        preview: false,
+      );
+    }, growable: false);
+  }
 }
 
-final class _RehearsalBadge extends StatelessWidget {
-  const _RehearsalBadge();
+final class _WeeklyExperienceShell extends StatelessWidget {
+  const _WeeklyExperienceShell({
+    required this.title,
+    required this.modeLabel,
+    required this.onClose,
+    required this.child,
+  });
+
+  final String title;
+  final String modeLabel;
+  final VoidCallback onClose;
+  final Widget child;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-    decoration: BoxDecoration(
-      border: Border.all(color: KeepersColors.brass.withValues(alpha: .7)),
-      borderRadius: BorderRadius.circular(18),
-    ),
-    child: const KeepersText(
-      'REHEARSAL MODE',
-      style: TextStyle(
-        color: KeepersColors.brassLight,
-        fontSize: 10,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 1.2,
+  Widget build(BuildContext context) => Scaffold(
+    key: const ValueKey('weekly-experience-shell'),
+    backgroundColor: Colors.transparent,
+    body: SafeArea(
+      child: Column(
+        children: [
+          SizedBox(
+            key: const ValueKey('weekly-gallery-header'),
+            width: double.infinity,
+            height: 68,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Positioned(
+                  left: 10,
+                  child: IconButton(
+                    tooltip: 'Close weekly memories',
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close_rounded),
+                    color: KeepersColors.ink,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 66),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      KeepersText(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: KeepersColors.ink,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: .15,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      KeepersText(
+                        modeLabel,
+                        style: const TextStyle(
+                          color: KeepersColors.inkMuted,
+                          fontSize: 7.5,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: .55,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: child),
+        ],
       ),
     ),
   );
 }
 
-final class _MemoryKeyLanding extends StatelessWidget {
+final class _MemoryKeyLanding extends StatefulWidget {
   const _MemoryKeyLanding({
-    required this.nearbyDeviceCount,
-    required this.requiredNearbyDevices,
-    required this.weeklyMemoryCount,
-    required this.randomMemoryCount,
-    required this.members,
     required this.lockedMemories,
     required this.timeCapsule,
-    required this.weeklyPreviewEnabled,
-    required this.onWeekly,
-    required this.onRandom,
-    required this.onAddMember,
-    required this.onNudgeMissingMembers,
     required this.onOpenLocks,
     required this.onOpenLockedMemory,
-    super.key,
   });
 
-  final int nearbyDeviceCount;
-  final int requiredNearbyDevices;
-  final int weeklyMemoryCount;
-  final int randomMemoryCount;
-  final List<MemoryKeyMember> members;
   final List<LockedMemoryChallenge> lockedMemories;
   final MemoryKeyCapsule? timeCapsule;
-  final bool weeklyPreviewEnabled;
-  final VoidCallback onWeekly;
-  final VoidCallback onRandom;
-  final VoidCallback onAddMember;
-  final VoidCallback onNudgeMissingMembers;
   final VoidCallback onOpenLocks;
   final ValueChanged<LockedMemoryChallenge>? onOpenLockedMemory;
 
   @override
+  State<_MemoryKeyLanding> createState() => _MemoryKeyLandingState();
+}
+
+final class _MemoryKeyLandingState extends State<_MemoryKeyLanding> {
+  final GlobalKey _capsuleKey = GlobalKey();
+
+  Future<void> _showCapsule() async {
+    final capsuleContext = _capsuleKey.currentContext;
+    if (capsuleContext == null) return;
+    await Scrollable.ensureVisible(
+      capsuleContext,
+      duration: keepersReduceMotion(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      alignment: .1,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final weeklyReady = nearbyDeviceCount >= requiredNearbyDevices;
+    final lockedMemories = widget.lockedMemories;
+    final timeCapsule = widget.timeCapsule;
     return SingleChildScrollView(
       key: const ValueKey('memory-key-scroll'),
       padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _MemoryKeyPresenceStack(
-            members: members,
-            nearbyDeviceCount: nearbyDeviceCount,
-            onInvite: onAddMember,
+          _MemoryKeyEntries(
+            legacySubtitle: lockedMemories.isEmpty
+                ? 'No family condition yet'
+                : '${lockedMemories.length} ${lockedMemories.length == 1 ? 'family condition' : 'family conditions'}',
+            capsuleSubtitle:
+                timeCapsule?.openingLabel ?? 'No capsule scheduled',
+            onLegacyTap: widget.onOpenLocks,
+            onCapsuleTap: timeCapsule == null ? null : _showCapsule,
           ),
-          const SizedBox(height: 8),
-          KeepersText(
-            _presenceSentence(
-              members: members,
-              nearbyDeviceCount: nearbyDeviceCount,
-              requiredNearbyDevices: requiredNearbyDevices,
-            ),
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: KeepersColors.inkMuted, height: 1.25),
-          ),
-          const SizedBox(height: 16),
-          _WeeklyGatheringCard(
-            nearbyDeviceCount: nearbyDeviceCount,
-            requiredNearbyDevices: requiredNearbyDevices,
-            weeklyMemoryCount: weeklyMemoryCount,
-            ready: weeklyReady,
-            onOpen: onWeekly,
-            onPreview: weeklyPreviewEnabled && !weeklyReady ? onWeekly : null,
-            onAskFamily: onNudgeMissingMembers,
-          ),
-          const SizedBox(height: 10),
-          _RandomDrawCard(memoryCount: randomMemoryCount, onDraw: onRandom),
           const SizedBox(height: 20),
           KeepersText(
             'Locked by family',
@@ -529,14 +566,17 @@ final class _MemoryKeyLanding extends StatelessWidget {
               _LockedMemoryCard(
                 challenge: challenge,
                 onOpen: challenge.state == LockedMemoryChallengeState.approved
-                    ? onOpenLockedMemory
+                    ? widget.onOpenLockedMemory
                     : null,
-                onManage: onOpenLocks,
+                onManage: widget.onOpenLocks,
               ),
               const SizedBox(height: 10),
             ],
           if (timeCapsule case final capsule?) ...[
-            _TimeCapsuleCard(capsule: capsule, onOpen: onOpenLocks),
+            KeyedSubtree(
+              key: _capsuleKey,
+              child: _TimeCapsuleCard(capsule: capsule),
+            ),
             const SizedBox(height: 4),
           ],
         ],
@@ -545,551 +585,134 @@ final class _MemoryKeyLanding extends StatelessWidget {
   }
 }
 
-String _presenceSentence({
-  required List<MemoryKeyMember> members,
-  required int nearbyDeviceCount,
-  required int requiredNearbyDevices,
-}) {
-  final nearbyRelatives = math.min(
-    members.length,
-    math.max(0, nearbyDeviceCount - 1),
-  );
-  if (nearbyRelatives == 0) {
-    final remaining = math.max(0, requiredNearbyDevices - nearbyDeviceCount);
-    if (remaining == 0) return 'You are here. The family key is ready.';
-    if (remaining == 1) {
-      return 'You are here. One more device turns the key.';
-    }
-    return 'You are here. $remaining more family devices turn the key.';
-  }
-  final names = members.take(nearbyRelatives).map((member) => member.name);
-  return '${_joinNames(['You', ...names])} are here.';
-}
-
-String _joinNames(List<String> names) {
-  if (names.length == 1) return names.single;
-  if (names.length == 2) return '${names.first} and ${names.last}';
-  return '${names.take(names.length - 1).join(', ')} and ${names.last}';
-}
-
-final class _MemoryKeyPresenceStack extends StatelessWidget {
-  const _MemoryKeyPresenceStack({
-    required this.members,
-    required this.nearbyDeviceCount,
-    required this.onInvite,
+final class _MemoryKeyEntries extends StatelessWidget {
+  const _MemoryKeyEntries({
+    required this.legacySubtitle,
+    required this.capsuleSubtitle,
+    required this.onLegacyTap,
+    required this.onCapsuleTap,
   });
 
-  final List<MemoryKeyMember> members;
-  final int nearbyDeviceCount;
-  final VoidCallback onInvite;
+  final String legacySubtitle;
+  final String capsuleSubtitle;
+  final VoidCallback onLegacyTap;
+  final VoidCallback? onCapsuleTap;
 
   @override
-  Widget build(BuildContext context) {
-    final nearbyRelatives = math.max(0, nearbyDeviceCount - 1);
-    return Semantics(
-      container: true,
-      label: 'Family presence',
-      child: ExcludeSemantics(
-        excluding: false,
-        child: SizedBox(
-          key: const ValueKey('memory-key-presence-stack'),
-          height: 104,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final cardWidth = (constraints.maxWidth * .175).clamp(56.0, 64.0);
-              final cardHeight = cardWidth * 1.32;
-              final count = members.length + 1;
-              final fittedStep = count <= 1
-                  ? 0.0
-                  : (constraints.maxWidth - cardWidth) /
-                        (math.min(count, 6) - 1);
-              final step = math.max(cardWidth * .74, fittedStep);
-              final contentWidth = math.max(
-                constraints.maxWidth,
-                cardWidth + step * (count - 1),
-              );
-              const turns = <double>[-.026, -.015, -.006, .006, .015, .025];
-              const rises = <double>[14, 11, 8, 4, 1, 6];
-              return SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                physics: const BouncingScrollPhysics(),
-                child: SizedBox(
-                  width: contentWidth,
-                  height: 104,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Positioned(
-                        left: 0,
-                        top: rises.first,
-                        child: Transform.rotate(
-                          angle: turns.first * math.pi,
-                          child: _InvitePresenceCard(
-                            width: cardWidth,
-                            height: cardHeight,
-                            onTap: onInvite,
-                          ),
-                        ),
-                      ),
-                      for (var index = 0; index < members.length; index++)
-                        Positioned(
-                          left: step * (index + 1),
-                          top: rises[(index + 1) % rises.length],
-                          child: Transform.rotate(
-                            angle: turns[(index + 1) % turns.length] * math.pi,
-                            child: _MemberPresenceCard(
-                              member: members[index],
-                              width: cardWidth,
-                              height: cardHeight,
-                              nearby: index < nearbyRelatives,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              );
-            },
+  Widget build(BuildContext context) => IntrinsicHeight(
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: _MemoryKeyShortcutCard(
+            key: const ValueKey('memory-key-legacy-entry'),
+            title: 'LEGACY LOCK',
+            subtitle: legacySubtitle,
+            icon: Icons.lock_outline_rounded,
+            accent: KeepersColors.legacyOlive,
+            labelAccent: KeepersColors.legacyOliveText,
+            onTap: onLegacyTap,
           ),
         ),
-      ),
-    );
-  }
-}
-
-final class _InvitePresenceCard extends StatelessWidget {
-  const _InvitePresenceCard({
-    required this.width,
-    required this.height,
-    required this.onTap,
-  });
-
-  final double width;
-  final double height;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    label: 'Invite a family member',
-    onTap: onTap,
-    child: ExcludeSemantics(
-      child: SizedBox(
-        width: width,
-        height: height,
-        child: Material(
-          color: KeepersColors.auraIvory.withValues(alpha: .56),
-          shape: RoundedRectangleBorder(
-            side: BorderSide(
-              color: KeepersColors.homeTaupe.withValues(alpha: .48),
-            ),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onTap,
-            child: const Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.add_rounded,
-                  size: 27,
-                  color: KeepersColors.homeTaupe,
-                ),
-                SizedBox(height: 8),
-                KeepersText(
-                  'INVITE',
-                  style: TextStyle(
-                    color: KeepersColors.homeTaupe,
-                    fontSize: 8,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.6,
-                  ),
-                ),
-              ],
-            ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _MemoryKeyShortcutCard(
+            key: const ValueKey('memory-key-capsule-entry'),
+            title: 'CAPSULE',
+            subtitle: capsuleSubtitle,
+            icon: Icons.hourglass_empty_rounded,
+            accent: KeepersColors.homeGold,
+            labelAccent: KeepersColors.homeGoldText,
+            onTap: onCapsuleTap,
           ),
         ),
-      ),
+      ],
     ),
   );
 }
 
-final class _MemberPresenceCard extends StatelessWidget {
-  const _MemberPresenceCard({
-    required this.member,
-    required this.width,
-    required this.height,
-    required this.nearby,
+final class _MemoryKeyShortcutCard extends StatelessWidget {
+  const _MemoryKeyShortcutCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accent,
+    required this.labelAccent,
+    required this.onTap,
+    super.key,
   });
 
-  final MemoryKeyMember member;
-  final double width;
-  final double height;
-  final bool nearby;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color accent;
+  final Color labelAccent;
+  final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) {
-    final accent = nearby ? member.color : KeepersColors.homeTaupe;
-    final avatar =
-        member.avatar ?? AvatarConfig.defaults(seed: member.id ?? member.name);
-    return Semantics(
-      image: true,
-      label: '${member.name}, ${nearby ? 'here' : 'away'}',
-      child: ExcludeSemantics(
-        child: Opacity(
-          opacity: nearby ? 1 : .7,
-          child: Container(
-            width: width,
-            height: height,
-            padding: const EdgeInsets.fromLTRB(5, 6, 5, 5),
-            decoration: BoxDecoration(
-              color: KeepersColors.auraIvory.withValues(alpha: .9),
-              border: Border.all(
-                color: KeepersColors.homeLine.withValues(alpha: .9),
-              ),
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: [
-                BoxShadow(
-                  color: KeepersColors.homeInk.withValues(alpha: .07),
-                  blurRadius: 14,
-                  offset: const Offset(0, 7),
-                ),
-              ],
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Column(
-                  children: [
-                    Expanded(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: accent.withValues(alpha: .13),
-                          borderRadius: BorderRadius.circular(7),
-                        ),
-                        child: Center(
-                          child: KeepersAvatar(
-                            key: ValueKey(
-                              'memory-key-avatar-${member.id ?? member.name}',
-                            ),
-                            config: avatar,
-                            size: width * .68,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      height: 12,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: KeepersText(
-                          member.name.toUpperCase(),
-                          maxLines: 1,
-                          style: TextStyle(
-                            color: accent,
-                            fontSize: 8,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1.35,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 1),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: FractionallySizedBox(
-                        widthFactor: nearby ? .82 : .38,
-                        child: Container(
-                          height: 1.5,
-                          decoration: BoxDecoration(
-                            color: accent,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                Positioned(
-                  right: 1,
-                  top: 1,
-                  child: Container(
-                    width: 8,
-                    height: 8,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    enabled: onTap != null,
+    label: '$title. $subtitle',
+    onTap: onTap,
+    child: ExcludeSemantics(
+      child: Material(
+        color: KeepersColors.auraIvory.withValues(alpha: .92),
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 74),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              child: Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
                     decoration: BoxDecoration(
-                      color: nearby
-                          ? accent
-                          : KeepersColors.auraIvory.withValues(alpha: .85),
                       shape: BoxShape.circle,
-                      border: Border.all(color: accent, width: 1.3),
+                      border: Border.all(color: accent.withValues(alpha: .38)),
+                    ),
+                    child: Icon(icon, color: accent, size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        KeepersText(
+                          title,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: labelAccent,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1.8,
+                              ),
+                        ),
+                        const SizedBox(height: 3),
+                        KeepersText(
+                          subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: KeepersColors.homeInk,
+                                fontSize: 9.2,
+                                height: 1.15,
+                              ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-final class _WeeklyGatheringCard extends StatelessWidget {
-  const _WeeklyGatheringCard({
-    required this.nearbyDeviceCount,
-    required this.requiredNearbyDevices,
-    required this.weeklyMemoryCount,
-    required this.ready,
-    required this.onOpen,
-    required this.onPreview,
-    required this.onAskFamily,
-  });
-
-  final int nearbyDeviceCount;
-  final int requiredNearbyDevices;
-  final int weeklyMemoryCount;
-  final bool ready;
-  final VoidCallback onOpen;
-  final VoidCallback? onPreview;
-  final VoidCallback onAskFamily;
-
-  @override
-  Widget build(BuildContext context) {
-    final waitingCopy = weeklyMemoryCount == 0
-        ? 'No memories waiting yet.'
-        : weeklyMemoryCount == 1
-        ? '1 memory, waiting.'
-        : '$weeklyMemoryCount memories, waiting.';
-    final remaining = math.max(0, requiredNearbyDevices - nearbyDeviceCount);
-    final keyCopy = ready
-        ? 'The family key is ready.'
-        : remaining == 1
-        ? 'One more device turns the key.'
-        : '$remaining more devices turn the key.';
-    return Container(
-      key: const ValueKey('weekly-recap-mode'),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: KeepersColors.auraIvory.withValues(alpha: .84),
-        border: Border.all(color: KeepersColors.homeLine),
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: KeepersColors.homeInk.withValues(alpha: .055),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          OutlinedButton(
-            key: const ValueKey('weekly-recap-open'),
-            onPressed: ready ? onOpen : null,
-            style: OutlinedButton.styleFrom(
-              alignment: Alignment.topLeft,
-              padding: EdgeInsets.zero,
-              minimumSize: const Size(0, 0),
-              foregroundColor: KeepersColors.ink,
-              disabledForegroundColor: KeepersColors.ink,
-              side: BorderSide.none,
-              shape: const RoundedRectangleBorder(),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _RoundLineIcon(
-                      icon: ready ? Icons.key_rounded : Icons.lock_outline,
-                      color: KeepersColors.homeGold,
-                    ),
-                    const SizedBox(width: 9),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _EditorialEyebrow('THE WEEK'),
-                          SizedBox(height: 2),
-                          KeepersText(
-                            'Kept since Monday',
-                            style: TextStyle(
-                              color: KeepersColors.inkMuted,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 118),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerRight,
-                        child: KeepersText(
-                          '$nearbyDeviceCount of $requiredNearbyDevices devices',
-                          style: const TextStyle(
-                            color: KeepersColors.homeTaupe,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1.35,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                KeepersText(
-                  waitingCopy,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: KeepersColors.ink,
-                    fontFamily: KeepersType.primary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    height: 1.05,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Divider(height: 1, color: KeepersColors.homeLine),
-                const SizedBox(height: 7),
-                Row(
-                  children: [
-                    _PresenceDots(
-                      nearby: nearbyDeviceCount,
-                      required: requiredNearbyDevices,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: KeepersText(
-                        keyCopy,
-                        style: const TextStyle(
-                          color: KeepersColors.inkMuted,
-                          fontSize: 12,
-                          height: 1.25,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: ready ? onOpen : onAskFamily,
-            icon: Icon(
-              ready ? Icons.key_rounded : Icons.person_add_alt_1_rounded,
-              size: 18,
-            ),
-            label: KeepersText(ready ? 'Open this week' : 'Ask family to come'),
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(44),
-              backgroundColor: ready
-                  ? KeepersColors.ink
-                  : KeepersColors.auraBlush,
-              foregroundColor: KeepersColors.ink,
-              elevation: 0,
-              side: BorderSide(
-                color: KeepersColors.homeGold.withValues(alpha: .5),
-              ),
-            ),
-          ),
-          if (onPreview case final preview?) ...[
-            const SizedBox(height: 2),
-            TextButton.icon(
-              key: const ValueKey('weekly-recap-preview'),
-              onPressed: preview,
-              icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
-              label: const KeepersText('Preview weekly experience'),
-              style: TextButton.styleFrom(
-                minimumSize: const Size.fromHeight(44),
-                foregroundColor: KeepersColors.ink,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-final class _RandomDrawCard extends StatelessWidget {
-  const _RandomDrawCard({required this.memoryCount, required this.onDraw});
-
-  final int memoryCount;
-  final VoidCallback onDraw;
-
-  @override
-  Widget build(BuildContext context) => KeyedSubtree(
-    key: const ValueKey('random-memory-mode'),
-    child: OutlinedButton(
-      onPressed: onDraw,
-      style: OutlinedButton.styleFrom(
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        minimumSize: const Size(0, 48),
-        foregroundColor: KeepersColors.ink,
-        backgroundColor: KeepersColors.auraBlush.withValues(alpha: .5),
-        side: BorderSide(color: KeepersColors.homeGold.withValues(alpha: .48)),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      ),
-      child: Row(
-        children: [
-          const _RoundLineIcon(
-            icon: Icons.style_outlined,
-            color: KeepersColors.homeGold,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const _EditorialEyebrow('ANY TIME'),
-                const SizedBox(height: 1),
-                KeepersText(
-                  'Draw a memory',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: KeepersColors.ink,
-                    fontFamily: KeepersType.primary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                KeepersText(
-                  memoryCount == 0
-                      ? 'Your kept archive is ready to grow'
-                      : '$memoryCount kept — one comes back at random',
-                  style: const TextStyle(
-                    color: KeepersColors.inkMuted,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-            decoration: BoxDecoration(
-              color: KeepersColors.ink,
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: const KeepersText(
-              'DRAW',
-              style: TextStyle(
-                color: KeepersColors.auraIvory,
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.7,
-              ),
-            ),
-          ),
-        ],
       ),
     ),
   );
@@ -1122,48 +745,10 @@ final class _EditorialEyebrow extends StatelessWidget {
   Widget build(BuildContext context) => KeepersText(
     label,
     style: const TextStyle(
-      color: KeepersColors.homeGold,
+      color: KeepersColors.homeGoldText,
       fontSize: 10,
       fontWeight: FontWeight.w800,
       letterSpacing: 2,
-    ),
-  );
-}
-
-final class _PresenceDots extends StatelessWidget {
-  const _PresenceDots({required this.nearby, required this.required});
-
-  final int nearby;
-  final int required;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    label: '$nearby of $required devices nearby',
-    child: ExcludeSemantics(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var index = 0; index < required; index++) ...[
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: index < nearby
-                    ? KeepersColors.memberPalette[index %
-                          KeepersColors.memberPalette.length]
-                    : Colors.transparent,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: index < nearby
-                      ? Colors.transparent
-                      : KeepersColors.homeTaupe.withValues(alpha: .55),
-                ),
-              ),
-            ),
-            if (index < required - 1) const SizedBox(width: 6),
-          ],
-        ],
-      ),
     ),
   );
 }
@@ -1224,7 +809,7 @@ final class _LockedMemoryCard extends StatelessWidget {
                     KeepersText(
                       challenge.assignedBy.toUpperCase(),
                       style: const TextStyle(
-                        color: KeepersColors.homeGold,
+                        color: KeepersColors.homeGoldText,
                         fontSize: 9,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 1.5,
@@ -1342,97 +927,90 @@ final class _LockedMemoryCard extends StatelessWidget {
 }
 
 final class _TimeCapsuleCard extends StatelessWidget {
-  const _TimeCapsuleCard({required this.capsule, required this.onOpen});
+  const _TimeCapsuleCard({required this.capsule});
 
   final MemoryKeyCapsule capsule;
-  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) => Semantics(
-    button: true,
     label: '${capsule.title}. ${capsule.openingLabel}',
     child: ExcludeSemantics(
-      child: Material(
-        color: KeepersColors.auraIvory.withValues(alpha: .84),
-        shape: RoundedRectangleBorder(
-          side: const BorderSide(color: KeepersColors.homeLine),
+      child: Container(
+        decoration: BoxDecoration(
+          color: KeepersColors.auraIvory.withValues(alpha: .84),
+          border: Border.all(color: KeepersColors.homeLine),
           borderRadius: BorderRadius.circular(18),
         ),
-        child: InkWell(
-          onTap: onOpen,
-          borderRadius: BorderRadius.circular(18),
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Row(
-              children: [
-                const _RoundLineIcon(
-                  icon: Icons.hourglass_empty_rounded,
-                  color: KeepersColors.homeGold,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const _EditorialEyebrow('Time capsule'),
-                      const SizedBox(height: 3),
-                      KeepersText(
-                        capsule.title,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: KeepersColors.ink,
-                              fontFamily: KeepersType.primary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                      const SizedBox(height: 3),
-                      Wrap(
-                        spacing: 4,
-                        runSpacing: 2,
-                        children: [
-                          KeepersText(
-                            '${capsule.from} ·',
-                            style: const TextStyle(
-                              color: KeepersColors.inkMuted,
-                              fontSize: 11,
-                            ),
-                          ),
-                          KeepersText(
-                            capsule.openingLabel,
-                            style: const TextStyle(
-                              color: KeepersColors.inkMuted,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              const _RoundLineIcon(
+                icon: Icons.hourglass_empty_rounded,
+                color: KeepersColors.homeGold,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    const _EditorialEyebrow('Time capsule'),
+                    const SizedBox(height: 3),
                     KeepersText(
-                      '${capsule.daysRemaining}',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      capsule.title,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         color: KeepersColors.ink,
                         fontFamily: KeepersType.primary,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const KeepersText(
-                      'DAYS',
-                      style: TextStyle(
-                        color: KeepersColors.homeTaupe,
-                        fontSize: 8,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.4,
-                      ),
+                    const SizedBox(height: 3),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 2,
+                      children: [
+                        KeepersText(
+                          '${capsule.from} ·',
+                          style: const TextStyle(
+                            color: KeepersColors.inkMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                        KeepersText(
+                          capsule.openingLabel,
+                          style: const TextStyle(
+                            color: KeepersColors.inkMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  KeepersText(
+                    '${capsule.daysRemaining}',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: KeepersColors.ink,
+                      fontFamily: KeepersType.primary,
+                    ),
+                  ),
+                  const KeepersText(
+                    'DAYS',
+                    style: TextStyle(
+                      color: KeepersColors.homeTaupe,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -1458,242 +1036,261 @@ final class _NoLockedMemories extends StatelessWidget {
   );
 }
 
-final class _RandomMemoryEmpty extends StatelessWidget {
-  const _RandomMemoryEmpty({required this.onBack, super.key});
-
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.shuffle_rounded,
-            color: KeepersColors.memberPalette[5],
-            size: 54,
-          ),
-          const SizedBox(height: 18),
-          KeepersText(
-            'No kept memories yet',
-            textAlign: TextAlign.center,
-            style: KeepersType.heading.copyWith(color: KeepersColors.ink),
-          ),
-          const SizedBox(height: 8),
-          const KeepersText(
-            'After your family keeps a memory, the Key can draw it at any time.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: KeepersColors.inkMuted, height: 1.4),
-          ),
-          const SizedBox(height: 22),
-          OutlinedButton.icon(
-            onPressed: onBack,
-            icon: const Icon(Icons.arrow_back_rounded),
-            label: const KeepersText('Back to Memory Key'),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
 final class _Reel extends StatelessWidget {
   const _Reel({
-    required this.controller,
     required this.memories,
     required this.currentIndex,
     required this.echoOpen,
+    required this.preview,
+    required this.playback,
     required this.onEcho,
+    required this.onSelect,
     required this.onBack,
     required this.onNext,
     required this.onKeeping,
     super.key,
   });
 
-  final PageController controller;
   final List<_RehearsalMemory> memories;
   final int currentIndex;
   final bool echoOpen;
+  final bool preview;
+  final AudioPlaybackAdapter? playback;
   final VoidCallback onEcho;
+  final ValueChanged<int> onSelect;
   final VoidCallback onBack;
   final VoidCallback onNext;
   final VoidCallback onKeeping;
 
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(24, 4, 24, 12),
-        child: Row(
-          children: [
-            KeepersText(
-              '${currentIndex + 1} of ${memories.length}',
-              style: const TextStyle(color: KeepersColors.brassLight),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: LinearProgressIndicator(
-                value: (currentIndex + 1) / memories.length,
-                minHeight: 2,
-                backgroundColor: KeepersColors.cream.withValues(alpha: .12),
-              ),
-            ),
-          ],
-        ),
-      ),
-      Expanded(
-        child: PageView.builder(
-          key: const ValueKey('ceremony-host-page-view'),
-          controller: controller,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: memories.length,
-          itemBuilder: (context, index) => _MemoryReelCard(
-            memory: memories[index],
-            showEcho: index == memories.length - 1,
-            echoOpen: index == currentIndex && echoOpen,
-            onEcho: onEcho,
-          ),
-        ),
-      ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(24, 14, 24, 20),
-        child: Row(
-          children: [
-            if (currentIndex > 0)
-              OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(48, 48),
-                  foregroundColor: KeepersColors.cream,
-                ),
-                onPressed: onBack,
-                child: const Icon(Icons.arrow_back_rounded),
-              )
-            else
-              const SizedBox(width: 48),
-            const SizedBox(width: 12),
-            Expanded(
-              child: FilledButton(
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(50),
-                  backgroundColor: KeepersColors.brass,
-                  foregroundColor: KeepersColors.ground,
-                ),
-                onPressed: currentIndex == memories.length - 1
-                    ? onKeeping
-                    : onNext,
-                child: KeepersText(
-                  currentIndex == memories.length - 1
-                      ? 'Begin keeping'
-                      : 'Next memory',
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    ],
-  );
-}
-
-final class _MemoryReelCard extends StatelessWidget {
-  const _MemoryReelCard({
-    required this.memory,
-    required this.showEcho,
-    required this.echoOpen,
-    required this.onEcho,
-  });
-
-  final _RehearsalMemory memory;
-  final bool showEcho;
-  final bool echoOpen;
-  final VoidCallback onEcho;
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) => SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(minHeight: constraints.maxHeight),
-        child: Center(
-          child: Container(
-            width: math.min(constraints.maxWidth, 420),
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-              color: KeepersColors.groundVignette.withValues(alpha: .9),
-              border: Border.all(color: memory.color, width: 1.5),
-              borderRadius: BorderRadius.circular(30),
-              boxShadow: [
-                BoxShadow(
-                  color: memory.color.withValues(alpha: .16),
-                  blurRadius: 40,
-                  spreadRadius: 4,
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                KeepersText(
-                  memory.author.toUpperCase(),
-                  style: TextStyle(
-                    color: memory.color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.7,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                switch (memory.format) {
-                  _RehearsalFormat.photo => _PhotoRehearsal(memory: memory),
-                  _RehearsalFormat.voice => _VoiceRehearsal(memory: memory),
-                  _RehearsalFormat.text => _TextRehearsal(memory: memory),
-                },
-                if (showEcho) ...[
-                  const SizedBox(height: 22),
-                  const Divider(color: Color(0x33EFE7D4)),
-                  const SizedBox(height: 10),
-                  KeepersText(
-                    'An echo from before',
-                    style: KeepersType.heading.copyWith(
-                      color: KeepersColors.brassLight,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (!echoOpen)
-                    OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: KeepersColors.cream,
-                        minimumSize: const Size.fromHeight(46),
-                      ),
-                      onPressed: onEcho,
-                      child: const KeepersText('Open echo'),
-                    )
-                  else
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: KeepersColors.brass.withValues(alpha: .1),
+  Widget build(BuildContext context) {
+    final memory = memories[currentIndex];
+    final reduceMotion = keepersReduceMotion(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final contentWidth = math.min(constraints.maxWidth - 72, 340.0);
+        final heroHeight = math.min(
+          contentWidth / .72,
+          math.max(330.0, constraints.maxHeight * .61),
+        );
+        return SingleChildScrollView(
+          key: const ValueKey('weekly-gallery-scroll'),
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 28),
+          child: Center(
+            child: SizedBox(
+              width: contentWidth,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _GallerySwipeRegion(
+                    key: const ValueKey('weekly-gallery-hero'),
+                    label:
+                        '${_memoryFormatLabel(memory.format)}. ${memory.title}.',
+                    value: '${currentIndex + 1} of ${memories.length}',
+                    increasedValue: currentIndex < memories.length - 1
+                        ? '${currentIndex + 2} of ${memories.length}'
+                        : null,
+                    decreasedValue: currentIndex > 0
+                        ? '$currentIndex of ${memories.length}'
+                        : null,
+                    onNext: currentIndex < memories.length - 1 ? onNext : null,
+                    onBack: currentIndex > 0 ? onBack : null,
+                    child: SizedBox(
+                      height: heroHeight,
+                      child: ClipRRect(
                         borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: const KeepersText(
-                        'A memory from another season rises beneath it.',
-                        style: TextStyle(
-                          color: KeepersColors.cream,
-                          height: 1.4,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: KeepersColors.auraIvory,
+                            border: Border.all(color: KeepersColors.homeLine),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: AnimatedSwitcher(
+                            duration: reduceMotion
+                                ? Duration.zero
+                                : const Duration(milliseconds: 170),
+                            switchInCurve: Curves.easeOut,
+                            switchOutCurve: Curves.easeIn,
+                            transitionBuilder: (child, animation) =>
+                                FadeTransition(
+                                  opacity: animation,
+                                  child: child,
+                                ),
+                            layoutBuilder: (currentChild, previousChildren) =>
+                                Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    ...previousChildren,
+                                    ?currentChild,
+                                  ],
+                                ),
+                            child: _GalleryMemory(
+                              key: ValueKey('weekly-memory-$currentIndex'),
+                              memory: memory,
+                              playback: playback,
+                            ),
+                          ),
                         ),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 13),
+                  KeepersText(
+                    memory.dateLabel,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: KeepersColors.ink,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: .15,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      KeepersText(
+                        _memoryFormatLabel(memory.format),
+                        style: const TextStyle(
+                          color: KeepersColors.inkMuted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: .5,
+                        ),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: SizedBox(
+                          width: 18,
+                          child: Divider(
+                            height: 1,
+                            color: KeepersColors.homeLine,
+                          ),
+                        ),
+                      ),
+                      KeepersText(
+                        '${currentIndex + 1} of ${memories.length}',
+                        style: const TextStyle(
+                          color: KeepersColors.inkMuted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: .35,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  _GalleryFilmstrip(
+                    memories: memories,
+                    currentIndex: currentIndex,
+                    onSelect: onSelect,
+                  ),
+                  if (preview && currentIndex == memories.length - 1) ...[
+                    const SizedBox(height: 22),
+                    _GalleryEcho(open: echoOpen, onOpen: onEcho),
+                  ],
+                  if (currentIndex == memories.length - 1) ...[
+                    const SizedBox(height: 14),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(50),
+                        backgroundColor: KeepersColors.ink,
+                        foregroundColor: KeepersColors.auraIvory,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: onKeeping,
+                      child: const KeepersText('Begin keeping'),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
+    );
+  }
+}
+
+final class _GallerySwipeRegion extends StatefulWidget {
+  const _GallerySwipeRegion({
+    required this.label,
+    required this.value,
+    required this.increasedValue,
+    required this.decreasedValue,
+    required this.onNext,
+    required this.onBack,
+    required this.child,
+    super.key,
+  });
+
+  final String label;
+  final String value;
+  final String? increasedValue;
+  final String? decreasedValue;
+  final VoidCallback? onNext;
+  final VoidCallback? onBack;
+  final Widget child;
+
+  @override
+  State<_GallerySwipeRegion> createState() => _GallerySwipeRegionState();
+}
+
+final class _GallerySwipeRegionState extends State<_GallerySwipeRegion> {
+  double _dragDistance = 0;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: widget.label,
+    value: widget.value,
+    increasedValue: widget.increasedValue,
+    decreasedValue: widget.decreasedValue,
+    onIncrease: widget.onNext,
+    onDecrease: widget.onBack,
+    child: GestureDetector(
+      onHorizontalDragStart: (_) => _dragDistance = 0,
+      onHorizontalDragUpdate: (details) =>
+          _dragDistance += details.primaryDelta ?? 0,
+      onHorizontalDragCancel: () => _dragDistance = 0,
+      onHorizontalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        final direction = velocity.abs() >= 120 ? velocity : _dragDistance;
+        if (direction <= -48) widget.onNext?.call();
+        if (direction >= 48) widget.onBack?.call();
+        _dragDistance = 0;
+      },
+      child: widget.child,
     ),
   );
+}
+
+String _memoryFormatLabel(_RehearsalFormat format) => switch (format) {
+  _RehearsalFormat.photo => 'Photo memory',
+  _RehearsalFormat.voice => 'Voice memory',
+  _RehearsalFormat.text => 'Text memory',
+};
+
+final class _GalleryMemory extends StatelessWidget {
+  const _GalleryMemory({
+    required this.memory,
+    required this.playback,
+    super.key,
+  });
+
+  final _RehearsalMemory memory;
+  final AudioPlaybackAdapter? playback;
+
+  @override
+  Widget build(BuildContext context) => switch (memory.format) {
+    _RehearsalFormat.photo => _PhotoRehearsal(memory: memory),
+    _RehearsalFormat.voice => _VoiceRehearsal(
+      memory: memory,
+      playback: playback,
+    ),
+    _RehearsalFormat.text => _TextRehearsal(memory: memory),
+  };
 }
 
 final class _PhotoRehearsal extends StatelessWidget {
@@ -1701,47 +1298,38 @@ final class _PhotoRehearsal extends StatelessWidget {
   final _RehearsalMemory memory;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const KeepersText(
-        'Photo memory',
-        style: TextStyle(color: KeepersColors.cream),
-      ),
-      const SizedBox(height: 12),
-      AspectRatio(
-        aspectRatio: 4 / 3,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                memory.color.withValues(alpha: .8),
-                const Color(0xFF20170F),
-              ],
-            ),
-          ),
-          child: const Icon(
-            Icons.landscape_rounded,
-            size: 72,
-            color: Color(0xCCEFE7D4),
-          ),
-        ),
-      ),
-      const SizedBox(height: 14),
-      KeepersText(
-        memory.caption,
-        style: const TextStyle(color: KeepersColors.cream, height: 1.4),
-      ),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final bytes = memory.primaryBytes;
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        alignment: Alignment.center,
+        filterQuality: FilterQuality.high,
+        gaplessPlayback: true,
+      );
+    }
+    final asset = memory.imageAsset;
+    if (asset != null) {
+      return Image.asset(
+        asset,
+        fit: BoxFit.cover,
+        alignment: Alignment.center,
+        filterQuality: FilterQuality.high,
+      );
+    }
+    return _MemoryFallback(
+      color: memory.color,
+      icon: Icons.photo_outlined,
+      label: 'Photo unavailable',
+    );
+  }
 }
 
 final class _VoiceRehearsal extends StatefulWidget {
-  const _VoiceRehearsal({required this.memory});
+  const _VoiceRehearsal({required this.memory, required this.playback});
   final _RehearsalMemory memory;
+  final AudioPlaybackAdapter? playback;
 
   @override
   State<_VoiceRehearsal> createState() => _VoiceRehearsalState();
@@ -1749,58 +1337,148 @@ final class _VoiceRehearsal extends StatefulWidget {
 
 final class _VoiceRehearsalState extends State<_VoiceRehearsal> {
   bool _playing = false;
+  bool _playbackStarting = false;
+
+  Future<void> _stopPlaybackSafely(AudioPlaybackAdapter playback) async {
+    try {
+      await playback.stop();
+    } on Object {
+      // Teardown is best effort; cleanup failures must not escape disposal.
+    }
+  }
+
+  Future<void> _togglePlayback() async {
+    final memory = widget.memory;
+    final playback = widget.playback;
+    final bytes = memory.primaryBytes;
+    if (memory.preview || playback == null || bytes == null) {
+      setState(() => _playing = !_playing);
+      return;
+    }
+    try {
+      if (_playing) {
+        await _stopPlaybackSafely(playback);
+      } else {
+        _playbackStarting = true;
+        try {
+          await playback.playBytes(bytes);
+        } finally {
+          _playbackStarting = false;
+        }
+      }
+      if (mounted) setState(() => _playing = !_playing);
+    } on Object {
+      if (mounted) setState(() => _playing = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    if ((_playing || _playbackStarting) && !widget.memory.preview) {
+      final playback = widget.playback;
+      if (playback != null) unawaited(_stopPlaybackSafely(playback));
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final memory = widget.memory;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        const KeepersText(
-          'Voice memory',
-          style: TextStyle(color: KeepersColors.cream),
-        ),
-        const SizedBox(height: 26),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(
-            17,
-            (index) => Container(
-              width: 3,
-              height: 16 + math.sin(index * .9).abs() * 42,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              decoration: BoxDecoration(
-                color: memory.color.withValues(alpha: _playing ? 1 : .62),
-                borderRadius: BorderRadius.circular(3),
+        if (memory.imageAsset case final asset?)
+          Image.asset(
+            asset,
+            fit: BoxFit.cover,
+            alignment: Alignment.center,
+            filterQuality: FilterQuality.high,
+          )
+        else
+          _VoiceBackdrop(memory: memory, playing: _playing),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 16,
+          child: Material(
+            color: KeepersColors.auraIvory.withValues(alpha: .96),
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        KeepersText(
+                          memory.caption,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: KeepersColors.ink,
+                            fontSize: 12,
+                            height: 1.25,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 20,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: List.generate(
+                              17,
+                              (index) => Container(
+                                width: 2,
+                                height: 4 + math.sin(index * .9).abs() * 14,
+                                margin: const EdgeInsets.only(right: 3),
+                                decoration: BoxDecoration(
+                                  color: memory.color.withValues(
+                                    alpha: _playing ? 1 : .62,
+                                  ),
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Semantics(
+                    label: _playing
+                        ? 'Pause voice memory'
+                        : 'Play voice memory',
+                    button: true,
+                    onTap: _togglePlayback,
+                    child: ExcludeSemantics(
+                      child: IconButton.filled(
+                        tooltip: _playing
+                            ? memory.preview
+                                  ? 'Pause Rehearsal Voice Memory'
+                                  : 'Pause Voice Memory'
+                            : memory.preview
+                            ? 'Play Rehearsal Voice Memory'
+                            : 'Play Voice Memory',
+                        style: IconButton.styleFrom(
+                          backgroundColor: KeepersColors.ink,
+                          foregroundColor: KeepersColors.auraIvory,
+                        ),
+                        onPressed: _togglePlayback,
+                        icon: Icon(
+                          _playing
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-        ),
-        const SizedBox(height: 20),
-        Center(
-          child: Semantics(
-            label: _playing
-                ? 'Pause rehearsal voice memory'
-                : 'Play rehearsal voice memory',
-            button: true,
-            onTap: () => setState(() => _playing = !_playing),
-            child: ExcludeSemantics(
-              child: IconButton.filledTonal(
-                tooltip: _playing
-                    ? 'PAUSE REHEARSAL VOICE MEMORY'
-                    : 'PLAY REHEARSAL VOICE MEMORY',
-                onPressed: () => setState(() => _playing = !_playing),
-                icon: Icon(
-                  _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        KeepersText(
-          memory.caption,
-          style: const TextStyle(color: KeepersColors.cream, height: 1.4),
         ),
       ],
     );
@@ -1812,31 +1490,348 @@ final class _TextRehearsal extends StatelessWidget {
   final _RehearsalMemory memory;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const KeepersText(
-        'Text memory',
-        style: TextStyle(color: KeepersColors.cream),
-      ),
-      const SizedBox(height: 22),
-      KeepersText(
-        memory.caption,
-        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-          color: KeepersColors.cream,
-          fontFamily: KeepersType.primary,
-          height: 1.35,
+  Widget build(BuildContext context) {
+    if (!memory.preview) {
+      return DecoratedBox(
+        decoration: BoxDecoration(color: memory.color.withValues(alpha: .13)),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(30),
+            child: KeepersText(
+              memory.caption,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: KeepersColors.ink,
+                fontSize: 20,
+                fontWeight: FontWeight.w500,
+                height: 1.45,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.asset(
+          memory.imageAsset!,
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          filterQuality: FilterQuality.high,
+        ),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 16,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: KeepersColors.auraIvory.withValues(alpha: .96),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: KeepersText(
+              memory.caption,
+              style: const TextStyle(
+                color: KeepersColors.ink,
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+final class _GalleryFilmstrip extends StatelessWidget {
+  const _GalleryFilmstrip({
+    required this.memories,
+    required this.currentIndex,
+    required this.onSelect,
+  });
+
+  final List<_RehearsalMemory> memories;
+  final int currentIndex;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    key: const ValueKey('weekly-gallery-filmstrip'),
+    height: 78,
+    child: Center(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var index = 0; index < memories.length; index++) ...[
+              if (index > 0) const SizedBox(width: 10),
+              _GalleryThumbnail(
+                key: ValueKey('weekly-gallery-thumbnail-$index'),
+                memory: memories[index],
+                index: index,
+                count: memories.length,
+                selected: index == currentIndex,
+                onTap: () => onSelect(index),
+              ),
+            ],
+          ],
         ),
       ),
-    ],
+    ),
+  );
+}
+
+final class _GalleryThumbnail extends StatelessWidget {
+  const _GalleryThumbnail({
+    required this.memory,
+    required this.index,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final _RehearsalMemory memory;
+  final int index;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    button: true,
+    selected: selected,
+    label:
+        '${_memoryFormatLabel(memory.format)}, ${selected ? 'selected' : 'not selected'}, ${index + 1} of $count',
+    onTap: onTap,
+    child: ExcludeSemantics(
+      child: AnimatedScale(
+        duration: keepersReduceMotion(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 170),
+        scale: selected ? 1.06 : .94,
+        child: Material(
+          color: KeepersColors.auraIvory,
+          borderRadius: BorderRadius.circular(10),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              width: 62,
+              height: 72,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: selected ? KeepersColors.ink : KeepersColors.homeLine,
+                  width: selected ? 2 : 1,
+                ),
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _MemoryThumbnail(memory: memory),
+                  if (memory.format != _RehearsalFormat.photo)
+                    Align(
+                      alignment: Alignment.bottomRight,
+                      child: Container(
+                        margin: const EdgeInsets.all(5),
+                        width: 22,
+                        height: 22,
+                        decoration: const BoxDecoration(
+                          color: KeepersColors.auraIvory,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          memory.format == _RehearsalFormat.voice
+                              ? Icons.graphic_eq_rounded
+                              : Icons.notes_rounded,
+                          size: 14,
+                          color: KeepersColors.ink,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+final class _MemoryThumbnail extends StatelessWidget {
+  const _MemoryThumbnail({required this.memory});
+
+  final _RehearsalMemory memory;
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = memory.primaryBytes;
+    if (memory.format == _RehearsalFormat.photo && bytes != null) {
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+        gaplessPlayback: true,
+      );
+    }
+    final asset = memory.imageAsset;
+    if (asset != null) {
+      return Image.asset(
+        asset,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+      );
+    }
+    return ColoredBox(
+      color: memory.color.withValues(alpha: .16),
+      child: Icon(
+        switch (memory.format) {
+          _RehearsalFormat.photo => Icons.photo_outlined,
+          _RehearsalFormat.voice => Icons.graphic_eq_rounded,
+          _RehearsalFormat.text => Icons.notes_rounded,
+        },
+        color: memory.color,
+        size: 26,
+      ),
+    );
+  }
+}
+
+final class _VoiceBackdrop extends StatelessWidget {
+  const _VoiceBackdrop({required this.memory, required this.playing});
+
+  final _RehearsalMemory memory;
+  final bool playing;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: memory.color.withValues(alpha: .14),
+    child: Center(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: List.generate(
+          19,
+          (index) => AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: 3,
+            height: 16 + math.sin(index * .82).abs() * (playing ? 62 : 38),
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            decoration: BoxDecoration(
+              color: memory.color.withValues(alpha: playing ? .95 : .7),
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+final class _MemoryFallback extends StatelessWidget {
+  const _MemoryFallback({
+    required this.color,
+    required this.icon,
+    required this.label,
+  });
+
+  final Color color;
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: color.withValues(alpha: .13),
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 42, color: color),
+          const SizedBox(height: 12),
+          KeepersText(
+            label,
+            style: const TextStyle(color: KeepersColors.inkMuted),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+final class _GalleryEcho extends StatelessWidget {
+  const _GalleryEcho({required this.open, required this.onOpen});
+
+  final bool open;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+    decoration: BoxDecoration(
+      color: KeepersColors.auraIvory.withValues(alpha: .82),
+      border: Border.all(color: KeepersColors.homeLine),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const KeepersText(
+          'An echo from before',
+          style: TextStyle(
+            color: KeepersColors.ink,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (!open)
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: KeepersColors.ink,
+              minimumSize: const Size.fromHeight(46),
+              side: const BorderSide(color: KeepersColors.homeActionLine),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            onPressed: onOpen,
+            child: const KeepersText('Open echo'),
+          )
+        else
+          const KeepersText(
+            'A memory from another season rises beneath it.',
+            style: TextStyle(
+              color: KeepersColors.inkMuted,
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+      ],
+    ),
   );
 }
 
 enum _KeepingDecision { keep, release }
 
 final class _KeepingView extends StatefulWidget {
-  const _KeepingView({required this.memories, super.key});
+  const _KeepingView({
+    required this.memories,
+    required this.preview,
+    required this.onDecision,
+    required this.onComplete,
+    super.key,
+  });
   final List<_RehearsalMemory> memories;
+  final bool preview;
+  final WeeklyMemoryDecisionCallback? onDecision;
+  final VoidCallback onComplete;
 
   @override
   State<_KeepingView> createState() => _KeepingViewState();
@@ -1844,9 +1839,63 @@ final class _KeepingView extends StatefulWidget {
 
 final class _KeepingViewState extends State<_KeepingView> {
   _KeepingDecision? _decision;
+  int _memoryIndex = 0;
+  int _resolvedCount = 0;
+  bool _saving = false;
+  String? _errorMessage;
 
-  void _decide(_KeepingDecision decision) =>
+  Future<void> _decide(_KeepingDecision decision) async {
+    if (_saving || _decision != null) return;
+    if (widget.preview) {
       setState(() => _decision = decision);
+      return;
+    }
+    final memory = widget.memories[_memoryIndex];
+    final metadata = memory.metadata;
+    final onDecision = widget.onDecision;
+    if (metadata == null || onDecision == null) {
+      setState(() {
+        _errorMessage = 'This decision could not be saved safely.';
+      });
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _errorMessage = null;
+    });
+    try {
+      await onDecision(
+        metadata,
+        decision == _KeepingDecision.keep
+            ? WeeklyMemoryDisposition.keep
+            : WeeklyMemoryDisposition.release,
+      );
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _decision = decision;
+        _resolvedCount += 1;
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _errorMessage = 'This decision was not saved. Try again.';
+      });
+    }
+  }
+
+  void _nextDecision() {
+    if (!widget.preview && _resolvedCount >= widget.memories.length) {
+      widget.onComplete();
+      return;
+    }
+    setState(() {
+      _memoryIndex = (_memoryIndex + 1) % widget.memories.length;
+      _decision = null;
+      _errorMessage = null;
+    });
+  }
 
   Widget _keepButton() => FilledButton.icon(
     style: FilledButton.styleFrom(
@@ -1854,7 +1903,7 @@ final class _KeepingViewState extends State<_KeepingView> {
       backgroundColor: KeepersColors.brass,
       foregroundColor: KeepersColors.ground,
     ),
-    onPressed: () => _decide(_KeepingDecision.keep),
+    onPressed: _saving ? null : () => unawaited(_decide(_KeepingDecision.keep)),
     icon: const Icon(Icons.keyboard_arrow_up_rounded),
     label: const KeepersText('Keep this memory'),
   );
@@ -1862,29 +1911,37 @@ final class _KeepingViewState extends State<_KeepingView> {
   Widget _releaseButton() => OutlinedButton.icon(
     style: OutlinedButton.styleFrom(
       minimumSize: const Size.fromHeight(52),
-      foregroundColor: KeepersColors.cream,
+      foregroundColor: KeepersColors.ink,
+      side: const BorderSide(color: KeepersColors.homeActionLine),
     ),
-    onPressed: () => _decide(_KeepingDecision.release),
+    onPressed: _saving
+        ? null
+        : () => unawaited(_decide(_KeepingDecision.release)),
     icon: const Icon(Icons.keyboard_arrow_down_rounded),
     label: const KeepersText('Release this memory'),
   );
 
   @override
   Widget build(BuildContext context) {
-    final memory = widget.memories.first;
+    final memory = widget.memories[_memoryIndex];
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
       child: Column(
         children: [
-          const _VoteDots(),
+          _VoteDots(preview: widget.preview),
           const SizedBox(height: 18),
           Semantics(
             label: 'Memory decision card. Swipe up to keep or down to release.',
             child: GestureDetector(
               onVerticalDragEnd: (details) {
+                if (_saving) return;
                 final velocity = details.primaryVelocity ?? 0;
-                if (velocity < -350) _decide(_KeepingDecision.keep);
-                if (velocity > 350) _decide(_KeepingDecision.release);
+                if (velocity < -350) {
+                  unawaited(_decide(_KeepingDecision.keep));
+                }
+                if (velocity > 350) {
+                  unawaited(_decide(_KeepingDecision.release));
+                }
               },
               child: SizedBox(
                 height: 300,
@@ -1894,19 +1951,25 @@ final class _KeepingViewState extends State<_KeepingView> {
                     Transform.rotate(
                       angle: -.08,
                       child: _DecisionCard(
-                        color: widget.memories[2].color,
+                        color: widget
+                            .memories[(_memoryIndex + 2) %
+                                widget.memories.length]
+                            .color,
                         offset: 14,
                       ),
                     ),
                     Transform.rotate(
                       angle: .055,
                       child: _DecisionCard(
-                        color: widget.memories[1].color,
+                        color: widget
+                            .memories[(_memoryIndex + 1) %
+                                widget.memories.length]
+                            .color,
                         offset: 7,
                       ),
                     ),
                     AnimatedContainer(
-                      duration: MediaQuery.disableAnimationsOf(context)
+                      duration: keepersReduceMotion(context)
                           ? Duration.zero
                           : const Duration(milliseconds: 300),
                       width: 270,
@@ -1952,6 +2015,25 @@ final class _KeepingViewState extends State<_KeepingView> {
             ),
           ),
           const SizedBox(height: 18),
+          if (_saving) ...[
+            Semantics(
+              liveRegion: true,
+              label: 'Saving decision',
+              child: const CircularProgressIndicator.adaptive(),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (_errorMessage case final error?) ...[
+            Semantics(
+              liveRegion: true,
+              child: KeepersText(
+                error,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: KeepersColors.inkMuted),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (_decision == null)
             LayoutBuilder(
               builder: (context, constraints) {
@@ -1984,8 +2066,12 @@ final class _KeepingViewState extends State<_KeepingView> {
                 backgroundColor: KeepersColors.brass,
                 foregroundColor: KeepersColors.ground,
               ),
-              onPressed: () => setState(() => _decision = null),
-              child: const KeepersText('Next decision'),
+              onPressed: _nextDecision,
+              child: KeepersText(
+                !widget.preview && _resolvedCount >= widget.memories.length
+                    ? 'Finish this week'
+                    : 'Next decision',
+              ),
             ),
         ],
       ),
@@ -2045,7 +2131,7 @@ final class _DecisionResult extends StatelessWidget {
       KeepersText(
         decision == _KeepingDecision.keep
             ? 'Sealed into the family archive'
-            : 'Fades from this device in 30 days',
+            : 'Leaves your view after 30 days',
         textAlign: TextAlign.center,
         style: TextStyle(color: KeepersColors.cream.withValues(alpha: .68)),
       ),
@@ -2054,11 +2140,15 @@ final class _DecisionResult extends StatelessWidget {
 }
 
 final class _VoteDots extends StatelessWidget {
-  const _VoteDots();
+  const _VoteDots({required this.preview});
+
+  final bool preview;
 
   @override
   Widget build(BuildContext context) => Semantics(
-    label: 'Rehearsal vote: one of one family members present',
+    label: preview
+        ? 'Rehearsal vote: one of one family members present'
+        : 'This week: family decision',
     child: ExcludeSemantics(
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -2074,10 +2164,10 @@ final class _VoteDots extends StatelessWidget {
           const SizedBox(width: 9),
           Flexible(
             child: KeepersText(
-              '1 PRESENT · PREVIEW ONLY',
+              preview ? '1 PRESENT · PREVIEW ONLY' : 'THIS WEEK · KEEPING',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: KeepersColors.cream.withValues(alpha: .62),
+              style: const TextStyle(
+                color: KeepersColors.inkMuted,
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 1.4,
@@ -2088,4 +2178,28 @@ final class _VoteDots extends StatelessWidget {
       ),
     ),
   );
+}
+
+String? _nonEmpty(String? value) {
+  final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
+
+String _formatWeeklyDate(DateTime value) {
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  final date = value.toLocal();
+  return '${date.day} ${months[date.month - 1]}, ${date.year}';
 }

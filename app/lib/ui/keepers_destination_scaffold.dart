@@ -74,7 +74,7 @@ final class _KeepersDestinationScaffoldState
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 KeepersText(
-                                  widget.kicker.toUpperCase(),
+                                  widget.kicker,
                                   style: Theme.of(context).textTheme.labelSmall
                                       ?.copyWith(
                                         color: foreground.withValues(

@@ -19,9 +19,37 @@ final class MemoryViewer extends StatefulWidget {
 }
 
 final class _MemoryViewerState extends State<MemoryViewer> {
+  late final Future<MemoryOpenResult> _memory = _own(widget.memory);
+  OpenedMemory? _opened;
+  bool _released = false;
+
+  Future<MemoryOpenResult> _own(Future<MemoryOpenResult> loading) async {
+    final result = await loading;
+    if (result is OpenedMemory) {
+      if (_released) {
+        _clearPrimaryBytes(result);
+      } else {
+        _opened = result;
+      }
+    }
+    return result;
+  }
+
+  Future<void> _stopPlaybackSafely() async {
+    try {
+      await widget.playback.stop();
+    } on Object {
+      // A screen teardown must not surface an unhandled cleanup failure.
+    }
+  }
+
   @override
   void dispose() {
-    unawaited(widget.playback.stop());
+    _released = true;
+    final opened = _opened;
+    _opened = null;
+    if (opened != null) _clearPrimaryBytes(opened);
+    unawaited(_stopPlaybackSafely());
     super.dispose();
   }
 
@@ -31,7 +59,7 @@ final class _MemoryViewerState extends State<MemoryViewer> {
     appBar: AppBar(title: const KeepersText('Memory')),
     body: SafeArea(
       child: FutureBuilder<MemoryOpenResult>(
-        future: widget.memory,
+        future: _memory,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(
@@ -57,6 +85,11 @@ final class _MemoryViewerState extends State<MemoryViewer> {
       ),
     ),
   );
+}
+
+void _clearPrimaryBytes(OpenedMemory memory) {
+  final bytes = memory.payload.primaryBytes;
+  bytes?.fillRange(0, bytes.length, 0);
 }
 
 final class _OpenedMemoryView extends StatelessWidget {
@@ -195,7 +228,7 @@ final class _TextMemoryView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SelectableText(
-    text.toUpperCase(),
+    keepersTitleCase(text),
     semanticsLabel: text,
     style: Theme.of(context).textTheme.titleLarge?.copyWith(height: 1.5),
   );

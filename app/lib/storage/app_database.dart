@@ -23,7 +23,16 @@ final class AppDatabase {
   final ApplicationSupportDirectoryProvider _applicationSupportDirectory;
   Future<Database>? _databaseFuture;
 
-  Future<Database> get database => _databaseFuture ??= _open();
+  Future<Database> get database => _databaseFuture ??= _openForRetry();
+
+  Future<Database> _openForRetry() async {
+    try {
+      return await _open();
+    } on Object {
+      _databaseFuture = null;
+      rethrow;
+    }
+  }
 
   Future<void> close() async {
     final databaseFuture = _databaseFuture;
@@ -31,9 +40,14 @@ final class AppDatabase {
       return;
     }
 
-    final database = await databaseFuture;
-    await database.close();
-    _databaseFuture = null;
+    try {
+      final database = await databaseFuture;
+      await database.close();
+    } finally {
+      if (identical(_databaseFuture, databaseFuture)) {
+        _databaseFuture = null;
+      }
+    }
   }
 
   Future<Database> _open() async {

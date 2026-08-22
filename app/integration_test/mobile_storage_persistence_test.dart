@@ -27,11 +27,14 @@ void main() {
     (_) async {
       const expectedAbiName = String.fromEnvironment('EXPECTED_POSIX_ABI');
       expect(expectedAbiName, isNotEmpty);
+      final expectedDartAbi = _expectedMobileAbi(expectedAbiName);
       expect(currentPosixNativeAbi().name, expectedAbiName);
-      expect(Platform.isAndroid || Platform.isIOS, isTrue);
-      final expectedDartAbi = Platform.isAndroid
-          ? Abi.androidX64
-          : Abi.iosArm64;
+      expect(
+        Platform.isAndroid,
+        expectedDartAbi == Abi.androidX64 ||
+            expectedDartAbi == Abi.androidArm64,
+      );
+      expect(Platform.isIOS, expectedDartAbi == Abi.iosArm64);
       expect(Abi.current(), expectedDartAbi);
 
       final suffix = DateTime.now().microsecondsSinceEpoch.toString();
@@ -152,6 +155,17 @@ void main() {
     },
   );
 }
+
+Abi _expectedMobileAbi(String name) => switch (name) {
+  'androidX64' => Abi.androidX64,
+  'androidArm64' => Abi.androidArm64,
+  'iosArm64' => Abi.iosArm64,
+  _ => throw ArgumentError.value(
+    name,
+    'EXPECTED_POSIX_ABI',
+    'Supported values are androidX64, androidArm64, and iosArm64.',
+  ),
+};
 
 Future<Database> _openEntryDatabase(String path) {
   return openDatabase(

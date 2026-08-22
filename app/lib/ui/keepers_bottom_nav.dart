@@ -94,7 +94,7 @@ final class _CaptureButton extends StatelessWidget {
     onTap: onTap,
     child: ExcludeSemantics(
       child: Tooltip(
-        message: 'KEEP A MEMORY',
+        message: 'Keep A Memory',
         child: Material(
           key: const ValueKey('keepers-nav-capture'),
           color: KeepersColors.ink,
@@ -156,7 +156,7 @@ final class _DestinationButton extends StatelessWidget {
       onTap: enabled ? onTap : null,
       child: ExcludeSemantics(
         child: Tooltip(
-          message: destination.label.toUpperCase(),
+          message: keepersTitleCase(destination.label),
           child: Material(
             key: ValueKey('keepers-nav-${destination.name}'),
             color: Colors.transparent,

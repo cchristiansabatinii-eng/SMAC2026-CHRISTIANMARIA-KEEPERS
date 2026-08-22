@@ -386,6 +386,42 @@ void main() {
         lessThanOrEqualTo(932),
       );
     });
+
+    testWidgets('multi-word avatar labels clear the artwork at 200% text', (
+      tester,
+    ) async {
+      final choices = <({AvatarCategory category, AvatarOption option})>[];
+      for (final category in avatarCatalog.categories) {
+        if (category == AvatarCategory.colors) continue;
+        for (final option in avatarCatalog.optionsFor(category)) {
+          choices.add((category: category, option: option));
+        }
+      }
+      final choice = choices.firstWhere(
+        (choice) => choice.option.label.contains(' '),
+      );
+
+      await _pumpEditor(
+        tester,
+        identity: identity,
+        size: const Size(390, 844),
+        textScale: 2,
+      );
+      await tester.tap(
+        find.byKey(Key('avatar-category-${choice.category.name}')),
+      );
+      await tester.pump();
+
+      final artwork = find.byKey(Key('avatar-artwork-${choice.option.id}'));
+      final label = find.byKey(Key('avatar-label-${choice.option.id}'));
+      expect(artwork, findsOneWidget);
+      expect(label, findsOneWidget);
+      expect(
+        tester.getRect(artwork).bottom + 4,
+        lessThanOrEqualTo(tester.getRect(label).top),
+      );
+      expect(tester.takeException(), isNull);
+    });
   });
 }
 

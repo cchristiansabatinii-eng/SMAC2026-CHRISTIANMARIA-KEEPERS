@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:keepers/design_system/observatory/motion_policy.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/capture/application/capture_controller.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
@@ -384,7 +385,7 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
                                     : _requestClose,
                                 child: ExcludeSemantics(
                                   child: IconButton(
-                                    tooltip: 'CLOSE CAPTURE',
+                                    tooltip: 'Close Capture',
                                     onPressed:
                                         locked &&
                                             draft.phase !=
@@ -399,7 +400,7 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
                           ),
                           const SizedBox(height: 22),
                           AnimatedSwitcher(
-                            duration: MediaQuery.disableAnimationsOf(context)
+                            duration: keepersReduceMotion(context)
                                 ? Duration.zero
                                 : const Duration(milliseconds: 220),
                             switchInCurve: Curves.easeOutCubic,

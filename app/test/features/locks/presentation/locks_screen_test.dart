@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/locks/presentation/locks_screen.dart';
+import 'package:keepers/theme/keepers_theme.dart';
 
 void main() {
   testWidgets('legacy approval requires a full two-second hold', (
@@ -22,6 +23,7 @@ void main() {
     );
 
     expect(find.text('Legacy Locks'), findsOneWidget);
+    expect(find.bySemanticsLabel('Memory Key, selected'), findsOneWidget);
     expect(find.text('PREVIEW'), findsOneWidget);
     final hold = find.byKey(const ValueKey('legacy-approval-hold'));
     final gesture = await tester.startGesture(tester.getCenter(hold));
@@ -58,6 +60,6 @@ void main() {
     final headingStyle = (richText.text as TextSpan).style;
     expect(headingStyle?.fontSize, 20);
     expect(headingStyle?.fontWeight, FontWeight.w600);
-    expect(headingStyle?.letterSpacing, 4.1);
+    expect(headingStyle?.letterSpacing, KeepersType.heading.letterSpacing);
   });
 }

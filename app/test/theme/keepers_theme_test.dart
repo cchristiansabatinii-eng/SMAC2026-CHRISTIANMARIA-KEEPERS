@@ -1,10 +1,14 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 
 void main() {
-  test('every application text role uses Schibsted Grotesk', () {
+  test('every application text role uses Modern Society', () {
+    expect(KeepersType.primary, 'ModernSociety');
+
     for (final theme in [KeepersTheme.dark(), KeepersTheme.daylight()]) {
       final textTheme = theme.textTheme;
       final styles = <TextStyle?>[
@@ -27,7 +31,7 @@ void main() {
 
       expect(styles, everyElement(isNotNull));
       expect(styles.map((style) => style!.fontFamily).toSet(), {
-        'SchibstedGrotesk',
+        'ModernSociety',
       });
     }
   });
@@ -46,12 +50,12 @@ void main() {
     expect(theme.textTheme.headlineMedium?.fontFamily, KeepersType.primary);
   });
 
-  test('page headings match the family heading treatment', () {
+  test('Modern Society headings use restrained title-scale tracking', () {
     expect(KeepersType.heading.fontFamily, KeepersType.primary);
     expect(KeepersType.heading.fontSize, 20);
     expect(KeepersType.heading.fontWeight, FontWeight.w600);
     expect(KeepersType.heading.height, 1);
-    expect(KeepersType.heading.letterSpacing, 4.1);
+    expect(KeepersType.heading.letterSpacing, lessThanOrEqualTo(1));
 
     for (final theme in [KeepersTheme.dark(), KeepersTheme.daylight()]) {
       final appBarTitle = theme.appBarTheme.titleTextStyle;
@@ -59,12 +63,32 @@ void main() {
       expect(appBarTitle?.fontSize, 20);
       expect(appBarTitle?.fontWeight, FontWeight.w600);
       expect(appBarTitle?.height, 1);
-      expect(appBarTitle?.letterSpacing, 4.1);
+      expect(appBarTitle?.letterSpacing, KeepersType.heading.letterSpacing);
+      expect(
+        theme.textTheme.titleLarge?.letterSpacing,
+        KeepersType.heading.letterSpacing,
+      );
     }
   });
 
+  test('small accent copy meets AA contrast on daylight surfaces', () {
+    final archiveSurface = Color.alphaBlend(
+      KeepersColors.auraBlush.withValues(alpha: .5),
+      KeepersColors.auraGround,
+    );
+
+    expect(
+      _contrastRatio(KeepersColors.homeGoldText, archiveSurface),
+      greaterThanOrEqualTo(4.5),
+    );
+    expect(
+      _contrastRatio(KeepersColors.legacyOliveText, KeepersColors.auraIvory),
+      greaterThanOrEqualTo(4.5),
+    );
+  });
+
   testWidgets(
-    'KeepersText paints uppercase Schibsted while preserving lighter weight',
+    'KeepersText paints title-case Modern Society while preserving weight',
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -92,7 +116,7 @@ void main() {
         find.descendant(of: source, matching: find.byType(RichText)),
       );
       final span = richText.text as TextSpan;
-      expect(span.toPlainText(includeSemanticsLabels: false), 'QUIET MEMORY');
+      expect(span.toPlainText(includeSemanticsLabels: false), 'Quiet Memory');
       expect(span.style?.fontFamily, KeepersType.primary);
       expect(span.style?.fontWeight, FontWeight.w400);
       final transformedRoot = span.children!.single as TextSpan;
@@ -103,4 +127,10 @@ void main() {
       expect(find.bySemanticsLabel('Quiet memory'), findsOneWidget);
     },
   );
+}
+
+double _contrastRatio(Color first, Color second) {
+  final light = math.max(first.computeLuminance(), second.computeLuminance());
+  final dark = math.min(first.computeLuminance(), second.computeLuminance());
+  return (light + .05) / (dark + .05);
 }

@@ -1,5 +1,7 @@
 import 'package:keepers/features/capture/domain/capture_models.dart';
 
+enum WeeklyMemoryDisposition { keep, release }
+
 final class VaultEntryMetadata {
   const VaultEntryMetadata({
     required this.id,
@@ -10,6 +12,7 @@ final class VaultEntryMetadata {
     required this.privacy,
     required this.blobRef,
     required this.state,
+    this.expiresAt,
   });
 
   factory VaultEntryMetadata.fromRow(Map<String, Object?> row) =>
@@ -25,6 +28,12 @@ final class VaultEntryMetadata {
         privacy: PrivacyTier.values.byName(row['privacy_tier']! as String),
         blobRef: row['blob_ref']! as String,
         state: row['state']! as String,
+        expiresAt: row['expires_at'] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                row['expires_at']! as int,
+                isUtc: true,
+              ),
       );
 
   final String id;
@@ -35,6 +44,7 @@ final class VaultEntryMetadata {
   final PrivacyTier privacy;
   final String blobRef;
   final String state;
+  final DateTime? expiresAt;
 
   /// Captions live only in the encrypted payload, never in vault metadata.
   String? get caption => null;
@@ -58,6 +68,7 @@ final class VaultEntryMetadata {
     PrivacyTier? privacy,
     String? blobRef,
     String? state,
+    DateTime? expiresAt,
   }) => VaultEntryMetadata(
     id: id ?? this.id,
     familyId: familyId ?? this.familyId,
@@ -67,6 +78,7 @@ final class VaultEntryMetadata {
     privacy: privacy ?? this.privacy,
     blobRef: blobRef ?? this.blobRef,
     state: state ?? this.state,
+    expiresAt: expiresAt ?? this.expiresAt,
   );
 }
 

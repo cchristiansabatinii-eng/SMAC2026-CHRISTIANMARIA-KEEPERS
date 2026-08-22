@@ -1,7 +1,10 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/archive/presentation/archive_screen.dart';
+import 'package:keepers/theme/keepers_theme.dart';
 
 void main() {
   testWidgets('archive starts with the complete kept forever summary', (
@@ -81,11 +84,11 @@ void main() {
 
     final richText = tester.widget<RichText>(paintedTitle);
     final span = richText.text as TextSpan;
-    expect(span.toPlainText(), 'SABATI ARCHIVE');
-    expect(span.style?.fontFamily, 'SchibstedGrotesk');
+    expect(span.toPlainText(), 'Sabati Archive');
+    expect(span.style?.fontFamily, 'ModernSociety');
     expect(span.style?.fontSize, 20);
     expect(span.style?.fontWeight, FontWeight.w600);
-    expect(span.style?.letterSpacing, 4.1);
+    expect(span.style?.letterSpacing, KeepersType.heading.letterSpacing);
     expect(span.style?.height, 1);
   });
 
@@ -134,6 +137,80 @@ void main() {
     expect(find.text('Lantern walk'), findsNothing);
   });
 
+  testWidgets('archive draw opens one of the kept memories', (tester) async {
+    ArchiveMemorySummary? opened;
+    final memory = ArchiveMemorySummary(
+      id: 'one',
+      title: 'Lantern walk',
+      authorName: 'Chris',
+      theme: 'Traditions',
+      formatLabel: 'Photo',
+      createdAt: DateTime(2026, 8, 3),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: ArchiveScreen(
+            familyName: 'Sabati',
+            memories: [memory],
+            onDestinationSelected: (_) {},
+            onOpenMemory: (value) => opened = value,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('random-memory-mode')));
+    expect(opened?.id, memory.id);
+  });
+
+  testWidgets('archive draw avoids immediately repeating a memory', (
+    tester,
+  ) async {
+    final opened = <String>[];
+    final memories = [
+      ArchiveMemorySummary(
+        id: 'one',
+        title: 'Lantern walk',
+        authorName: 'Chris',
+        theme: 'Traditions',
+        formatLabel: 'Photo',
+        createdAt: DateTime(2026, 8, 3),
+      ),
+      ArchiveMemorySummary(
+        id: 'two',
+        title: 'Kitchen story',
+        authorName: 'Amina',
+        theme: 'Stories',
+        formatLabel: 'Voice',
+        createdAt: DateTime(2026, 8, 2),
+      ),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: ArchiveScreen(
+            familyName: 'Sabati',
+            memories: memories,
+            onDestinationSelected: (_) {},
+            onOpenMemory: (value) => opened.add(value.id),
+          ),
+        ),
+      ),
+    );
+
+    final draw = find.byKey(const ValueKey('random-memory-mode'));
+    await tester.tap(draw);
+    await tester.tap(draw);
+
+    expect(opened, hasLength(2));
+    expect(opened.first, isNot(opened.last));
+  });
+
   testWidgets('archive has a deliberate kept-only empty state', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -152,6 +229,31 @@ void main() {
 
     expect(find.text('Nothing kept yet'), findsOneWidget);
     expect(find.bySemanticsLabel('0 memories kept forever'), findsOneWidget);
+    final randomMode = find.byKey(const ValueKey('random-memory-mode'));
+    expect(randomMode, findsOneWidget);
+    expect(find.text('Draw a memory'), findsOneWidget);
+    expect(
+      tester
+          .getSemantics(find.bySemanticsLabel('Draw a memory'))
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isFalse,
+    );
+    expect(
+      tester
+          .getSemantics(find.bySemanticsLabel('Draw a memory'))
+          .getSemanticsData()
+          .flagsCollection
+          .isEnabled,
+      Tristate.isFalse,
+    );
+    final affordance = tester.widget<Container>(
+      find.byKey(const ValueKey('random-memory-draw-affordance')),
+    );
+    expect(
+      (affordance.decoration! as BoxDecoration).color,
+      KeepersColors.homeLine,
+    );
     expect(
       find.text('Released and still-sealed memories never appear here.'),
       findsOneWidget,

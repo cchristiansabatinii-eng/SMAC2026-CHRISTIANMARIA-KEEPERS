@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/keepers_bottom_nav.dart';
@@ -50,8 +52,10 @@ final class ArchiveScreen extends StatefulWidget {
 }
 
 final class _ArchiveScreenState extends State<ArchiveScreen> {
+  final math.Random _random = math.Random();
   String? _person;
   String? _theme;
+  String? _lastDrawnId;
 
   List<ArchiveMemorySummary> get _filtered =>
       widget.memories
@@ -63,8 +67,14 @@ final class _ArchiveScreenState extends State<ArchiveScreen> {
   void _draw() {
     final memories = _filtered;
     if (memories.isEmpty) return;
-    final daySeed = DateTime.now().day + DateTime.now().month;
-    widget.onOpenMemory(memories[daySeed % memories.length]);
+    final candidates = memories.length == 1
+        ? memories
+        : memories
+              .where((memory) => memory.id != _lastDrawnId)
+              .toList(growable: false);
+    final selected = candidates[_random.nextInt(candidates.length)];
+    _lastDrawnId = selected.id;
+    widget.onOpenMemory(selected);
   }
 
   Widget _archiveBody(List<ArchiveMemorySummary> memories) {
@@ -100,27 +110,22 @@ final class _ArchiveScreenState extends State<ArchiveScreen> {
       subtitle: 'Only memories the family chose to keep.',
       onDestinationSelected: widget.onDestinationSelected,
       onCapture: widget.onCapture,
-      trailing: Semantics(
-        label: 'Draw a memory',
-        button: true,
-        enabled: memories.isNotEmpty,
-        onTap: memories.isEmpty ? null : _draw,
-        child: ExcludeSemantics(
-          child: IconButton.outlined(
-            tooltip: 'DRAW A MEMORY',
-            onPressed: memories.isEmpty ? null : _draw,
-            icon: const Icon(Icons.casino_outlined),
-          ),
-        ),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!widget.loading && widget.errorMessage == null)
+          if (!widget.loading && widget.errorMessage == null) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 4, 24, 14),
               child: KeptForeverSummary(count: widget.memories.length),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 14),
+              child: _RandomDrawCard(
+                memoryCount: memories.length,
+                onDraw: _draw,
+              ),
+            ),
+          ],
           if (widget.memories.isNotEmpty) ...[
             _FilterRail(
               label: 'Person',
@@ -136,25 +141,131 @@ final class _ArchiveScreenState extends State<ArchiveScreen> {
               selected: _theme,
               onSelected: (value) => setState(() => _theme = value),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 6, 24, 10),
-              child: Row(
-                children: [
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: memories.isEmpty ? null : _draw,
-                    icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-                    label: const KeepersText('Draw a memory'),
-                  ),
-                ],
-              ),
-            ),
           ],
           Expanded(child: _archiveBody(memories)),
         ],
       ),
     );
   }
+}
+
+final class _RandomDrawCard extends StatelessWidget {
+  const _RandomDrawCard({required this.memoryCount, required this.onDraw});
+
+  final int memoryCount;
+  final VoidCallback onDraw;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    key: const ValueKey('random-memory-mode'),
+    label: 'Draw a memory',
+    button: true,
+    enabled: memoryCount > 0,
+    onTap: memoryCount > 0 ? onDraw : null,
+    child: ExcludeSemantics(
+      child: OutlinedButton(
+        onPressed: memoryCount > 0 ? onDraw : null,
+        style: OutlinedButton.styleFrom(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          minimumSize: const Size.fromHeight(64),
+          foregroundColor: KeepersColors.ink,
+          backgroundColor: KeepersColors.auraBlush.withValues(alpha: .5),
+          side: BorderSide(
+            color: KeepersColors.homeGold.withValues(alpha: .48),
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        child: Row(
+          children: [
+            const _RoundLineIcon(
+              icon: Icons.style_outlined,
+              color: KeepersColors.homeGold,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const KeepersText(
+                    'Any time',
+                    style: TextStyle(
+                      color: KeepersColors.homeGoldText,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.7,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  KeepersText(
+                    'Draw a memory',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: KeepersColors.ink,
+                      fontFamily: KeepersType.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  KeepersText(
+                    memoryCount == 0
+                        ? 'Your kept archive is ready to grow'
+                        : '$memoryCount kept — one comes back at random',
+                    style: const TextStyle(
+                      color: KeepersColors.inkMuted,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              key: const ValueKey('random-memory-draw-affordance'),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: memoryCount > 0
+                    ? KeepersColors.ink
+                    : KeepersColors.homeLine,
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: KeepersText(
+                'Draw',
+                style: TextStyle(
+                  color: memoryCount > 0
+                      ? KeepersColors.auraIvory
+                      : KeepersColors.inkMuted,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.7,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+final class _RoundLineIcon extends StatelessWidget {
+  const _RoundLineIcon({required this.icon, required this.color});
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 36,
+    height: 36,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(color: color.withValues(alpha: .42)),
+    ),
+    child: Icon(icon, color: color, size: 20),
+  );
 }
 
 final class _FilterRail extends StatelessWidget {

@@ -210,7 +210,7 @@ final class _Header extends StatelessWidget {
               key: const Key('avatar-editor-back'),
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded),
-              tooltip: 'BACK',
+              tooltip: 'Back',
               color: KeepersColors.ink,
             ),
           ),

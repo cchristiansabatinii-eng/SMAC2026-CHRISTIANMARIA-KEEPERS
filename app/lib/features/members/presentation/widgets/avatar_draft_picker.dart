@@ -142,81 +142,96 @@ final class _DraftOptionState extends State<_DraftOption> {
   }
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    container: true,
-    button: true,
-    enabled: widget.enabled,
-    selected: widget.selected,
-    label: '${widget.option.label} avatar option',
-    onTap: widget.enabled ? widget.onSelected : null,
-    child: SizedBox(
-      key: Key('avatar-option-${widget.option.id}'),
-      width: widget.width,
-      height: widget.width,
-      child: Material(
-        color: widget.selected ? KeepersColors.ink : KeepersColors.auraIvory,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(
-            color: widget.selected ? KeepersColors.ink : KeepersColors.homeLine,
-            width: widget.selected ? 2 : 1,
+  Widget build(BuildContext context) {
+    final artworkSize = widget.width >= 92 ? 54.0 : 48.0;
+    final labelLineHeight = MediaQuery.textScalerOf(context).scale(11) * 1.05;
+    final optionHeight = math.max(
+      widget.width,
+      7 + artworkSize + 6 + (labelLineHeight * 2) + 6,
+    );
+
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: widget.enabled,
+      selected: widget.selected,
+      label: '${widget.option.label} avatar option',
+      onTap: widget.enabled ? widget.onSelected : null,
+      child: SizedBox(
+        key: Key('avatar-option-${widget.option.id}'),
+        width: widget.width,
+        height: optionHeight,
+        child: Material(
+          color: widget.selected ? KeepersColors.ink : KeepersColors.auraIvory,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(
+              color: widget.selected
+                  ? KeepersColors.ink
+                  : KeepersColors.homeLine,
+              width: widget.selected ? 2 : 1,
+            ),
           ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          key: Key('avatar-option-focus-${widget.option.id}'),
-          focusNode: _focusNode,
-          onTap: widget.enabled ? widget.onSelected : null,
-          child: ExcludeSemantics(
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Positioned(
-                  top: 7,
-                  child: widget.option.category == AvatarCategory.colors
-                      ? _ColorSwatch(option: widget.option)
-                      : KeepersAvatar(
-                          config: widget.preview,
-                          size: widget.width >= 92 ? 54 : 48,
-                          crop: KeepersAvatarCrop.detail,
-                        ),
-                ),
-                Positioned(
-                  left: 6,
-                  right: 6,
-                  bottom: 6,
-                  child: KeepersText(
-                    widget.option.label,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: widget.selected
-                          ? KeepersColors.auraIvory
-                          : KeepersColors.ink,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      height: 1.05,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            key: Key('avatar-option-focus-${widget.option.id}'),
+            focusNode: _focusNode,
+            onTap: widget.enabled ? widget.onSelected : null,
+            child: ExcludeSemantics(
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Positioned(
+                    top: 7,
+                    child: KeyedSubtree(
+                      key: Key('avatar-artwork-${widget.option.id}'),
+                      child: widget.option.category == AvatarCategory.colors
+                          ? _ColorSwatch(option: widget.option)
+                          : KeepersAvatar(
+                              config: widget.preview,
+                              size: artworkSize,
+                              crop: KeepersAvatarCrop.detail,
+                            ),
                     ),
                   ),
-                ),
-                if (widget.selected)
-                  const Positioned(
-                    top: 6,
+                  Positioned(
+                    left: 6,
                     right: 6,
-                    child: Icon(
-                      Icons.check_rounded,
-                      color: KeepersColors.auraIvory,
-                      size: 18,
+                    bottom: 6,
+                    child: KeepersText(
+                      key: Key('avatar-label-${widget.option.id}'),
+                      widget.option.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: widget.selected
+                            ? KeepersColors.auraIvory
+                            : KeepersColors.ink,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        height: 1.05,
+                      ),
                     ),
                   ),
-              ],
+                  if (widget.selected)
+                    const Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Icon(
+                        Icons.check_rounded,
+                        color: KeepersColors.auraIvory,
+                        size: 18,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 final class _ColorSwatch extends StatelessWidget {

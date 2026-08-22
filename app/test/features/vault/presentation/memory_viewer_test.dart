@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -32,7 +33,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('ONLY IN MEMORY'), findsOneWidget);
+    expect(find.text('Only In Memory'), findsOneWidget);
     expect(find.bySemanticsLabel('Only in memory'), findsOneWidget);
     expect(find.byType(SelectableText), findsOneWidget);
     expect(find.text('A quiet morning'), findsOneWidget);
@@ -66,13 +67,14 @@ void main() {
     final bytes = base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     );
+    final decryptedBytes = Uint8List.fromList(bytes);
     await tester.pumpWidget(
       _viewer(
         OpenedMemory(
           metadata: _metadata(format: MemoryFormat.photo),
           payload: EntryPayload(
             format: MemoryFormat.photo,
-            primaryBytes: Uint8List.fromList(bytes),
+            primaryBytes: decryptedBytes,
             text: null,
             caption: null,
             mediaExtension: 'png',
@@ -89,6 +91,41 @@ void main() {
       tester.widget<Image>(find.byType(Image)).semanticLabel,
       'Photo memory',
     );
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    expect(decryptedBytes, everyElement(0));
+  });
+
+  testWidgets('late decrypted media is cleared after the viewer closes', (
+    tester,
+  ) async {
+    final pending = Completer<MemoryOpenResult>();
+    final decryptedBytes = Uint8List.fromList([4, 5, 6]);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.dark(),
+        home: MemoryViewer(memory: pending.future, playback: _FakePlayback()),
+      ),
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    pending.complete(
+      OpenedMemory(
+        metadata: _metadata(format: MemoryFormat.voice),
+        payload: EntryPayload(
+          format: MemoryFormat.voice,
+          primaryBytes: decryptedBytes,
+          text: null,
+          caption: null,
+          mediaExtension: 'm4a',
+          mediaDurationMs: 1000,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(decryptedBytes, everyElement(0));
   });
 
   testWidgets('voice memory plays bytes and stops on dispose', (tester) async {

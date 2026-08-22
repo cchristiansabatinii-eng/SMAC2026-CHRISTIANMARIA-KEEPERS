@@ -344,7 +344,12 @@ final voiceCaptureAdapterProvider = Provider<VoiceCaptureAdapter>((ref) {
 });
 
 final audioPlaybackAdapterProvider = Provider<AudioPlaybackAdapter>((ref) {
-  final adapter = AudioplayersPlaybackAdapter(AudioPlayer());
+  final temporaryDirectory = ref.watch(temporaryDirectoryProvider.future);
+  final adapter = AudioplayersPlaybackAdapter(
+    player: AudioplayersDeviceFileAudioPlayer(AudioPlayer()),
+    temporaryDirectory: () => temporaryDirectory,
+    idFactory: ref.watch(idFactoryProvider),
+  );
   return adapter;
 });
 

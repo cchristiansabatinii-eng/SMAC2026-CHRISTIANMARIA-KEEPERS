@@ -21,7 +21,7 @@ final class LocksScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => KeepersDestinationScaffold(
-    destination: KeepersNavDestination.locks,
+    destination: KeepersNavDestination.ceremony,
     kicker: 'Milestones & legacy',
     title: 'Legacy Locks',
     subtitle: '$familyName · sealed with family approval',

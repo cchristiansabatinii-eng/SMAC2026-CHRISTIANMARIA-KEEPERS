@@ -15,7 +15,8 @@ final class VaultController {
     required this.cipher,
     required this.codec,
     required this.readEncryptedBlob,
-  });
+    DateTime Function()? utcNow,
+  }) : utcNow = utcNow ?? _systemUtcNow;
 
   static const unavailableMessage = 'This memory cannot be opened safely.';
 
@@ -24,12 +25,18 @@ final class VaultController {
   final EntryCipher cipher;
   final EntryPayloadCodec codec;
   final EncryptedBlobReader readEncryptedBlob;
+  final DateTime Function() utcNow;
 
   Future<MemoryOpenResult> open(VaultEntryMetadata metadata) async {
     Uint8List? plaintext;
     try {
       if (metadata.familyId != identity.familyId) {
         throw const FormatException('Entry is outside the local family');
+      }
+      final expiresAt = metadata.expiresAt;
+      if (metadata.state == 'expired' ||
+          (expiresAt != null && !expiresAt.toUtc().isAfter(utcNow().toUtc()))) {
+        throw const FormatException('Entry has expired');
       }
       final key = await keyResolver.resolve(metadata.privacy, identity);
       final envelope = await readEncryptedBlob(metadata.blobRef);
@@ -50,3 +57,5 @@ final class VaultController {
     }
   }
 }
+
+DateTime _systemUtcNow() => DateTime.now().toUtc();

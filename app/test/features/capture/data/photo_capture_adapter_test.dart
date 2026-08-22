@@ -14,15 +14,23 @@ void main() {
   tearDown(() async => root.delete(recursive: true));
 
   test('maps camera and library and disables full metadata', () async {
-    final source = File('${root.path}/source.jpg')..writeAsBytesSync([1, 2]);
-    final sourcePath = source.path;
+    final cameraSource = File('${root.path}/camera.jpg')
+      ..writeAsBytesSync([1, 2]);
+    final librarySource = File('${root.path}/library.jpg')
+      ..writeAsBytesSync([3, 4]);
     final calls = <(ImageSource, bool)>[];
+    final ids = ['camera-owned', 'library-owned'].iterator;
     final adapter = ImagePickerPhotoCaptureAdapter(
       captureTemporaryDirectory: root,
-      idFactory: () => 'photo-1',
+      idFactory: () {
+        ids.moveNext();
+        return ids.current;
+      },
       pickImage: ({required source, required requestFullMetadata}) async {
         calls.add((source, requestFullMetadata));
-        return XFile(sourcePath);
+        return XFile(
+          source == ImageSource.camera ? cameraSource.path : librarySource.path,
+        );
       },
     );
 
@@ -30,8 +38,29 @@ void main() {
     final libraryPath = await adapter.pick(PhotoSource.library);
     expect(calls, [(ImageSource.camera, false), (ImageSource.gallery, false)]);
     expect(File(cameraPath!).readAsBytesSync(), [1, 2]);
-    expect(File(libraryPath!).readAsBytesSync(), [1, 2]);
+    expect(File(libraryPath!).readAsBytesSync(), [3, 4]);
     expect(cameraPath, contains('keepers-capture'));
+    expect(cameraSource.existsSync(), isFalse);
+    expect(librarySource.existsSync(), isTrue);
+  });
+
+  test('removes an owned destination left behind by a failed copy', () async {
+    final captureDirectory = Directory('${root.path}/keepers-capture')
+      ..createSync();
+    final partialDestination = File('${captureDirectory.path}/photo-1.jpg')
+      ..writeAsBytesSync([9]);
+    final adapter = ImagePickerPhotoCaptureAdapter(
+      captureTemporaryDirectory: root,
+      idFactory: () => 'photo-1',
+      pickImage: ({required source, required requestFullMetadata}) async =>
+          XFile(captureDirectory.path),
+    );
+
+    await expectLater(
+      adapter.pick(PhotoSource.library),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(partialDestination.existsSync(), isFalse);
   });
 
   test('returns null on cancellation', () async {

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/features/capture/application/capture_controller.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
+import 'package:keepers/theme/keepers_theme.dart';
 
 import 'capture_test_harness.dart';
 
@@ -305,7 +306,7 @@ void main() {
     final headingStyle = (discardHeading.text as TextSpan).style;
     expect(headingStyle?.fontSize, 20);
     expect(headingStyle?.fontWeight, FontWeight.w600);
-    expect(headingStyle?.letterSpacing, 4.1);
+    expect(headingStyle?.letterSpacing, KeepersType.heading.letterSpacing);
     expect(find.text('Keep editing'), findsOneWidget);
     expect(find.text('Discard'), findsOneWidget);
 
@@ -711,8 +712,8 @@ void main() {
           editPrivacy: false,
           label: 'Close',
           invoke: (tester) async {
-            await tester.ensureVisible(find.byTooltip('CLOSE CAPTURE'));
-            await tester.tap(find.byTooltip('CLOSE CAPTURE'));
+            await tester.ensureVisible(find.byTooltip('Close Capture'));
+            await tester.tap(find.byTooltip('Close Capture'));
           },
           useReplace: true,
         ),
@@ -811,7 +812,7 @@ void main() {
     harness.container
         .read(captureControllerProvider.notifier)
         .setPrivacy(PrivacyTier.journal);
-    await tester.tap(find.byTooltip('CLOSE CAPTURE'));
+    await tester.tap(find.byTooltip('Close Capture'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Add a memory'));
@@ -845,7 +846,7 @@ void main() {
       find.text('Camera access is needed to take a photo.'),
       findsOneWidget,
     );
-    await tester.tap(find.byTooltip('CLOSE CAPTURE'));
+    await tester.tap(find.byTooltip('Close Capture'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Add a memory'));
@@ -872,7 +873,7 @@ void main() {
     await tester.pumpWidget(harness.launcher());
     await tester.tap(find.text('Add a memory'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('CLOSE CAPTURE'));
+    await tester.tap(find.byTooltip('Close Capture'));
     await tester.pump();
 
     expect(find.text('Completions: 0'), findsOneWidget);
@@ -902,7 +903,7 @@ void main() {
       await tester.pumpWidget(harness.launcher());
       await tester.tap(find.text('Add a memory'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('CLOSE CAPTURE'));
+      await tester.tap(find.byTooltip('Close Capture'));
       await tester.pump();
 
       photo.recoveryResult.complete('/tmp/recovered-failure.jpg');

@@ -1,245 +1,96 @@
-import 'dart:ui' show SemanticsAction;
+import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
+import 'package:keepers/features/capture/data/audio_playback_adapter.dart';
+import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/ceremony/presentation/ceremony_screen.dart';
+import 'package:keepers/features/vault/domain/vault_models.dart';
+import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/keepers_bottom_nav.dart';
 
 void main() {
-  testWidgets('presence Invite card exposes semantic activation', (
+  testWidgets('memory key owns legacy and capsule, not weekly or random', (
+    tester,
+  ) async {
+    KeepersNavDestination? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Rahman',
+            currentMemberName: 'Chris',
+            onDestinationSelected: (destination) => selected = destination,
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('memory-key-legacy-entry')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('memory-key-capsule-entry')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('weekly-recap-mode')), findsNothing);
+    expect(find.byKey(const ValueKey('random-memory-mode')), findsNothing);
+    expect(find.text('No family condition yet'), findsOneWidget);
+    expect(find.text('No capsule scheduled'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('memory-key-legacy-entry')));
+    expect(selected, KeepersNavDestination.locks);
+  });
+
+  testWidgets('memory key exposes only available shortcut actions', (
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
+    KeepersNavDestination? selected;
     await tester.pumpWidget(
       MaterialApp(
         theme: KeepersTheme.daylight(),
         home: MediaQuery(
           data: const MediaQueryData(disableAnimations: true),
           child: CeremonyScreen(
-            familyName: 'Sabati',
+            familyName: 'Rahman',
             currentMemberName: 'Chris',
-            onAddMember: () {},
-            onDestinationSelected: (_) {},
+            onDestinationSelected: (destination) => selected = destination,
           ),
         ),
       ),
     );
 
-    final data = tester
-        .getSemantics(find.bySemanticsLabel(RegExp('Invite a family member')))
-        .getSemanticsData();
-    expect(data.flagsCollection.isButton, isTrue);
-    expect(data.hasAction(SemanticsAction.tap), isTrue);
+    final legacy = find.semantics.byLabel(
+      'LEGACY LOCK. No family condition yet',
+    );
+    final capsule = find.semantics.byLabel('CAPSULE. No capsule scheduled');
+    expect(
+      legacy.evaluate().single.getSemanticsData().hasAction(
+        SemanticsAction.tap,
+      ),
+      isTrue,
+    );
+    expect(
+      capsule.evaluate().single.getSemanticsData().hasAction(
+        SemanticsAction.tap,
+      ),
+      isFalse,
+    );
+
+    tester.semantics.tap(legacy);
+    await tester.pump();
+    expect(selected, KeepersNavDestination.locks);
     semantics.dispose();
   });
 
-  testWidgets('presence invite adds a member while weekly action only nudges', (
-    tester,
-  ) async {
-    var added = 0;
-    var nudged = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: KeepersTheme.daylight(),
-        home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: CeremonyScreen(
-            familyName: 'Sabati',
-            currentMemberName: 'Chris',
-            onAddMember: () => added += 1,
-            onNudgeMissingMembers: () => nudged += 1,
-            onDestinationSelected: (_) {},
-          ),
-        ),
-      ),
-    );
-
-    await tester.tap(
-      find.ancestor(of: find.text('INVITE'), matching: find.byType(InkWell)),
-    );
-    expect(added, 1);
-    expect(nudged, 0);
-
-    await tester.tap(find.text('Ask family to come'));
-
-    expect(added, 1);
-    expect(nudged, 1);
-  });
-
-  testWidgets('memory key locks weekly recap but keeps random access open', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: KeepersTheme.daylight(),
-        home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: CeremonyScreen(
-            familyName: 'Sabati',
-            currentMemberName: 'Chris',
-            onDestinationSelected: (_) {},
-          ),
-        ),
-      ),
-    );
-
-    expect(find.text('Memory Key'), findsOneWidget);
-    expect(find.text('THE WEEK'), findsOneWidget);
-    expect(find.text('1 of 2 devices'), findsOneWidget);
-    expect(find.text('Draw a memory'), findsOneWidget);
-    expect(find.text('ANY TIME'), findsOneWidget);
-    expect(find.text('Locked by family'), findsOneWidget);
-    expect(find.byKey(const ValueKey('weekly-recap-preview')), findsNothing);
-
-    final weekly = tester.widget<OutlinedButton>(
-      find.descendant(
-        of: find.byKey(const ValueKey('weekly-recap-mode')),
-        matching: find.byType(OutlinedButton),
-      ),
-    );
-    final random = tester.widget<OutlinedButton>(
-      find.descendant(
-        of: find.byKey(const ValueKey('random-memory-mode')),
-        matching: find.byType(OutlinedButton),
-      ),
-    );
-    expect(weekly.onPressed, isNull);
-    expect(random.onPressed, isNotNull);
-  });
-
-  testWidgets(
-    'waiting recap keeps its live threshold and weekly count visible',
-    (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: KeepersTheme.daylight(),
-          home: MediaQuery(
-            data: const MediaQueryData(disableAnimations: true),
-            child: CeremonyScreen(
-              familyName: 'Rahman',
-              currentMemberName: 'Chris',
-              nearbyDeviceCount: 1,
-              requiredNearbyDevices: 2,
-              weeklyMemoryCount: 4,
-              onDestinationSelected: (_) {},
-            ),
-          ),
-        ),
-      );
-
-      expect(
-        find.text('You are here. One more device turns the key.'),
-        findsOneWidget,
-      );
-      final weeklyCard = find.byKey(const ValueKey('weekly-recap-mode'));
-      expect(weeklyCard, findsOneWidget);
-      expect(
-        find.descendant(
-          of: weeklyCard,
-          matching: find.textContaining('1 of 2'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: weeklyCard,
-          matching: find.textContaining('4 memories'),
-        ),
-        findsOneWidget,
-      );
-
-      final weekly = tester.widget<OutlinedButton>(
-        find.descendant(of: weeklyCard, matching: find.byType(OutlinedButton)),
-      );
-      expect(weekly.onPressed, isNull);
-    },
-  );
-
-  testWidgets('presence stack lists family without overstating who is nearby', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: KeepersTheme.daylight(),
-        home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: CeremonyScreen(
-            familyName: 'Rahman',
-            currentMemberName: 'Chris',
-            nearbyDeviceCount: 3,
-            requiredNearbyDevices: 2,
-            members: const [
-              MemoryKeyMember(name: 'Layla'),
-              MemoryKeyMember(name: 'Omar'),
-              MemoryKeyMember(name: 'Yusuf'),
-              MemoryKeyMember(name: 'Karim'),
-              MemoryKeyMember(name: 'Hana'),
-            ],
-            onDestinationSelected: (_) {},
-          ),
-        ),
-      ),
-    );
-
-    final stack = find.byKey(const ValueKey('memory-key-presence-stack'));
-    expect(stack, findsOneWidget);
-    for (final name in ['Layla', 'Omar', 'Yusuf', 'Karim', 'Hana']) {
-      expect(
-        find.descendant(
-          of: stack,
-          matching: find.bySemanticsLabel(
-            '$name, ${name == 'Layla' || name == 'Omar' ? 'here' : 'away'}',
-          ),
-        ),
-        findsOneWidget,
-      );
-    }
-    expect(find.text('You, Layla and Omar are here.'), findsOneWidget);
-    expect(find.text('You, Layla, Omar and Yusuf are here.'), findsNothing);
-  });
-
-  testWidgets('draw a memory stays available while the recap is waiting', (
-    tester,
-  ) async {
-    MemoryKeyMemory? opened;
-    const memory = MemoryKeyMemory(
-      id: 'kept-1',
-      title: 'Sunday in the kitchen',
-      formatLabel: 'Voice memory',
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: KeepersTheme.daylight(),
-        home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: CeremonyScreen(
-            familyName: 'Rahman',
-            currentMemberName: 'Chris',
-            nearbyDeviceCount: 1,
-            requiredNearbyDevices: 2,
-            randomMemories: const [memory],
-            onOpenRandomMemory: (value) => opened = value,
-            onDestinationSelected: (_) {},
-          ),
-        ),
-      ),
-    );
-
-    final drawAction = find.descendant(
-      of: find.byKey(const ValueKey('random-memory-mode')),
-      matching: find.text('Draw a memory'),
-    );
-    expect(drawAction, findsOneWidget);
-
-    await tester.ensureVisible(drawAction);
-    await tester.tap(drawAction);
-    await tester.pump();
-
-    expect(opened?.id, memory.id);
-  });
-
-  testWidgets('landing carries a family challenge and a dated time capsule', (
+  testWidgets('memory key carries a family challenge and dated capsule', (
     tester,
   ) async {
     LockedMemoryChallenge? opened;
@@ -277,13 +128,16 @@ void main() {
     expect(find.text(challenge.title), findsOneWidget);
     expect(find.text(challenge.task), findsOneWidget);
     expect(find.text('Time capsule'), findsOneWidget);
-    expect(find.text('Opens 12 October'), findsOneWidget);
+    expect(find.text('Opens 12 October'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('memory-key-capsule-entry')));
+    await tester.pumpAndSettle();
+    expect(find.text('For your birthday').hitTestable(), findsOneWidget);
 
     final openChallenge = find.widgetWithText(FilledButton, 'Open memory');
     await tester.ensureVisible(openChallenge);
     await tester.tap(openChallenge);
     await tester.pump();
-
     expect(opened?.id, challenge.id);
   });
 
@@ -316,45 +170,39 @@ void main() {
     expect(dock.selected, KeepersNavDestination.ceremony);
   });
 
-  testWidgets('two nearby devices unlock recap through a pastel flood', (
+  testWidgets('memory key entries begin directly beneath the compact header', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
         theme: KeepersTheme.daylight(),
-        home: CeremonyScreen(
-          familyName: 'Sabati',
-          currentMemberName: 'Chris',
-          nearbyDeviceCount: 2,
-          weeklyMemoryCount: 3,
-          onDestinationSelected: (_) {},
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(390, 844),
+            disableAnimations: true,
+          ),
+          child: CeremonyScreen(
+            familyName: 'Rahman',
+            currentMemberName: 'Chris',
+            onDestinationSelected: (_) {},
+          ),
         ),
       ),
     );
 
-    expect(find.text('3 memories, waiting.'), findsOneWidget);
-    final weeklyButton = tester.widget<OutlinedButton>(
-      find.descendant(
-        of: find.byKey(const ValueKey('weekly-recap-mode')),
-        matching: find.byType(OutlinedButton),
-      ),
-    );
-    expect(weeklyButton.onPressed, isNotNull);
-
-    await tester.tap(find.byKey(const ValueKey('weekly-recap-mode')));
-    await tester.pump();
-    expect(find.byKey(const ValueKey('pastel-flood')), findsOneWidget);
-    expect(find.text('Photo memory'), findsNothing);
-
-    await tester.pump(const Duration(milliseconds: 600));
-    await tester.pump();
-    expect(find.text('Photo memory'), findsOneWidget);
+    final headerBottom = tester.getBottomLeft(find.text('Memory Key')).dy;
+    final entriesTop = tester
+        .getTopLeft(find.byKey(const ValueKey('memory-key-legacy-entry')))
+        .dy;
+    expect(entriesTop - headerBottom, lessThan(48));
   });
 
-  testWidgets('random mode avoids repeating the same kept memory', (
-    tester,
-  ) async {
-    final opened = <String>[];
+  testWidgets('weekly playback exits back to the family wheel', (tester) async {
+    KeepersNavDestination? selected;
     await tester.pumpWidget(
       MaterialApp(
         theme: KeepersTheme.daylight(),
@@ -363,73 +211,358 @@ void main() {
           child: CeremonyScreen(
             familyName: 'Sabati',
             currentMemberName: 'Chris',
-            randomMemories: const [
-              MemoryKeyMemory(
-                id: 'kept-1',
-                title: 'Kitchen story',
-                formatLabel: 'Voice memory',
-              ),
-              MemoryKeyMemory(
-                id: 'kept-2',
-                title: 'Garden story',
-                formatLabel: 'Photo memory',
-              ),
-            ],
-            onOpenRandomMemory: (memory) => opened.add(memory.id),
-            onDestinationSelected: (_) {},
+            startInWeekly: true,
+            navigationDestination: KeepersNavDestination.wheel,
+            onDestinationSelected: (destination) => selected = destination,
           ),
         ),
       ),
     );
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('random-memory-mode')),
-    );
-    await tester.tap(find.byKey(const ValueKey('random-memory-mode')));
-    await tester.pump();
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('random-memory-mode')),
-    );
-    await tester.tap(find.byKey(const ValueKey('random-memory-mode')));
-    await tester.pump();
+    expect(find.byKey(const ValueKey('ceremony-reel')), findsOneWidget);
+    expect(find.text('Memory Key'), findsNothing);
+    expect(find.byType(KeepersBottomNav), findsNothing);
 
-    expect(opened, hasLength(2));
-    expect(opened[1], isNot(opened[0]));
+    await tester.tap(find.byTooltip('Close weekly memories'));
+    expect(selected, KeepersNavDestination.wheel);
   });
 
-  testWidgets('weekly recap moves through each memory format into keeping', (
+  testWidgets('live weekly playback renders decrypted current-week memories', (
     tester,
   ) async {
+    final decisions = <WeeklyMemoryDisposition>[];
+    final memory = OpenedMemory(
+      metadata: VaultEntryMetadata(
+        id: 'live-text',
+        familyId: 'family-1',
+        authorId: 'member-2',
+        createdAt: DateTime.utc(2026, 9, 7, 12),
+        format: MemoryFormat.text,
+        privacy: PrivacyTier.reveal,
+        blobRef: 'entries/blobs/live-text.keeper',
+        state: 'pending',
+      ),
+      payload: const EntryPayload(
+        format: MemoryFormat.text,
+        primaryBytes: null,
+        text: 'Mariam taught us the old card game after dinner.',
+        caption: 'After dinner',
+        mediaExtension: null,
+        mediaDurationMs: null,
+      ),
+    );
     await tester.pumpWidget(
       MaterialApp(
-        theme: KeepersTheme.dark(),
+        theme: KeepersTheme.daylight(),
         home: MediaQuery(
           data: const MediaQueryData(disableAnimations: true),
           child: CeremonyScreen(
             familyName: 'Sabati',
             currentMemberName: 'Chris',
-            nearbyDeviceCount: 2,
-            weeklyMemoryCount: 3,
+            startInWeekly: true,
+            weeklyPreview: false,
+            weeklyMemories: Future.value([memory]),
+            weeklyAuthorNames: const {'member-2': 'Mariam'},
+            onWeeklyDecision: (metadata, disposition) async {
+              expect(metadata.id, 'live-text');
+              decisions.add(disposition);
+            },
+            navigationDestination: KeepersNavDestination.wheel,
             onDestinationSelected: (_) {},
           ),
         ),
       ),
     );
-
-    expect(find.text('Memory Key'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('weekly-recap-mode')));
     await tester.pumpAndSettle();
+
+    expect(
+      find.text('Mariam taught us the old card game after dinner.'),
+      findsOneWidget,
+    );
+    expect(find.text('THIS WEEK'), findsOneWidget);
+    expect(find.text('REHEARSAL MODE'), findsNothing);
+    expect(find.text('A small moment'), findsNothing);
+    expect(find.text('16 May, 2025'), findsNothing);
+
+    final keeping = find.widgetWithText(FilledButton, 'Begin keeping');
+    await tester.ensureVisible(keeping);
+    await tester.tap(keeping);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Keep this memory'));
+    await tester.pumpAndSettle();
+
+    expect(decisions, [WeeklyMemoryDisposition.keep]);
+    expect(find.text('KEPT'), findsOneWidget);
+  });
+
+  testWidgets(
+    'disposing live voice while playback starts still requests teardown',
+    (tester) async {
+      final playback = _ControllablePlaybackAdapter();
+      addTearDown(playback.releasePlayback);
+      await tester.pumpWidget(_liveVoiceCeremony(playback: playback));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Play Voice Memory'));
+      await playback.playStarted.future;
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+
+      expect(playback.stopCalls, 1);
+
+      playback.releasePlayback();
+      await playback.stopFinished.future;
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('live voice teardown absorbs playback cleanup failures', (
+    tester,
+  ) async {
+    final playback = _ControllablePlaybackAdapter(
+      stopError: StateError('cleanup failed'),
+    );
+    addTearDown(playback.releasePlayback);
+    await tester.pumpWidget(_liveVoiceCeremony(playback: playback));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Play Voice Memory'));
+    await playback.playStarted.future;
+    playback.releasePlayback();
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await playback.stopFinished.future;
+    await tester.pump();
+
+    expect(playback.stopCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('preview decisions never call the live persistence callback', (
+    tester,
+  ) async {
+    var writes = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Sabati',
+            currentMemberName: 'Chris',
+            startInKeeping: true,
+            onWeeklyDecision: (_, _) async => writes += 1,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Keep this memory'));
+    await tester.pumpAndSettle();
+
+    expect(writes, 0);
+    expect(find.text('REHEARSAL MODE'), findsOneWidget);
+    expect(find.text('KEPT'), findsOneWidget);
+  });
+
+  testWidgets('live release uses the released persistence disposition', (
+    tester,
+  ) async {
+    WeeklyMemoryDisposition? disposition;
+    final memory = OpenedMemory(
+      metadata: VaultEntryMetadata(
+        id: 'release-text',
+        familyId: 'family-1',
+        authorId: 'member-2',
+        createdAt: DateTime.utc(2026, 9, 7, 12),
+        format: MemoryFormat.text,
+        privacy: PrivacyTier.reveal,
+        blobRef: 'entries/blobs/release-text.keeper',
+        state: 'pending',
+      ),
+      payload: const EntryPayload(
+        format: MemoryFormat.text,
+        primaryBytes: null,
+        text: 'A current-week note.',
+        caption: null,
+        mediaExtension: null,
+        mediaDurationMs: null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Sabati',
+            currentMemberName: 'Chris',
+            startInWeekly: true,
+            weeklyPreview: false,
+            weeklyMemories: Future.value([memory]),
+            onWeeklyDecision: (_, value) async => disposition = value,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final keeping = find.widgetWithText(FilledButton, 'Begin keeping');
+    await tester.ensureVisible(keeping);
+    await tester.tap(keeping);
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.widgetWithText(OutlinedButton, 'Release this memory'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(disposition, WeeklyMemoryDisposition.release);
+    expect(find.text('RELEASED'), findsOneWidget);
+  });
+
+  testWidgets('weekly playback uses the focused cream gallery composition', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(390, 844),
+            disableAnimations: true,
+          ),
+          child: CeremonyScreen(
+            familyName: 'Sabati',
+            currentMemberName: 'Chris',
+            startInWeekly: true,
+            navigationDestination: KeepersNavDestination.wheel,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    final shell = tester.widget<Scaffold>(
+      find.byKey(const ValueKey('weekly-experience-shell')),
+    );
+    expect(shell.backgroundColor, Colors.transparent);
+    expect(find.byKey(const ValueKey('weekly-gallery-header')), findsOneWidget);
+    expect(find.byKey(const ValueKey('weekly-gallery-hero')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('weekly-gallery-filmstrip')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('weekly-gallery-thumbnail-0')),
+      findsOneWidget,
+    );
+    expect(find.text('16 May, 2025'), findsOneWidget);
+    expect(find.byType(KeepersBottomNav), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('weekly thumbnails keep the hero and date synchronized', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Sabati',
+            currentMemberName: 'Chris',
+            startInWeekly: true,
+            navigationDestination: KeepersNavDestination.wheel,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('weekly-gallery-thumbnail-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Voice memory'), findsOneWidget);
+    expect(find.text('18 May, 2025'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Voice memory, selected, 2 of 3'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'weekly hero swipe advances the memory without a hidden gesture',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: KeepersTheme.daylight(),
+          home: MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: CeremonyScreen(
+              familyName: 'Sabati',
+              currentMemberName: 'Chris',
+              startInWeekly: true,
+              navigationDestination: KeepersNavDestination.wheel,
+              onDestinationSelected: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      await tester.drag(
+        find.byKey(const ValueKey('weekly-gallery-hero')),
+        const Offset(-220, 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Voice memory'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('weekly-gallery-thumbnail-1')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('weekly recap moves through every format into keeping', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Sabati',
+            currentMemberName: 'Chris',
+            startInWeekly: true,
+            navigationDestination: KeepersNavDestination.wheel,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+
     expect(find.text('Photo memory'), findsOneWidget);
     expect(find.text('1 of 3'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Next memory'));
+    await tester.tap(find.byKey(const ValueKey('weekly-gallery-thumbnail-1')));
     await tester.pumpAndSettle();
     expect(find.text('Voice memory'), findsOneWidget);
-    await tester.tap(find.byTooltip('PLAY REHEARSAL VOICE MEMORY'));
+    await tester.tap(find.byTooltip('Play Rehearsal Voice Memory'));
     await tester.pump();
-    expect(find.byTooltip('PAUSE REHEARSAL VOICE MEMORY'), findsOneWidget);
+    expect(find.byTooltip('Pause Rehearsal Voice Memory'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Next memory'));
+    await tester.tap(find.byKey(const ValueKey('weekly-gallery-thumbnail-2')));
     await tester.pumpAndSettle();
     expect(find.text('Text memory'), findsOneWidget);
     expect(find.text('An echo from before'), findsOneWidget);
@@ -449,31 +582,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Keep this memory'), findsOneWidget);
     expect(find.text('Release this memory'), findsOneWidget);
-  });
-
-  testWidgets('random mode opens an honest empty vault state', (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: KeepersTheme.daylight(),
-        home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: CeremonyScreen(
-            familyName: 'Sabati',
-            currentMemberName: 'Chris',
-            onDestinationSelected: (_) {},
-          ),
-        ),
-      ),
-    );
-
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('random-memory-mode')),
-    );
-    await tester.tap(find.byKey(const ValueKey('random-memory-mode')));
-    await tester.pump();
-
-    expect(find.text('No kept memories yet'), findsOneWidget);
-    expect(find.text('Back to Memory Key'), findsOneWidget);
   });
 
   testWidgets('only an approved family task can open its locked memory', (
@@ -516,8 +624,43 @@ void main() {
     await tester.ensureVisible(find.text('Open memory'));
     await tester.tap(find.widgetWithText(FilledButton, 'Open memory'));
     await tester.pump();
-
     expect(opened?.id, 'approved');
+  });
+
+  testWidgets('approved task opens through the existing pastel flood', (
+    tester,
+  ) async {
+    LockedMemoryChallenge? opened;
+    const challenge = LockedMemoryChallenge(
+      id: 'approved',
+      title: 'Ready for you',
+      task: 'Finish the recipe together.',
+      assignedBy: 'Assigned by Dana',
+      approvalBy: 'Approved by Dana',
+      state: LockedMemoryChallengeState.approved,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: CeremonyScreen(
+          familyName: 'Sabati',
+          currentMemberName: 'Chris',
+          lockedMemories: const [challenge],
+          onOpenLockedMemory: (value) => opened = value,
+          onDestinationSelected: (_) {},
+        ),
+      ),
+    );
+
+    final open = find.widgetWithText(FilledButton, 'Open memory');
+    await tester.ensureVisible(open);
+    await tester.tap(open);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('pastel-flood')), findsOneWidget);
+    expect(opened, isNull);
+
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(opened?.id, challenge.id);
   });
 
   testWidgets('memory key reflows on a narrow phone at 1.4x text', (
@@ -546,8 +689,8 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('THE WEEK'), findsOneWidget);
-    expect(find.text('Draw a memory'), findsOneWidget);
+    expect(find.text('LEGACY LOCK'), findsOneWidget);
+    expect(find.text('CAPSULE'), findsOneWidget);
     expect(find.text('Locked by family'), findsOneWidget);
   });
 
@@ -571,9 +714,82 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilledButton, 'Keep this memory'));
     await tester.pumpAndSettle();
-
     expect(find.text('KEPT'), findsOneWidget);
     expect(find.text('Sealed into the family archive'), findsOneWidget);
+  });
+
+  testWidgets('keeping status and release action remain legible on cream', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Sabati',
+            currentMemberName: 'Chris',
+            startInKeeping: true,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    final status = tester.widget<Text>(find.text('1 PRESENT · PREVIEW ONLY'));
+    expect(status.style?.color, KeepersColors.inkMuted);
+
+    final release = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Release this memory'),
+    );
+    expect(
+      release.style?.foregroundColor?.resolve(<WidgetState>{}),
+      KeepersColors.ink,
+    );
+
+    await tester.tap(
+      find.widgetWithText(OutlinedButton, 'Release this memory'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Leaves your view after 30 days'), findsOneWidget);
+  });
+
+  testWidgets('next decision advances through the weekly memories', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.dark(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Sabati',
+            currentMemberName: 'Chris',
+            startInKeeping: true,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('A small moment, held in the light.'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Keep this memory'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Next decision'));
+    await tester.pumpAndSettle();
+    expect(find.text('A voice the room can hear together.'), findsOneWidget);
+
+    await tester.tap(
+      find.widgetWithText(OutlinedButton, 'Release this memory'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Next decision'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('What should this family remember from this week?'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('keeping reflows on a narrow phone at 1.4x text', (tester) async {
@@ -604,4 +820,80 @@ void main() {
     expect(find.text('Keep this memory'), findsOneWidget);
     expect(find.text('Release this memory'), findsOneWidget);
   });
+}
+
+Widget _liveVoiceCeremony({required AudioPlaybackAdapter playback}) {
+  final memory = OpenedMemory(
+    metadata: VaultEntryMetadata(
+      id: 'live-voice',
+      familyId: 'family-1',
+      authorId: 'member-2',
+      createdAt: DateTime.utc(2026, 9, 7, 12),
+      format: MemoryFormat.voice,
+      privacy: PrivacyTier.reveal,
+      blobRef: 'entries/blobs/live-voice.keeper',
+      state: 'pending',
+    ),
+    payload: EntryPayload(
+      format: MemoryFormat.voice,
+      primaryBytes: Uint8List.fromList([1, 2, 3]),
+      text: null,
+      caption: 'A voice from this week',
+      mediaExtension: 'm4a',
+      mediaDurationMs: 1200,
+    ),
+  );
+  return MaterialApp(
+    theme: KeepersTheme.daylight(),
+    home: MediaQuery(
+      data: const MediaQueryData(disableAnimations: true),
+      child: CeremonyScreen(
+        familyName: 'Sabati',
+        currentMemberName: 'Chris',
+        startInWeekly: true,
+        weeklyPreview: false,
+        weeklyMemories: Future.value([memory]),
+        weeklyPlayback: playback,
+        onWeeklyDecision: (_, _) async {},
+        onDestinationSelected: (_) {},
+      ),
+    ),
+  );
+}
+
+final class _ControllablePlaybackAdapter implements AudioPlaybackAdapter {
+  _ControllablePlaybackAdapter({this.stopError});
+
+  final Object? stopError;
+  final Completer<void> playStarted = Completer<void>();
+  final Completer<void> _playReleased = Completer<void>();
+  final Completer<void> stopFinished = Completer<void>();
+  var stopCalls = 0;
+
+  void releasePlayback() {
+    if (!_playReleased.isCompleted) _playReleased.complete();
+  }
+
+  @override
+  Future<void> playBytes(Uint8List bytes) async {
+    if (!playStarted.isCompleted) playStarted.complete();
+    await _playReleased.future;
+  }
+
+  @override
+  Future<void> playFile(String path) async {}
+
+  @override
+  Future<void> stop() async {
+    stopCalls += 1;
+    try {
+      await _playReleased.future;
+      if (stopError case final error?) throw error;
+    } finally {
+      if (!stopFinished.isCompleted) stopFinished.complete();
+    }
+  }
+
+  @override
+  Future<void> dispose() async {}
 }

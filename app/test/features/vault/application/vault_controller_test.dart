@@ -64,6 +64,20 @@ void main() {
 
     expect(memory, isA<UnavailableMemory>());
   });
+
+  test('expired released memory fails closed before blob access', () async {
+    final harness = await _VaultHarness.create(now: DateTime.utc(2026, 10, 8));
+
+    final memory = await harness.controller.open(
+      harness.metadata.copyWith(
+        state: 'revealed',
+        expiresAt: DateTime.utc(2026, 10, 7),
+      ),
+    );
+
+    expect(memory, isA<UnavailableMemory>());
+    expect(harness.resolvedReferences, isEmpty);
+  });
 }
 
 final class _VaultHarness {
@@ -81,6 +95,7 @@ final class _VaultHarness {
     bool corruptTag = false,
     bool missingKey = false,
     bool payloadFormatMismatch = false,
+    DateTime? now,
   }) async {
     const identity = LocalIdentity(
       familyId: 'family-1',
@@ -134,6 +149,7 @@ final class _VaultHarness {
       keyResolver: EntryKeyResolver(IdentityKeyService(secureValues)),
       cipher: cipher,
       codec: codec,
+      utcNow: () => now ?? DateTime.utc(2026, 9, 1),
       readEncryptedBlob: (relativeRef) async {
         resolvedReferences.add(relativeRef);
         if (relativeRef != 'entries/blobs/entry-1.keeper') {

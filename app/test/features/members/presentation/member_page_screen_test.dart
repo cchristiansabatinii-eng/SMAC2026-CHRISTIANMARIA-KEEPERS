@@ -6,6 +6,7 @@ import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/members/presentation/member_page_screen.dart';
 import 'package:keepers/features/members/presentation/widgets/keepers_avatar.dart';
+import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/family_wheel_screen.dart';
 
 void main() {
@@ -51,7 +52,10 @@ void main() {
     final sealedStatusStyle = (sealedStatusText.text as TextSpan).style;
     expect(sealedStatusStyle?.fontSize, 16);
     expect(sealedStatusStyle?.fontWeight, FontWeight.w600);
-    expect(sealedStatusStyle?.letterSpacing, isNot(4.1));
+    expect(
+      sealedStatusStyle?.letterSpacing,
+      isNot(KeepersType.heading.letterSpacing),
+    );
     expect(
       find.text('Current-week memories stay closed until ceremony.'),
       findsOneWidget,

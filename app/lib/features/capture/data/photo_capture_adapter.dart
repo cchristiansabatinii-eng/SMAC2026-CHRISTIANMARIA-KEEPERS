@@ -49,7 +49,12 @@ final class ImagePickerPhotoCaptureAdapter implements PhotoCaptureAdapter {
             : ImageSource.gallery,
         requestFullMetadata: false,
       );
-      return image == null ? null : await _own(image);
+      return image == null
+          ? null
+          : await _own(
+              image,
+              deleteSourceAfterCopy: source == PhotoSource.camera,
+            );
     } on PlatformException catch (error) {
       throw CapturePermissionException(source.permissionSource, error);
     }
@@ -63,7 +68,7 @@ final class ImagePickerPhotoCaptureAdapter implements PhotoCaptureAdapter {
     return files == null || files.isEmpty ? null : _own(files.first);
   }
 
-  Future<String> _own(XFile image) async {
+  Future<String> _own(XFile image, {bool deleteSourceAfterCopy = false}) async {
     final root = _directory ?? await _temporaryDirectory!();
     final directory = Directory(p.join(root.path, 'keepers-capture'));
     await directory.create(recursive: true);
@@ -72,7 +77,29 @@ final class ImagePickerPhotoCaptureAdapter implements PhotoCaptureAdapter {
         ? rawExtension
         : '.jpg';
     final destination = p.join(directory.path, '${_idFactory()}$extension');
-    await File(image.path).copy(destination);
+    final sourceFile = File(image.path);
+    final destinationFile = File(destination);
+    final pathsMatch = p.equals(
+      sourceFile.absolute.path,
+      destinationFile.absolute.path,
+    );
+    try {
+      await sourceFile.copy(destination);
+    } catch (_) {
+      if (!pathsMatch) await _bestEffortDelete(destinationFile);
+      rethrow;
+    }
+    if (deleteSourceAfterCopy && !pathsMatch) {
+      await _bestEffortDelete(sourceFile);
+    }
     return destination;
+  }
+
+  Future<void> _bestEffortDelete(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } on FileSystemException {
+      // The owned copy remains usable if temporary-file cleanup is denied.
+    }
   }
 }
