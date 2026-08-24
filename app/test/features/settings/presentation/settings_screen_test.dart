@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
+import 'package:keepers/features/family/application/family_join_controller.dart';
 import 'package:keepers/features/family/application/family_roster_provider.dart';
+import 'package:keepers/features/family/application/pending_join_completion_controller.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/members/application/avatar_editor_controller.dart';
 import 'package:keepers/features/members/domain/avatar_catalog.dart';
@@ -105,6 +107,9 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            familyJoinCompletionRecoveryProvider.overrideWithValue(
+              () async => const PendingJoinCompletionState(),
+            ),
             localIdentityProvider.overrideWith((ref) async {
               identityLoads += 1;
               return refreshedIdentity;
