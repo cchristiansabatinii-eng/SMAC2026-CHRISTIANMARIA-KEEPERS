@@ -4,7 +4,7 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to anon, authenticated;
 grant execute on all functions in schema extensions to anon, authenticated;
 
-select plan(104);
+select plan(106);
 
 -- Schema, constraints, RLS, grants, and compatibility.
 select has_table('public', 'family_join_codes');
@@ -249,6 +249,32 @@ select ok(
     'EXECUTE'
   ),
   'purge is service-role-only'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_catalog.pg_trigger as trigger
+    join pg_catalog.pg_class as relation on relation.oid = trigger.tgrelid
+    join pg_catalog.pg_namespace as namespace
+      on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'family_join_requests'
+      and trigger.tgname = 'guard_family_join_request_membership'
+      and not trigger.tgisinternal
+  )
+  and exists (
+    select 1
+    from pg_catalog.pg_trigger as trigger
+    join pg_catalog.pg_class as relation on relation.oid = trigger.tgrelid
+    join pg_catalog.pg_namespace as namespace
+      on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'family_memberships'
+      and trigger.tgname = 'guard_family_membership_join_request'
+      and not trigger.tgisinternal
+  ),
+  'membership and join-request inserts share database serialization guards'
 );
 
 insert into auth.users (
@@ -1157,8 +1183,28 @@ insert into public.family_memberships(
   '10000000-2222-4222-8222-000000000008',
   'Already Member', 'adult', 'blue',
   '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"already","selections":{},"colors":{}}',
-  'member', 'active'
+  'member', 'pending_key'
 );
+select pg_temp.authenticate_as('10000000-0000-4000-8000-000000000008', 'already-member@example.com');
+set local role authenticated;
+select throws_ok(
+  $sql$
+    select public.create_family_join_request(
+      '11111111-1111-4111-8111-111111111111', 'ABCD2345',
+      '10000000-1111-4111-8111-000000000008', 'Already Member', 'adult', 'blue',
+      '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"already","selections":{},"colors":{}}',
+      'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
+    )
+  $sql$,
+  'P0001', 'ALREADY_MEMBER',
+  'a legacy pending-key membership cannot create a permanent-code request'
+);
+reset role;
+
+-- Preserve a pre-migration conflicting row to prove completion remains
+-- fail-closed if an older deployment already admitted one.
+alter table public.family_join_requests
+disable trigger guard_family_join_request_membership;
 insert into public.family_join_requests(
   id, family_id, requester_account_id, member_id, display_name,
   demographic_role, color_token, avatar_json, joining_public_key,
@@ -1181,6 +1227,8 @@ insert into public.family_join_requests(
   clock_timestamp(), clock_timestamp() + interval '7 days',
   clock_timestamp(), clock_timestamp()
 );
+alter table public.family_join_requests
+enable trigger guard_family_join_request_membership;
 select pg_temp.authenticate_as('10000000-0000-4000-8000-000000000008', 'already-member@example.com');
 set local role authenticated;
 select throws_ok(
