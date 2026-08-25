@@ -604,28 +604,30 @@ void main() {
     expect(rosterRefreshes, 1);
   });
 
-  testWidgets('a disappeared pending request refreshes authoritative roster', (
-    tester,
-  ) async {
-    final requests = _ObservatoryJoinRequestsController(
-      FamilyJoinRequestsState(requests: [_pendingJoinRequest]),
-    );
-    var rosterRefreshes = 0;
-    await tester.pumpWidget(
-      _observatory(
-        entries: const [],
-        requestsController: requests,
-        refreshRoster: () async => rosterRefreshes += 1,
-      ),
-    );
-    await tester.pump();
+  testWidgets(
+    'decline cancel expiry and unknown disappearance never start polling',
+    (tester) async {
+      final requests = _ObservatoryJoinRequestsController(
+        FamilyJoinRequestsState(requests: [_pendingJoinRequest]),
+      );
+      var rosterRefreshes = 0;
+      await tester.pumpWidget(
+        _observatory(
+          entries: const [],
+          requestsController: requests,
+          refreshRoster: () async => rosterRefreshes += 1,
+        ),
+      );
+      await tester.pump();
 
-    requests.emit(const FamilyJoinRequestsState());
-    await tester.pump();
+      requests.emit(const FamilyJoinRequestsState());
+      await tester.pump();
+      await tester.pump(const Duration(hours: 1));
 
-    expect(rosterRefreshes, 1);
-    expect(find.text('Amina wants to join'), findsNothing);
-  });
+      expect(rosterRefreshes, 0);
+      expect(find.text('Amina wants to join'), findsNothing);
+    },
+  );
 
   testWidgets(
     'a recent approval polls until delayed membership activation appears',
@@ -659,12 +661,16 @@ void main() {
       );
       await tester.pump();
 
-      requests.emit(const FamilyJoinRequestsState());
+      requests.emit(
+        FamilyJoinRequestsState(
+          activationCandidateMemberIds: {_pendingJoinRequest.memberId},
+        ),
+      );
       await tester.pump();
       expect(rosterRefreshes, 1);
 
       activationIsVisible = true;
-      await tester.pump(const Duration(minutes: 1));
+      await tester.pump(const Duration(minutes: 5));
       await tester.pump();
 
       expect(rosterRefreshes, greaterThan(1));
@@ -715,22 +721,19 @@ void main() {
       );
       await tester.pump();
 
-      requests.emit(const FamilyJoinRequestsState());
+      requests.emit(
+        FamilyJoinRequestsState(
+          activationCandidateMemberIds: {_pendingJoinRequest.memberId},
+        ),
+      );
       await tester.pump();
       expect(rosterRefreshes, 1);
 
-      for (final delay in const [
-        Duration(seconds: 15),
-        Duration(seconds: 30),
-        Duration(minutes: 1),
-        Duration(minutes: 2),
-        Duration(minutes: 5),
-        Duration(minutes: 5),
-      ]) {
-        await tester.pump(delay);
+      for (var retry = 0; retry < 2; retry += 1) {
+        await tester.pump(const Duration(minutes: 5));
         await tester.pump();
       }
-      expect(rosterRefreshes, greaterThan(5));
+      expect(rosterRefreshes, 3);
 
       activationIsVisible = true;
       await tester.pump(const Duration(minutes: 5));
@@ -751,7 +754,7 @@ void main() {
     },
   );
 
-  testWidgets('activation backoff stays quiet and disposal cancels it', (
+  testWidgets('activation polling stays within twelve reads per hour', (
     tester,
   ) async {
     final requests = _ObservatoryJoinRequestsController(
@@ -767,28 +770,57 @@ void main() {
     );
     await tester.pump();
 
-    requests.emit(const FamilyJoinRequestsState());
+    requests.emit(
+      FamilyJoinRequestsState(
+        activationCandidateMemberIds: {_pendingJoinRequest.memberId},
+      ),
+    );
     await tester.pump();
-    for (final delay in const [
-      Duration(seconds: 15),
-      Duration(seconds: 30),
-      Duration(minutes: 1),
-      Duration(minutes: 2),
-      Duration(minutes: 5),
-      Duration(minutes: 5),
-    ]) {
-      await tester.pump(delay);
+    for (var retry = 0; retry < 11; retry += 1) {
+      await tester.pump(const Duration(minutes: 5));
       await tester.pump();
     }
 
-    expect(rosterRefreshes, greaterThan(5));
-    expect(rosterRefreshes, lessThan(12));
+    expect(rosterRefreshes, 12);
     final refreshesBeforeDisposal = rosterRefreshes;
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(hours: 1));
     expect(rosterRefreshes, refreshesBeforeDisposal);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('repeated activation candidate signals are deduplicated', (
+    tester,
+  ) async {
+    final requests = _ObservatoryJoinRequestsController(
+      FamilyJoinRequestsState(requests: [_pendingJoinRequest]),
+    );
+    var rosterRefreshes = 0;
+    await tester.pumpWidget(
+      _observatory(
+        entries: const [],
+        requestsController: requests,
+        refreshRoster: () async => rosterRefreshes += 1,
+      ),
+    );
+    await tester.pump();
+
+    final candidateState = FamilyJoinRequestsState(
+      activationCandidateMemberIds: {_pendingJoinRequest.memberId},
+    );
+    requests.emit(
+      FamilyJoinRequestsState(
+        activationCandidateMemberIds: {_pendingJoinRequest.memberId},
+      ),
+    );
+    await tester.pump();
+    expect(rosterRefreshes, 1);
+
+    requests.emit(candidateState);
+    await tester.pump();
+
+    expect(rosterRefreshes, 1);
   });
 
   testWidgets('gathering nudge prevents duplicate shares and reports failure', (
@@ -1362,7 +1394,9 @@ final class _ObservatoryJoinRequestsController
   @override
   Future<void> approve(String requestId) async {
     approveCalls += 1;
-    state = const FamilyJoinRequestsState();
+    state = FamilyJoinRequestsState(
+      activationCandidateMemberIds: {_pendingJoinRequest.memberId},
+    );
   }
 
   @override

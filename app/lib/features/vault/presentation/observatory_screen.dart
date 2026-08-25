@@ -125,13 +125,7 @@ final class ObservatoryScreen extends ConsumerStatefulWidget {
 
 final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     with WidgetsBindingObserver {
-  static const _activationRefreshBackoff = [
-    Duration(seconds: 15),
-    Duration(seconds: 30),
-    Duration(minutes: 1),
-    Duration(minutes: 2),
-    Duration(minutes: 5),
-  ];
+  static const _activationRefreshInterval = Duration(minutes: 5);
 
   bool _captureInFlight = false;
   bool _nudgeInFlight = false;
@@ -143,7 +137,6 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
   Timer? _activationRefreshTimer;
   String? _activationFamilyId;
   String? _activationAccountId;
-  var _activationRefreshDelayIndex = 0;
   int? _activationRefreshInFlightEpoch;
   var _activationEpoch = 0;
 
@@ -306,20 +299,18 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     FamilyJoinRequestsState? previous,
     FamilyJoinRequestsState next,
   ) {
-    if (previous == null) return;
-    final nextIds = next.requests.map((request) => request.requestId).toSet();
-    final disappeared = previous.requests.where(
-      (request) =>
-          request.familyId == widget.identity.familyId &&
-          !nextIds.contains(request.requestId),
+    final previousCandidates =
+        previous?.activationCandidateMemberIds ?? const <String>{};
+    final newCandidates = next.activationCandidateMemberIds.where(
+      (memberId) => !previousCandidates.contains(memberId),
     );
-    if (disappeared.isNotEmpty && next.failure == null) {
-      _beginActivationReconciliation(disappeared);
+    if (newCandidates.isNotEmpty) {
+      _beginActivationReconciliation(newCandidates);
     }
   }
 
   void _beginActivationReconciliation(
-    Iterable<PendingFamilyJoinRequest> disappeared,
+    Iterable<String> activationCandidateMemberIds,
   ) {
     final identityAccountId = widget.identity.accountId;
     final rosterAccountId = ref
@@ -341,15 +332,12 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
       _activationFamilyId = familyId;
       _activationAccountId = identityAccountId;
     }
-    _awaitingActivationMemberIds.addAll(
-      disappeared.map((request) => request.memberId),
-    );
+    _awaitingActivationMemberIds.addAll(activationCandidateMemberIds);
     _pruneActivatedMembers(ref.read(familyRosterProvider(familyId)).members);
     if (_awaitingActivationMemberIds.isEmpty) return;
 
     _activationRefreshTimer?.cancel();
     _activationRefreshTimer = null;
-    _activationRefreshDelayIndex = 0;
     final epoch = _activationEpoch;
     unawaited(_refreshAwaitingActivationRoster());
     _scheduleActivationRefresh(epoch);
@@ -362,16 +350,8 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
         !_activationScopeIsCurrent) {
       return;
     }
-    final lastIndex = _activationRefreshBackoff.length - 1;
-    final delayIndex = _activationRefreshDelayIndex > lastIndex
-        ? lastIndex
-        : _activationRefreshDelayIndex;
-    final delay = _activationRefreshBackoff[delayIndex];
-    if (_activationRefreshDelayIndex < lastIndex) {
-      _activationRefreshDelayIndex += 1;
-    }
     late final Timer timer;
-    timer = Timer(delay, () {
+    timer = Timer(_activationRefreshInterval, () {
       if (!identical(_activationRefreshTimer, timer)) return;
       _activationRefreshTimer = null;
       if (epoch != _activationEpoch) return;
@@ -396,8 +376,8 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     try {
       await _refreshRoster();
     } on Object {
-      // The roster state owns its retry affordance. This bounded refresh is an
-      // invalidation hint while the requester's phase-two install catches up.
+      // The roster state owns its retry affordance. This refresh is only an
+      // activation hint after an authoritative approved/installed decision.
     } finally {
       if (_activationRefreshInFlightEpoch == epoch) {
         _activationRefreshInFlightEpoch = null;
@@ -448,7 +428,6 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     _activationEpoch += 1;
     _activationRefreshTimer?.cancel();
     _activationRefreshTimer = null;
-    _activationRefreshDelayIndex = 0;
     _awaitingActivationMemberIds.clear();
     _activationFamilyId = null;
     _activationAccountId = null;

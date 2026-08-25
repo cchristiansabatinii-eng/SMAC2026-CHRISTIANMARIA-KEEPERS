@@ -36,6 +36,11 @@ void main() {
       expect(gateway.approvals.single.$1, _requestId);
       expect(fixture.state.requests, isEmpty);
       expect(fixture.state.failure, isNull);
+      expect(fixture.state.activationCandidateMemberIds, {_request.memberId});
+      expect(
+        () => fixture.state.activationCandidateMemberIds.add('other-member'),
+        throwsUnsupportedError,
+      );
       expect(codec.lastFamilyKey!.every((byte) => byte == 0), isTrue);
     },
   );
@@ -53,6 +58,37 @@ void main() {
 
       expect(fixture.state.failure, isNull);
       expect(fixture.state.requests, isEmpty);
+      expect(fixture.state.activationCandidateMemberIds, {_request.memberId});
+    },
+  );
+
+  test(
+    'authoritative decline never publishes an activation candidate',
+    () async {
+      final gateway = _JoinRequestsGateway([_request]);
+      final fixture = _Fixture(gateway: gateway);
+      addTearDown(fixture.dispose);
+      await fixture.settleInitialRefresh();
+
+      await fixture.controller.decline(_requestId);
+
+      expect(fixture.state.requests, isEmpty);
+      expect(fixture.state.activationCandidateMemberIds, isEmpty);
+    },
+  );
+
+  test(
+    'authoritative installed decision publishes an activation candidate',
+    () async {
+      final gateway = _JoinRequestsGateway([_request])
+        ..nextApproveDecision = _decision(FamilyJoinRequestState.installed);
+      final fixture = _Fixture(gateway: gateway);
+      addTearDown(fixture.dispose);
+      await fixture.settleInitialRefresh();
+
+      await fixture.controller.approve(_requestId);
+
+      expect(fixture.state.activationCandidateMemberIds, {_request.memberId});
     },
   );
 
@@ -293,6 +329,7 @@ final class _JoinRequestsGateway implements FamilyCodeJoinGateway {
   final invalidations = StreamController<void>.broadcast();
   List<PendingFamilyJoinRequest> pending;
   String? accountId = _accountId;
+  FamilyJoinDecision? nextApproveDecision;
   FamilyJoinDecision? nextDeclineDecision;
   Completer<void>? nextListGate;
   Completer<void>? nextListStarted;
@@ -331,7 +368,7 @@ final class _JoinRequestsGateway implements FamilyCodeJoinGateway {
   ) async {
     approvals.add((requestId, envelope));
     pending.removeWhere((request) => request.requestId == requestId);
-    return _decision(FamilyJoinRequestState.approved);
+    return nextApproveDecision ?? _decision(FamilyJoinRequestState.approved);
   }
 
   @override

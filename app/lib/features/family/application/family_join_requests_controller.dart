@@ -16,12 +16,14 @@ final class FamilyJoinRequestsState {
     this.isRefreshing = false,
     this.resolvingRequestId,
     this.failure,
+    this.activationCandidateMemberIds = const {},
   });
 
   final List<PendingFamilyJoinRequest> requests;
   final bool isRefreshing;
   final String? resolvingRequestId;
   final FamilyJoinFailure? failure;
+  final Set<String> activationCandidateMemberIds;
 }
 
 final familyJoinRequestsControllerProvider = NotifierProvider.autoDispose
@@ -95,6 +97,7 @@ base class FamilyJoinRequestsController
           requests: state.requests,
           isRefreshing: true,
           resolvingRequestId: _visibleResolvingRequestId,
+          activationCandidateMemberIds: state.activationCandidateMemberIds,
         );
         await _refresh(revision);
       }
@@ -116,6 +119,7 @@ base class FamilyJoinRequestsController
       state = FamilyJoinRequestsState(
         requests: List<PendingFamilyJoinRequest>.unmodifiable(requests),
         resolvingRequestId: _visibleResolvingRequestId,
+        activationCandidateMemberIds: state.activationCandidateMemberIds,
       );
     } on _AbortedOperation {
       return;
@@ -214,7 +218,15 @@ base class FamilyJoinRequestsController
       await _revalidateAuthority(authority, generation);
       _validateDecision(decision, currentRequest);
       if (!_isAlive(generation)) return;
-      _removeResolvedRequest(currentRequest.requestId);
+      final activationCandidateMemberId =
+          decision.state == FamilyJoinRequestState.approved ||
+              decision.state == FamilyJoinRequestState.installed
+          ? currentRequest.memberId
+          : null;
+      _removeResolvedRequest(
+        currentRequest.requestId,
+        activationCandidateMemberId: activationCandidateMemberId,
+      );
       if (decision.state == FamilyJoinRequestState.approved ||
           decision.state == FamilyJoinRequestState.installed) {
         ref.invalidate(familyRosterProvider(_familyId));
@@ -242,6 +254,7 @@ base class FamilyJoinRequestsController
           isRefreshing: state.isRefreshing,
           resolvingRequestId: _visibleResolvingRequestId,
           failure: state.failure,
+          activationCandidateMemberIds: state.activationCandidateMemberIds,
         );
       }
     }
@@ -388,13 +401,23 @@ base class FamilyJoinRequestsController
     return current;
   }
 
-  void _removeResolvedRequest(String requestId) {
+  void _removeResolvedRequest(
+    String requestId, {
+    String? activationCandidateMemberId,
+  }) {
+    final activationCandidates = activationCandidateMemberId == null
+        ? state.activationCandidateMemberIds
+        : Set<String>.unmodifiable({
+            ...state.activationCandidateMemberIds,
+            activationCandidateMemberId,
+          });
     state = FamilyJoinRequestsState(
       requests: List<PendingFamilyJoinRequest>.unmodifiable(
         state.requests.where((request) => request.requestId != requestId),
       ),
       isRefreshing: state.isRefreshing,
       resolvingRequestId: _visibleResolvingRequestId,
+      activationCandidateMemberIds: activationCandidates,
     );
   }
 
@@ -403,6 +426,7 @@ base class FamilyJoinRequestsController
       requests: state.requests,
       isRefreshing: state.isRefreshing,
       resolvingRequestId: _visibleResolvingRequestId,
+      activationCandidateMemberIds: state.activationCandidateMemberIds,
     );
   }
 
@@ -415,6 +439,7 @@ base class FamilyJoinRequestsController
       requests: hidesPriorAccountData ? const [] : state.requests,
       resolvingRequestId: _visibleResolvingRequestId,
       failure: failure,
+      activationCandidateMemberIds: state.activationCandidateMemberIds,
     );
   }
 
@@ -428,6 +453,7 @@ base class FamilyJoinRequestsController
       isRefreshing: state.isRefreshing,
       resolvingRequestId: _visibleResolvingRequestId,
       failure: failure,
+      activationCandidateMemberIds: state.activationCandidateMemberIds,
     );
   }
 
