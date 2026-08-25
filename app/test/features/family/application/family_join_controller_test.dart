@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/features/family/application/cloud_family_providers.dart';
@@ -16,8 +17,11 @@ import 'package:keepers/features/family/domain/family_code.dart';
 import 'package:keepers/features/family/domain/family_invitation.dart';
 import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
+import 'package:keepers/features/family/presentation/family_join_screen.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
+import 'package:keepers/features/onboarding/presentation/setup_screen.dart';
+import 'package:keepers/features/onboarding/presentation/startup_gate.dart';
 import 'package:keepers/storage/database_key_store.dart';
 import 'package:keepers/storage/database_providers.dart';
 
@@ -119,6 +123,180 @@ void main() {
       expect(fixture.state.phase, FamilyJoinPhase.preview);
     },
   );
+
+  testWidgets(
+    'cold email auth restart resumes the securely retained family code',
+    (tester) async {
+      final values = _MemorySecureValueStore();
+      final beforeRestart = _Fixture(authenticated: false, values: values);
+      await beforeRestart.controller.loadCode(_code);
+      await beforeRestart.controller.requestEmailOtp('Mariam@example.com');
+      beforeRestart.dispose();
+
+      final afterRestart = _Fixture(values: values);
+      addTearDown(afterRestart.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: afterRestart.container,
+          child: const MaterialApp(home: StartupGate()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FamilyJoinScreen), findsOneWidget);
+      expect(afterRestart.gateway.previewedCodes, [_code]);
+      expect(afterRestart.state.phase, FamilyJoinPhase.preview);
+    },
+  );
+
+  testWidgets('a changed code replaces the retained restart target', (
+    tester,
+  ) async {
+    final values = _MemorySecureValueStore();
+    final beforeRestart = _Fixture(authenticated: false, values: values);
+    await beforeRestart.controller.loadCode(_code);
+    await beforeRestart.controller.requestEmailOtp('Mariam@example.com');
+    await beforeRestart.controller.loadCode(_otherCode);
+    beforeRestart.dispose();
+
+    final afterRestart = _Fixture(values: values);
+    addTearDown(afterRestart.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: afterRestart.container,
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(afterRestart.gateway.previewedCodes, [_otherCode]);
+    expect(afterRestart.state.phase, FamilyJoinPhase.preview);
+  });
+
+  testWidgets('a retained new code wins over an older terminal join request', (
+    tester,
+  ) async {
+    final values = _MemorySecureValueStore();
+    final beforeRestart = _Fixture(authenticated: false, values: values);
+    await beforeRestart.controller.loadCode(_otherCode);
+    beforeRestart.dispose();
+
+    final afterRestart = _Fixture(values: values);
+    afterRestart.gateway.ownRequest = _request(
+      state: FamilyJoinRequestState.declined,
+      memberId: _memberId,
+      publicKey: _publicKey,
+    );
+    addTearDown(afterRestart.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: afterRestart.container,
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(FamilyJoinScreen), findsOneWidget);
+    expect(afterRestart.gateway.previewedCodes, [_otherCode]);
+    expect(afterRestart.state.phase, FamilyJoinPhase.preview);
+  });
+
+  testWidgets('cancelled join does not reopen a retained code after restart', (
+    tester,
+  ) async {
+    final values = _MemorySecureValueStore();
+    final beforeRestart = _Fixture(values: values);
+    await beforeRestart.controller.loadCode(_code);
+    await beforeRestart.controller.requestJoin(beforeRestart.profile());
+    beforeRestart.gateway.cancelResult = beforeRestart.cancelledRequest;
+    await beforeRestart.controller.cancel();
+    beforeRestart.dispose();
+
+    final afterRestart = _Fixture(values: values);
+    addTearDown(afterRestart.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: afterRestart.container,
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SetupScreen), findsOneWidget);
+    expect(find.byType(FamilyJoinScreen), findsNothing);
+    expect(afterRestart.gateway.previewedCodes, isEmpty);
+  });
+
+  testWidgets('completed join does not reopen a retained code after restart', (
+    tester,
+  ) async {
+    final values = _MemorySecureValueStore();
+    final beforeRestart = _Fixture(values: values);
+    await beforeRestart.controller.loadCode(_code);
+    await beforeRestart.controller.requestJoin(beforeRestart.profile());
+    beforeRestart.gateway.ownRequest = beforeRestart.approvedRequest;
+    await beforeRestart.controller.refreshStatus();
+    expect(beforeRestart.state.phase, FamilyJoinPhase.complete);
+    beforeRestart.dispose();
+
+    final afterRestart = _Fixture(values: values);
+    addTearDown(afterRestart.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: afterRestart.container,
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SetupScreen), findsOneWidget);
+    expect(find.byType(FamilyJoinScreen), findsNothing);
+    expect(afterRestart.gateway.previewedCodes, isEmpty);
+  });
+
+  testWidgets('leaving a restored code returns to setup without reopening it', (
+    tester,
+  ) async {
+    final values = _MemorySecureValueStore();
+    final beforeRestart = _Fixture(authenticated: false, values: values);
+    await beforeRestart.controller.loadCode(_code);
+    await beforeRestart.controller.requestEmailOtp('Mariam@example.com');
+    beforeRestart.dispose();
+
+    final afterRestart = _Fixture(values: values);
+    addTearDown(afterRestart.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: afterRestart.container,
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(FamilyJoinScreen), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('leave-family-join')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SetupScreen), findsOneWidget);
+    expect(find.byType(FamilyJoinScreen), findsNothing);
+  });
+
+  test('secure-code write failure keeps the entered code retryable', () async {
+    final values = _MemorySecureValueStore(writeFailures: 1);
+    final fixture = _Fixture(values: values);
+    addTearDown(fixture.dispose);
+
+    await fixture.controller.loadCode(_code);
+    expect(
+      fixture.state.failure?.code,
+      FamilyJoinFailureCode.localPersistenceFailed,
+    );
+
+    await fixture.controller.retry();
+
+    expect(fixture.gateway.previewedCodes, [_code]);
+    expect(fixture.state.phase, FamilyJoinPhase.preview);
+  });
 
   test('signed-in account change resets and rebinds the active code', () async {
     final generatedIds = <String>[_memberId, _otherMemberId].iterator;
@@ -650,13 +828,22 @@ final class _Codec implements FamilyJoinEnvelopeCodec {
 }
 
 final class _MemorySecureValueStore implements SecureValueStore {
+  _MemorySecureValueStore({this.writeFailures = 0});
+
   final values = <String, String>{};
+  int writeFailures;
   @override
   Future<void> delete(String key) async => values.remove(key);
   @override
   Future<String?> read(String key) async => values[key];
   @override
-  Future<void> write(String key, String value) async => values[key] = value;
+  Future<void> write(String key, String value) async {
+    if (writeFailures > 0) {
+      writeFailures -= 1;
+      throw StateError('secure write failed');
+    }
+    values[key] = value;
+  }
 }
 
 OwnFamilyJoinRequest _request({

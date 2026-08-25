@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keepers/features/family/application/cloud_family_providers.dart';
 import 'package:keepers/features/family/application/family_join_controller.dart';
+import 'package:keepers/features/family/application/family_join_crypto_providers.dart';
 import 'package:keepers/features/family/application/pending_invite_completion_controller.dart';
 import 'package:keepers/features/family/application/pending_join_completion_controller.dart';
+import 'package:keepers/features/family/domain/family_code.dart';
 import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/features/family/presentation/family_join_screen.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
@@ -13,12 +15,13 @@ import 'package:keepers/features/vault/presentation/observatory_screen.dart';
 import 'package:keepers/storage/database_providers.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 
-enum StartupDestination { setup, resumeJoin, observatory }
+enum StartupDestination { setup, resumeJoin, resumeCode, observatory }
 
 final class StartupResolution {
   const StartupResolution._({
     required this.destination,
     this.identity,
+    this.code,
     this.statusMessage,
   });
 
@@ -31,11 +34,15 @@ final class StartupResolution {
   const StartupResolution.resumeJoin()
     : this._(destination: StartupDestination.resumeJoin);
 
+  const StartupResolution.resumeCode(FamilyCode code)
+    : this._(destination: StartupDestination.resumeCode, code: code);
+
   const StartupResolution.observatory(LocalIdentity identity)
     : this._(destination: StartupDestination.observatory, identity: identity);
 
   final StartupDestination destination;
   final LocalIdentity? identity;
+  final FamilyCode? code;
   final String? statusMessage;
 }
 
@@ -109,6 +116,11 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
         onCompleted: _refreshAfterJoin,
         onAbandoned: _refreshAfterJoin,
       ),
+      StartupDestination.resumeCode => FamilyJoinScreen.forCode(
+        resolution.code!,
+        onCompleted: _refreshAfterJoin,
+        onAbandoned: _refreshAfterJoin,
+      ),
       StartupDestination.setup => SetupScreen(
         statusMessage: resolution.statusMessage,
       ),
@@ -166,13 +178,19 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       }
 
       final gateway = ref.read(familyCodeJoinGatewayProvider);
+      final pendingCode = await ref.read(pendingFamilyCodeStoreProvider).find();
+      if (!mounted || generation != _bootGeneration) return;
       StartupResolution resolution;
       if (!gateway.isConfigured || gateway.authenticatedAccountId == null) {
-        resolution = const StartupResolution.setup();
+        resolution = pendingCode == null
+            ? const StartupResolution.setup()
+            : StartupResolution.resumeCode(pendingCode);
       } else {
         final own = await gateway.getOwnJoinRequest();
         if (!mounted || generation != _bootGeneration) return;
-        resolution = _resolutionFor(own);
+        resolution = pendingCode != null && _mayResumeNewCode(own)
+            ? StartupResolution.resumeCode(pendingCode)
+            : _resolutionFor(own);
       }
       setState(() {
         _resolution = resolution;
@@ -207,6 +225,12 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       ),
     };
   }
+
+  static bool _mayResumeNewCode(OwnFamilyJoinRequest? own) =>
+      own == null ||
+      own.state == FamilyJoinRequestState.declined ||
+      own.state == FamilyJoinRequestState.cancelled ||
+      own.state == FamilyJoinRequestState.expired;
 
   Widget _observatory(LocalIdentity identity) {
     _establishedIdentity = identity;

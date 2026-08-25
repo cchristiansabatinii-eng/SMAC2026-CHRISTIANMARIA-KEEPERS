@@ -149,6 +149,15 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
       _lastProfile = null;
       _installedLocally = false;
     }
+    try {
+      await ref.read(pendingFamilyCodeStoreProvider).remember(code);
+    } on Object {
+      _fail(
+        FamilyJoinFailureCode.localPersistenceFailed,
+        FamilyJoinRetryPoint.loadCode,
+      );
+      return;
+    }
     state = _next(phase: FamilyJoinPhase.checking, clearFailure: true);
 
     if (!gateway.isConfigured) {
@@ -443,6 +452,24 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     }
   });
 
+  Future<bool> abandon() async {
+    final pendingCodes = ref.read(pendingFamilyCodeStoreProvider);
+    final running = _inFlight;
+    if (running != null) await running;
+    try {
+      await pendingCodes.forget();
+      return true;
+    } on Object {
+      if (ref.mounted) {
+        _fail(
+          FamilyJoinFailureCode.localPersistenceFailed,
+          FamilyJoinRetryPoint.loadCode,
+        );
+      }
+      return false;
+    }
+  }
+
   Future<void> onResumed() {
     if (_code == null &&
         _request == null &&
@@ -620,6 +647,13 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
       throw const FamilyJoinFailure(FamilyJoinFailureCode.signedOut);
     }
     _validateRequestIdentity(request, accountId: accountId);
+    try {
+      await ref.read(pendingFamilyCodeStoreProvider).forget();
+    } on Object {
+      throw const FamilyJoinFailure(
+        FamilyJoinFailureCode.localPersistenceFailed,
+      );
+    }
     _request = request;
     _preview = FamilyJoinPreview(
       familyId: request.familyId,

@@ -4,6 +4,7 @@ import 'package:keepers/features/family/data/family_code_cache_repository.dart';
 import 'package:keepers/features/family/data/family_code_codec.dart';
 import 'package:keepers/features/family/data/family_join_envelope_codec.dart';
 import 'package:keepers/features/family/data/joining_key_store.dart';
+import 'package:keepers/features/family/data/pending_family_code_store.dart';
 import 'package:keepers/features/family/data/pending_join_completion_repository.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/storage/database_providers.dart';
@@ -18,6 +19,10 @@ final familyCodeCacheRepositoryProvider = Provider<FamilyCodeCacheRepository>(
 
 final joiningKeyStoreProvider = Provider<JoiningKeyStore>(
   (ref) => SecureJoiningKeyStore(ref.watch(secureValueStoreProvider)),
+);
+
+final pendingFamilyCodeStoreProvider = Provider<PendingFamilyCodeStore>(
+  (ref) => SecurePendingFamilyCodeStore(ref.watch(secureValueStoreProvider)),
 );
 
 final familyJoinEnvelopeCodecProvider = Provider<FamilyJoinEnvelopeCodec>(

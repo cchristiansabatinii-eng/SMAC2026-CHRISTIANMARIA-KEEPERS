@@ -63,6 +63,8 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
   AvatarCategory _avatarCategory = AvatarCategory.head;
   String? _localMessage;
   var _completionHandled = false;
+  var _abandoning = false;
+  var _allowPop = false;
 
   @override
   void initState() {
@@ -139,9 +141,9 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
         (!widget.resumePendingRequest && !_hasUnresolvedJoin(state));
 
     return PopScope<void>(
-      canPop: canAbandon && widget.onAbandoned == null,
+      canPop: _allowPop && canAbandon && widget.onAbandoned == null,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && canAbandon) widget.onAbandoned?.call();
+        if (!didPop && canAbandon) unawaited(_abandon());
       },
       child: _frame(context, _content(state), showBack: canAbandon),
     );
@@ -661,12 +663,23 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
     }
   }
 
-  void _abandon() {
+  Future<void> _abandon() async {
+    if (_abandoning) return;
+    _abandoning = true;
+    final cleared = await ref
+        .read(familyJoinControllerProvider.notifier)
+        .abandon();
+    if (!mounted) return;
+    _abandoning = false;
+    if (!cleared) return;
     final callback = widget.onAbandoned;
     if (callback != null) {
       callback();
     } else {
-      Navigator.of(context).maybePop();
+      setState(() => _allowPop = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).maybePop();
+      });
     }
   }
 }
