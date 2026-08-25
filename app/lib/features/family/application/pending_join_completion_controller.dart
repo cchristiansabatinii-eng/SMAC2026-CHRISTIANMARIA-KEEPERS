@@ -88,17 +88,6 @@ final class PendingJoinCompletionController
       state = const PendingJoinCompletionState(
         phase: PendingJoinCompletionPhase.completing,
       );
-      final decision = await gateway.completeJoinRequest(pending.requestId);
-      if (!_accountIsCurrent(generation, accountId)) {
-        _fail(FamilyJoinFailureCode.signedOut);
-        return;
-      }
-      if (decision.requestId != pending.requestId ||
-          decision.familyId != pending.familyId ||
-          decision.state != FamilyJoinRequestState.installed) {
-        throw const FamilyJoinFailure(FamilyJoinFailureCode.unknown);
-      }
-
       final joiningKeys = ref.read(joiningKeyStoreProvider);
       final joiningKey = await joiningKeys.find(
         accountId: pending.accountId,
@@ -112,25 +101,54 @@ final class PendingJoinCompletionController
         accountId: pending.accountId,
         memberId: pending.memberId,
       );
-      if (joiningKey == null || joiningKey.reference != expectedReference) {
+      if (joiningKey != null && joiningKey.reference != expectedReference) {
         throw const FamilyJoinFailure(FamilyJoinFailureCode.invalidJoinKey);
       }
 
-      await joiningKeys.deleteExact(joiningKey);
-      if (!_accountIsCurrent(generation, accountId)) {
-        _fail(FamilyJoinFailureCode.signedOut);
-        return;
-      }
-      final remainingJoiningKey = await joiningKeys.find(
-        accountId: pending.accountId,
-        memberId: pending.memberId,
-      );
-      if (!_accountIsCurrent(generation, accountId)) {
-        _fail(FamilyJoinFailureCode.signedOut);
-        return;
-      }
-      if (remainingJoiningKey != null) {
-        throw const FamilyJoinFailure(FamilyJoinFailureCode.invalidJoinKey);
+      if (joiningKey == null) {
+        final ownRequest = await gateway.getOwnJoinRequest();
+        if (!_accountIsCurrent(generation, accountId)) {
+          _fail(FamilyJoinFailureCode.signedOut);
+          return;
+        }
+        final isExactInstalledRequest =
+            ownRequest != null &&
+            ownRequest.state == FamilyJoinRequestState.installed &&
+            ownRequest.requestId == pending.requestId &&
+            ownRequest.familyId == pending.familyId &&
+            ownRequest.memberId == pending.memberId &&
+            ownRequest.requesterAccountId == pending.accountId;
+        if (!isExactInstalledRequest) {
+          throw const FamilyJoinFailure(FamilyJoinFailureCode.invalidJoinKey);
+        }
+      } else {
+        final decision = await gateway.completeJoinRequest(pending.requestId);
+        if (!_accountIsCurrent(generation, accountId)) {
+          _fail(FamilyJoinFailureCode.signedOut);
+          return;
+        }
+        if (decision.requestId != pending.requestId ||
+            decision.familyId != pending.familyId ||
+            decision.state != FamilyJoinRequestState.installed) {
+          throw const FamilyJoinFailure(FamilyJoinFailureCode.unknown);
+        }
+
+        await joiningKeys.deleteExact(joiningKey);
+        if (!_accountIsCurrent(generation, accountId)) {
+          _fail(FamilyJoinFailureCode.signedOut);
+          return;
+        }
+        final remainingJoiningKey = await joiningKeys.find(
+          accountId: pending.accountId,
+          memberId: pending.memberId,
+        );
+        if (!_accountIsCurrent(generation, accountId)) {
+          _fail(FamilyJoinFailureCode.signedOut);
+          return;
+        }
+        if (remainingJoiningKey != null) {
+          throw const FamilyJoinFailure(FamilyJoinFailureCode.invalidJoinKey);
+        }
       }
       await ref.read(pendingJoinCompletionDeleteExactProvider)(
         database,
