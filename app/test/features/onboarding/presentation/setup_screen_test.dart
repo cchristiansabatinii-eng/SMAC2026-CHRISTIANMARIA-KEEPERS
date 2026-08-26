@@ -169,6 +169,7 @@ void main() {
             return null;
           }),
           familyCodeJoinGatewayProvider.overrideWithValue(gateway),
+          secureValueStoreProvider.overrideWithValue(_MemorySecureValueStore()),
         ],
         child: const MaterialApp(home: StartupGate()),
       ),
@@ -194,6 +195,7 @@ void main() {
           ),
           localIdentityProvider.overrideWith((ref) async => null),
           familyCodeJoinGatewayProvider.overrideWithValue(gateway),
+          secureValueStoreProvider.overrideWithValue(_MemorySecureValueStore()),
         ],
         child: const MaterialApp(home: StartupGate()),
       ),
@@ -302,6 +304,9 @@ void main() {
             ),
             localIdentityProvider.overrideWith((ref) async => null),
             familyCodeJoinGatewayProvider.overrideWithValue(gateway),
+            secureValueStoreProvider.overrideWithValue(
+              _MemorySecureValueStore(),
+            ),
           ],
           child: const MaterialApp(home: StartupGate()),
         ),
@@ -345,6 +350,9 @@ void main() {
             ),
             localIdentityProvider.overrideWith((ref) async => null),
             familyCodeJoinGatewayProvider.overrideWithValue(gateway),
+            secureValueStoreProvider.overrideWithValue(
+              _MemorySecureValueStore(),
+            ),
           ],
           child: const MaterialApp(home: StartupGate()),
         ),

@@ -178,7 +178,9 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       }
 
       final gateway = ref.read(familyCodeJoinGatewayProvider);
-      final pendingCode = await ref.read(pendingFamilyCodeStoreProvider).find();
+      final pendingCode = gateway.isConfigured
+          ? await ref.read(pendingFamilyCodeStoreProvider).find()
+          : null;
       if (!mounted || generation != _bootGeneration) return;
       StartupResolution resolution;
       if (!gateway.isConfigured || gateway.authenticatedAccountId == null) {

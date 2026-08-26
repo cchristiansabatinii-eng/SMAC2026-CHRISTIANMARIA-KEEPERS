@@ -130,7 +130,7 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
           if (callback != null) {
             callback();
           } else {
-            Navigator.of(context).maybePop();
+            _allowAndPop();
           }
         });
       }
@@ -676,11 +676,16 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
     if (callback != null) {
       callback();
     } else {
-      setState(() => _allowPop = true);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.of(context).maybePop();
-      });
+      _allowAndPop();
     }
+  }
+
+  void _allowAndPop() {
+    if (!mounted) return;
+    setState(() => _allowPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).maybePop();
+    });
   }
 }
 
