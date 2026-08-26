@@ -17,59 +17,112 @@ The mobile client is generated from Flutter stable and targets Android and iOS.
 - Mobile sandboxing and app-private roots exclude other principals. Hostile or non-cooperating same-euid writers are outside this contract: POSIX discretionary permissions cannot provide mandatory exclusion from the owning identity.
 - Physical Android and iOS acceptance remains part of the Phase 0 Task 9 device matrix; CI runs the same production persistence smoke on an Android emulator and iOS simulator.
 
-## Supabase family invitations
+## Supabase family membership
 
-Cloud configuration is optional. Without it, ordinary capture and browsing remain available against the encrypted local database; only Invite and Join report that family invitations are unavailable. A configured build receives exactly these client-visible Dart defines:
+Cloud configuration is optional for local capture and browsing. Without it, the
+encrypted local memory experience remains available, while family-code display,
+Join, approval, and roster synchronization report that cloud membership is not
+configured.
 
-- `KEEPERS_SUPABASE_URL`: the project's HTTPS API URL.
-- `KEEPERS_SUPABASE_PUBLISHABLE_KEY`: a Supabase publishable key, or a legacy anon JWT while that project still uses one.
+### Local configuration and exact build commands
 
-Both values must be present and valid together. They authorize no privileged operation by themselves: the signed-in JWT, row-level security, and the migration's RPCs enforce access. Never put a Supabase service-role key in Dart defines, source control, a mobile build, CI logs, or documentation.
+Keep the two client-visible Dart defines in the ignored file
+`app/config/supabase.local.json`:
 
-From the repository root, link the intended project and apply the checked-in migration:
+- `KEEPERS_SUPABASE_URL`
+- `KEEPERS_SUPABASE_PUBLISHABLE_KEY`
+
+Do not commit or print that file. Both values must be present and valid together.
+They are mobile client configuration, not administrative credentials; the
+authenticated session, row-level security, and narrow RPCs enforce access.
+Never place a service-role key in this file, Dart defines, source control, a
+mobile build, logs, screenshots, or documentation.
+
+From the `app` directory, run the configured client with:
 
 ```powershell
-supabase link --project-ref $env:KEEPERS_SUPABASE_PROJECT_REF
-supabase db push
+flutter run --dart-define-from-file=config/supabase.local.json
 ```
 
-Then run the configured client from this `app` directory:
+Build the Android demo APK with:
 
 ```powershell
-flutter run --dart-define=KEEPERS_SUPABASE_URL=$env:KEEPERS_SUPABASE_URL --dart-define=KEEPERS_SUPABASE_PUBLISHABLE_KEY=$env:KEEPERS_SUPABASE_PUBLISHABLE_KEY
+flutter build apk --debug --dart-define-from-file=config/supabase.local.json
 ```
 
-`supabase db push` must apply `supabase/migrations/202609050001_family_invitations.sql`. Verify the migration and its concurrency contract locally from the repository root:
+The eventual Play-distribution command is:
 
 ```powershell
-supabase start
-supabase db reset --local
-supabase test db --local
+flutter build appbundle --release --dart-define-from-file=config/supabase.local.json
 ```
 
-`supabase/config.toml` is nonsecret project configuration: PostgreSQL 17, migrations enabled, and seed execution disabled. The Supabase project's email template is separate server configuration and must render `{{ .Token }}` so sign-in sends the six-digit email OTP expected by Keepers. A magic-link-only template does not satisfy the flow. See `../supabase/README.md` for the RPC, RLS, expiry, replay, and race-verification contract.
+The current Android `release` build type still uses the debug signing key. A
+release-mode artifact may therefore be useful for local testing, but it is not a
+store-ready or verified-App-Link artifact. Configure and protect the real release
+keystore first, then rebuild and use that certificate's SHA-256 fingerprint for
+the production association file.
 
-### Invitation link and privacy contract
+### Permanent family-code flow
 
-The only accepted invitation URI is:
+- A family receives one eight-symbol code, displayed as `XXXX-XXXX`, only after
+  authenticated cloud bootstrap returns the authoritative record.
+- Every active family member can view and share the code or
+  `https://join.keepers.app/f/<code>` link. Only the creator can regenerate it.
+- A signed-in account with no family enters the code or follows the link, sees
+  only the family name and public avatar preview, and submits a join request.
+- Any active member can approve or decline. The first valid decision wins.
+- Approval encrypts the family key to a requester-owned X25519 joining key. The
+  requester installs keys, roster, identity, and a durable recovery marker
+  locally before the completion RPC activates membership.
+- Pending requests expire after seven days. The first release permits one family
+  membership per account.
 
-```text
-keepers://join?v=1&i=<invite-id>&t=<token>&s=<wrapping-secret>
-```
+Manual code entry is the reliable release path and does not depend on control of
+`join.keepers.app`. The HTTPS link opens natively only after Android Digital Asset
+Links or iOS Universal Links are published and verified with the real production
+signing identities. Until then, a copied code can still be entered manually.
 
-Android declares only scheme `keepers` plus host `join` with `VIEW`, `DEFAULT`, and `BROWSABLE`; iOS declares the `keepers` URL scheme. Flutter's automatic deep-link handler is disabled on both platforms so the app's one-shot coordinator owns cold-start and warm-link delivery. This sprint intentionally does not claim universal links, Android App Links, domain verification, associated domains, wildcards, or web fallback.
+Email is used only for Supabase account authentication and recovery; family
+invitations are no longer addressed or delivered by email. The legacy
+recipient-email RPCs remain deployed temporarily for already-issued builds but
+new clients do not create them.
 
-Treat the complete URI as a bearer capability. The wrapping secret remains on the sender/recipient devices and is never sent to Supabase. Do not log, persist in route restoration, copy to analytics or diagnostics, expose through a clipboard helper, or include the link in screenshots. The Invite screen hands it directly to the operating-system share sheet for a named recipient.
+### Privacy, offline behavior, and recovery
 
-Supabase stores only account identity, family roster metadata, invitation state, hashes of the recipient email and token, and the encrypted family-key envelope. It must never receive a plaintext family key or member key, memory payload, journal, reveal/kept content, transcript, or media. A recipient's private member key is generated locally after acceptance.
+The plaintext family code and full family link are transient user-invoked inputs.
+Do not write them to analytics, crash reports, API/proxy logs, diagnostics,
+screenshots, or route restoration. Supabase stores code hashes, encrypted display
+material, public keys, ciphertext, request state, account identity, and roster
+metadata. It must never receive memory payloads, plaintext family/member keys,
+joining private keys, approval shared secrets, or decrypted envelopes.
 
-Only the original family owner may create or revoke invitations. Invitations are bound to one normalized email address, expire after 24 hours, are one-time and revocable before acceptance, and accept idempotently only for the same claimant. A device already joined to another family fails without changing local or remote membership.
+The SQLCipher roster is the durable offline cache. A failed refresh keeps cached
+members visible. Realtime is only an invalidation signal; resume and reconnect
+perform authoritative RPC reads. If completion is uncertain, the exact encrypted
+local marker is retained and startup retries completion without reinstalling or
+creating another membership.
 
-### Offline and release acceptance
+### Backend and release acceptance
 
-The SQLCipher roster is the canonical offline cache. A failed refresh keeps cached members visible; a successful remote refresh upserts the returned roster before publishing it. Membership is append-only in this sprint because removal and tombstone sync are out of scope. Invite and Join show honest configuration or network failures and never claim completion while offline.
+The backend must deploy before the client, in this order:
 
-Unit, widget, fake-gateway integration, and static platform tests are necessary but are not live-backend proof. Release certification also requires one migrated Supabase project and two physical devices built with the same URL and publishable key. The matrix must demonstrate owner invite/share, recipient email OTP and binding, acceptance, the same persisted roster on both phones after restart, unused-invite revocation, expiry/replay/wrong-email rejection, offline cached-roster behavior, and the absence of memory plaintext or plaintext keys in Supabase. Until evidence is recorded for that matrix—including live pgTAP/race execution, live OTP/RPC behavior, physical two-device behavior, and iOS runtime/accessibility review—those checks remain explicit gaps rather than passed checks.
+1. `supabase/migrations/202609050001_family_invitations.sql`
+2. `supabase/migrations/202609070001_family_code_join_requests.sql`
+3. `supabase/migrations/202609070002_membership_join_serialization.sql`
+4. `supabase/functions/keepers-auth-bridge`, for account-email callback handoff
+5. purge scheduling and an external per-IP throttle
+6. the configured mobile build
+
+See `../supabase/README.md` for exact deployment, retention, link-association,
+and database verification steps.
+
+Unit/widget tests and static platform checks are not live release evidence. All
+three hosted migrations and the mobile auth callback bridge were deployed and
+verified on 2026-09-07. There is still no recorded PostgreSQL concurrency run,
+production IP throttle, purge job, release-signing certificate, published domain
+association, two-physical-phone family-code run, iOS runtime/accessibility pass,
+or release proximity source. Manual-code joining is the reliable demo path; the
+verified-link/store release remains gated by the missing external evidence.
 
 ## Commands
 

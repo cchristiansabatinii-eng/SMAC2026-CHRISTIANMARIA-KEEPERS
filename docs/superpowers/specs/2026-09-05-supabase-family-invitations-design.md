@@ -37,7 +37,8 @@ The feature is complete only when:
 
 ## Deliberate first-release constraints
 
-- Email one-time-password authentication is the only account method.
+- Email authentication is the only account method. A Supabase sign-in link and
+  six-digit email token are equivalent routes to the same account session.
 - The original family creator is the owner and is the only person allowed to
   create or revoke invitations.
 - An invitation targets one normalized email address, expires after 24 hours,
@@ -62,9 +63,10 @@ The feature is complete only when:
 2. If Supabase is not configured, the screen explains that cloud invitations
    are unavailable in this build and exposes a retry after configuration. It
    never claims that an invitation was sent.
-3. If unauthenticated, the owner enters an email address and requests a six-digit
-   email code. The stable button changes to a busy state without moving.
-4. The owner enters the code. On success, Keepers links the existing local family
+3. If unauthenticated, the owner enters an email address and requests an email.
+   The stable button changes to a busy state without moving.
+4. The owner opens the sign-in link routed through `keepers://auth-callback` or
+   enters the six-digit code. On success, Keepers links the existing local family
    and current local member to that account as the family owner.
 5. The owner enters the recipient's email and selects `CREATE INVITATION`.
 6. Keepers generates an invite ID, bearer token, and wrapping secret locally.
@@ -82,8 +84,9 @@ The feature is complete only when:
    through cold start, warm start, authentication, and temporary navigation.
 2. If this installation already belongs to another family, Keepers stops before
    any mutation and explains that family switching is not yet supported.
-3. The recipient authenticates by email OTP. Supabase verifies that the account's
-   normalized email hash matches the invitation's recipient hash.
+3. The recipient authenticates by opening the Supabase email sign-in link or by
+   entering its six-digit code. Supabase verifies that the account's normalized
+   email hash matches the invitation's recipient hash.
 4. Keepers previews the family name, owner name, and expiry without exposing the
    encrypted key or token in logs or visible copy.
 5. The recipient enters their display name and selects a Humation avatar.
@@ -306,4 +309,3 @@ configured Supabase project: invite, share, authenticate as recipient, accept,
 observe the same roster on both phones, restart both apps, revoke an unused
 invite, reject expiry/replay/wrong email, and confirm no memory payload or
 plaintext family key is present in Supabase.
-

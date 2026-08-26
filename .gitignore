@@ -6,3 +6,18 @@
 # Supabase CLI runtime state. Migrations and database tests stay tracked.
 supabase/.branches/
 supabase/.temp/
+
+# Local Flutter build configuration. Never commit live project keys.
+/app/config/supabase.local.json
+
+# Local design-QA captures and generated audit output.
+/after-*.png
+/before-*.png
+/design-qa-*.jpg
+/premium-audit*.json
+/outputs/
+/app/after-*.png
+/app/before-*.png
+/app/design-qa-*.jpg
+/app/premium-audit*.json
+/app/outputs/

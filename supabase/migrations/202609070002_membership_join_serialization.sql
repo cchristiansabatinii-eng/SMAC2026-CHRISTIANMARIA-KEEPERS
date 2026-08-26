@@ -101,4 +101,3 @@ on public.family_memberships;
 create trigger guard_family_membership_join_request
 before insert on public.family_memberships
 for each row execute function private.guard_family_membership_join_request();
-

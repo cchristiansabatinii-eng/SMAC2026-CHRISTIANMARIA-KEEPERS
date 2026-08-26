@@ -244,6 +244,35 @@ Resolved by giving every enabled destination a solid black icon and replacing th
 
 final result: passed
 
+## Home gathering and Weekly controls
+
+### Evidence
+
+- Source visual truth: `C:\Users\Chris\Downloads\ChatGPT Image Sep 6, 2026, 09_10_19 PM.png` (1820 × 864 pixels)
+- Installed implementation: `after-home-buttons-pass2.png` (1080 × 2400 physical pixels)
+- First focused comparison: `design-qa-home-buttons-pass1.jpg` (1820 × 1728 pixels)
+- Final focused comparison: `design-qa-home-buttons-pass2.jpg` (1820 × 1728 pixels)
+- Viewport: Android emulator `emulator-5554`, approximately 411 × 914 logical pixels at 2.625 density
+- Normalization: the 1080 × 513 implementation control crop was resized to the source's 1820 × 864 pixels, then source and implementation were stacked in one comparison image.
+- State: current member only; zero of five Weekly photos; locked Weekly experience; separately labeled rehearsal available below the compared control region.
+
+### Review
+
+- Fonts and typography: the supplied and installed controls use the same bundled Modern Society face, centered label treatment, weight, tracking, and single-line wrapping. Natural-case semantics remain unchanged.
+- Spacing and layout rhythm: the gathering capsule preserves the source's proportions and centered placement. The Weekly field now uses a 16-logical-pixel gutter, matching the source's near-edge width while retaining the established 12-pixel gap and fixed navigation clearance.
+- Colors and visual tokens: both locked controls use opaque `aura-ivory` with the new sampled warm-neutral `home-action-line` (`#D4BBAC`). Gold is reserved for the ready key, border, and restrained readiness aura.
+- Image and icon fidelity: the overlapping pastel presence marks and Material lock retain their existing product-owned assets and geometry. No shadow, blur, gradient, or substitute artwork was introduced.
+- Copy and behavior: Invite/nudge behavior, the five-photo gate, three-quarter family-presence gate, locked semantics, ready key swap, glow, and real open action remain intact. The progress bar and preview control sit outside the supplied crop and remain because they are existing product requirements.
+- Accessibility and responsiveness: the capsule and Weekly field remain semantic buttons, disabled state removes the open action, ready state exposes one accessible action, reduced motion remains honored, and the 390 × 844 widget layout stays above the bottom navigation.
+
+### Comparison history
+
+- Pass 1 found one P2 spacing mismatch: the installed Weekly field retained a 28-pixel gutter and appeared visibly narrower than the supplied near-edge panel. Its warm-neutral color, typography, radii, double border, and medallion proportions otherwise matched.
+- The Weekly gutter was reduced to 16 pixels and protected by a 390-pixel viewport regression test.
+- Pass 2 confirmed the panel width, capsule geometry, warm-neutral line work, medallion scale, and ivory surfaces align with the source. No actionable P0, P1, or P2 finding remains.
+
+final result: passed
+
 ## Unified heading scale
 
 ### Evidence
@@ -383,41 +412,130 @@ final result: passed
 
 final result: passed
 
-## Supabase family invitations and real-roster supersession
+## Permanent family-code joining and real-roster supersession
 
-### Current data contract
+### Current data and invitation contract
 
-This entry supersedes any use of the historical populated-family captures above as runtime data evidence. References to the staged Rahman roster, Noura or Mariam being nearby, sample family counts, contribution rings, or preview membership remain useful only for judging composition, typography, and spacing at the time they were captured. They do not prove cloud membership, roster refresh, proximity, contribution, or invitation acceptance, and those names must not be shipped as fallback family data.
+This entry supersedes the legacy recipient-email/capability-link QA section and any use of historical populated-family captures as runtime evidence. New clients no longer ask for a relative's email or create a `keepers://join` bearer capability. They display one permanent family code, share `https://join.keepers.app/f/<code>`, create an authenticated request, and wait for any active member to approve or decline. Email remains account authentication only. Legacy invitation RPCs remain temporarily for already-issued builds.
 
-The current first-run Wheel contains only the encrypted, persisted current member and Invite. A relative appears on the Wheel, Memory Key, and Member page only from the shared persisted roster after local creation or successful remote acceptance. A remotely accepted member defaults to away until a real presence adapter reports otherwise, and the UI omits an unknown contribution percentage instead of inventing one. Proximity rehearsal and the explicitly labeled preview task remain preview-only; membership and roster data do not.
+References to the staged Rahman roster, Noura or Mariam being nearby, sample family counts, contribution rings, or preview membership remain useful only for judging composition, typography, and spacing at the time they were captured. They do not prove cloud membership, roster refresh, proximity, contribution, or joining. A relative appears in the product only from the persisted roster after local creation or completed remote membership; new remote members default to away until a real presence adapter reports otherwise.
 
-### Repository acceptance contract
+### Repository evidence and honest boundaries
 
-| Evidence area | Required target or observation | Status boundary |
+| Evidence area | Current repository evidence | Release status |
 |---|---|---|
-| Supabase configuration | Supply both `KEEPERS_SUPABASE_URL` and `KEEPERS_SUPABASE_PUBLISHABLE_KEY`; never a service-role key. Apply `supabase/migrations/202609050001_family_invitations.sql` with `supabase link` and `supabase db push`. | Configuration contract documented; no production credential is checked in or exercised by this docs pass. |
-| Database behavior | From the repository root, run `supabase start`, `supabase db reset --local`, and `supabase test db --local` to cover RLS, RPC authorization, expiry, replay, revocation, idempotency, and races. | A recorded successful run is required; static SQL review is not a substitute. |
-| Email authentication | The Supabase email template renders `{{ .Token }}` and the client requests/verifies the resulting six-digit OTP for the normalized, invitation-bound email. | A live OTP delivery/verification artifact is required; magic-link-only behavior does not pass. |
-| Link routing | Only `keepers://join?v=1&i=<invite-id>&t=<token>&s=<wrapping-secret>` is accepted. Cold start and one warm event each produce one Join route; ordinary launches and duplicate events do not. | Coordinator/app/platform tests plus the Android integration target are required; neither universal links nor Android App Links are claimed. |
-| Capability privacy | The full bearer URI is handed only to the OS share sheet and is absent from painted/semantic UI, logs, diagnostics, analytics, clipboard helpers, screenshots, persisted route state, and Supabase. | Automated redaction checks are necessary; a real capability must never be placed in QA artifacts. |
-| Cloud privacy | Supabase contains identity, roster metadata, invitation state, recipient-email/token hashes, and an encrypted family-key envelope only. It never receives the wrapping secret, plaintext family/member keys, memory payloads, journals, reveal/kept content, transcripts, or media. | Inspect the live project after acceptance; a fake gateway cannot prove this boundary. |
-| Offline behavior | Capture/browse work without cloud configuration or network. Invite/Join report the actual failure. Cached SQLCipher roster remains visible on refresh failure, and a successful refresh is durable before publication. Membership is append-only until removal/tombstone sync exists. | Exercise configured, unconfigured, offline, failed-refresh, successful-refresh, and restart states. |
-| Mobile automation | CI runs `app/integration_test/family_invitation_flow_test.dart` on the existing Android x64 emulator and compiles an iOS debug simulator app after `Info.plist` lint. | A green CI run is required. The iOS build gate proves compilation/declarations, not runtime delivery or accessibility. |
+| Code and encrypted display material | Canonical eight-symbol parsing, SHA-256 lookup, AES-256-GCM encrypted material, encrypted offline cache, collision handling, and redacted diagnostics have focused tests. | Repository checkpoint only. |
+| Secure approval and recovery | X25519/HKDF/AES approval envelopes, strict context validation, transactional local install, exact completion marker, account isolation, and idempotent recovery have focused tests. | Repository checkpoint only. |
+| Backend contract | Migrations `202609050001`, `202609070001`, and `202609070002` plus `keepers-auth-bridge` are deployed to the hosted Keepers project; the required tables, RLS, eleven RPCs, serialization guards, Realtime publication, migration ledger, and callback redirect headers were verified on 2026-09-07. The repository also contains 106 pgTAP assertions and five deterministic two-session race fixtures. | The independent PostgreSQL concurrency harness still lacks a green run URL; that narrower gate remains open. |
+| Requester and approver flows | Manual/link constructors, requester states, any-member decision controller, sheets, and focused accessibility behavior are under the Task 8–12 integration pass. | Do not claim end-to-end complete until the final integration suite and review close. |
+| Native routing | Exact HTTPS parsing, Android `/f/` declaration, both iOS associated-domain entitlements, cold/warm routing, dedupe, and deliberate reopen have focused tests. | Domain ownership and OS verification are not proven by source declarations. |
+| Operations | SQL account/family quotas and a service-role purge helper exist. | Daily 30-day purge scheduling and a separate production source-IP throttle are not configured or verified. |
+| Android distribution | Debug and release-mode local builds can be produced from the ignored client config. | Gradle `release` currently uses debug signing; no production certificate fingerprint or two-physical-phone acceptance evidence exists. |
+| iOS distribution | The bundle identifier is `app.keepers.keepers` and signed-build entitlement files request `applinks:join.keepers.app`. | No Apple Team ID, distribution signature, hosted AASA verification, physical runtime, or accessibility evidence exists. |
+| Family presence | The current adapter reports only the local member and never infers proximity from cloud membership. | No trusted release proximity source exists, so real multi-person Weekly presence remains gated. |
+| Visual acceptance | Earlier product screens have historical emulator QA. | The new family-code states have not yet completed the required two passes at 390×844 and 430×932, 1.4× text, and reduced motion. |
 
-`tools/audit_project.py` remains supplemental. Its source scan excludes Dart, so zero findings cannot be cited as proof of Flutter runtime behavior, link redaction, key handling, or complete invitation coverage.
+`tools/audit_project.py`, fake gateways, static platform checks, and emulator screenshots are supplemental only. They cannot prove Dart runtime key handling, live RLS/RPC behavior, production ingress controls, public domain association, or physical-device recovery.
 
-### Emulator visual review
+### Approved reproducible-baseline staging manifest
 
-The invitation journey was captured twice through the Android integration driver in `app/outputs/family-invitations/pass-1` and `pass-2`: 22 non-empty PNGs per pass at a 390×844 logical viewport with 1.4× text. The cold-start acceptance path boots the real `KeepersApp`; the remaining QA states use focused `MaterialApp` and provider harnesses around the production screens. The manifest includes the local-only Wheel, unconfigured Invite, owner email and OTP, recipient entry, creating, pending, sharing, revoke failure, first-run Create/Join choice, manual Join, recipient email and OTP, preview, loading, keyboard-open, recoverable and protected failures, long content with reduced motion, and the post-acceptance Wheel. Join success is represented by the synchronized Wheel redirect; no artificial success screen or operating-system share sheet is captured.
+The approved font, wordmark, and Weekly reference-image bundle is captured in
+`f9001f9`. The app currently being exercised still depends on approved source
+and platform resources outside `HEAD`. Those remaining paths must be reviewed
+and committed as one coherent baseline before a build is represented as
+reproducible.
 
-Pass one exposed three production layout defects: the pending recipient label split, the bound-email failure was clipped, and the post-acceptance Legacy Lock shortcut truncated. The responsive detail row, join feedback region, and Wheel shortcut geometry were repaired and regression-tested. Pass two then exposed a remaining zero-gap detail alignment; an explicit 8 logical-pixel gap was added and the final capture confirmed the label, recipient address, expiry, protected failure copy, action geometry, and Wheel shortcuts remain readable without overlap. Keyboard-open evidence keeps the action reachable above the simulated inset, and reduced-motion states show stable bubbles rather than animated drift.
+Include:
 
-Both passes use inert fake-cloud capabilities generated inside the test harness. Before capture, the exact bearer token and wrapping secret are asserted absent from rendered text and semantics; the end-to-end path also checks secure storage and local SQLCipher state. The driver enforces an allowlisted, capability-free filename manifest. This does not constitute pixel-level secret scanning of the PNGs. These captures prove emulator composition and the credential-free harness only; they do not prove live Supabase, physical-device, or iOS behavior.
+- `.gitignore`, `DESIGN.md`, `UX-CONTRACT.md`, `design-qa.md`, `app/README.md`, and the maintained invitation specifications;
+- the dirty Android launch resources under `app/android/app/src/main/res/**` and iOS launch resources under `app/ios/Runner/{Assets.xcassets/LaunchImage.imageset,Base.lproj/LaunchScreen.storyboard}`;
+- all approved dirty or untracked `app/lib/**`, paired `app/test/**` and `app/integration_test/**`, launch goldens, `app/tool/generate_launch_wordmark.ps1`, and `app/test/storage/app_database_test.dart`;
+- `supabase/{README.md,config.toml}`, `supabase/functions/keepers-auth-bridge/**`, and the paired auth-bridge tests.
 
-### Live acceptance evidence still required
+Exclude:
 
-A release-grade pass requires one migrated Supabase project and two physical devices built with the same project URL and publishable key. Record owner authentication and invitation sharing; recipient bound-email OTP and acceptance; the identical real roster on both phones; restart persistence; unused-invite revocation; expiry, replay, and wrong-email rejection; offline cached-roster behavior; and live inspection showing no memory plaintext or plaintext keys in Supabase.
+- `app/config/supabase.local.json`, `.env*`, signing files, keystores, exported keys, and every credential or service-role key;
+- `.dart_tool/`, build products, local Supabase `.branches/` and `.temp/`, IDE state, and worktrees;
+- `outputs/**`, `app/outputs/**`, root/app `before-*` or `after-*` captures, `design-qa-*.jpg`, and `premium-audit*.json`;
+- `outputs/normalize_final_coverage.ps1`, which contains machine-specific absolute paths. The two reusable playback/reference extraction scripts should be moved from `app/outputs/` to `app/tool/` before retaining them; otherwise exclude them with the output tree.
 
-Until those artifacts exist, live Supabase pgTAP/race execution, live OTP/RPC behavior, physical two-device acceptance, and iOS runtime/accessibility remain explicitly unpassed. Fake-gateway tests, Android emulator coverage, static platform checks, or an iOS simulator build must not be relabeled as that evidence. The QA screenshots are local, untracked evidence and contain no production capability.
+Do not use an unrestricted `git add .` for this baseline. Review the allowlist, confirm no active task is still editing an overlapping file, inspect the staged diff and file sizes, and run the clean-archive build/test check before committing.
 
-final result: external acceptance pending
+### Acceptance evidence still required
+
+A release-grade pass requires all three migrations on one live Supabase project plus at least two physical Android devices built from the same ignored client configuration. Record manual code and HTTPS link entry; signed-out authentication/resume; any-member approval; requester offline during approval; foreground/background/process death/device restart; regeneration, decline, cancel, expiry, and wrong-account recovery; exactly one active membership; the same roster on both phones; and inspection confirming that no plaintext memory, code, link, joining private key, shared secret, or family/member key reached cloud or diagnostic logs.
+
+Until those artifacts exist, PostgreSQL concurrency execution, purge scheduling, production IP throttling, production signing/domain association, two-physical-phone joining, iOS runtime/accessibility, and a release proximity source remain explicitly unpassed. All three hosted migrations and auth-bridge deployment are complete. Manual code joining remains the required fallback when verified HTTPS association is unavailable. The build is not yet launch-ready.
+
+final result: implementation and external acceptance pending
+
+## Weekly photo-and-presence gate
+
+### Evidence
+
+- Source visual truth: `C:\Users\Chris\AppData\Local\Temp\codex-clipboard-dab10d4e-b6b2-4f27-a325-0c1f7d2eb93b.png` (2170 × 725 pixels)
+- Installed implementation: `app/build/keepers-weekly-pass2.png` (1080 × 2400 physical pixels)
+- Focused comparison: `app/build/weekly-panel-comparison-pass2.png` (1000 × 698 pixels)
+- Opened preview: `app/build/keepers-weekly-preview.png` (1080 × 2400 physical pixels)
+- Viewport: Android emulator `emulator-5554`, approximately 411 × 914 logical pixels at 2.625 density
+- Normalization: the implementation's 970 × 312 panel crop and the source panel were independently scaled to 1000 pixels wide without distortion, then stacked in one comparison image.
+- State: current member only; zero of five qualifying Weekly photos; one of two nearby devices; separately labeled rehearsal available.
+
+### Full-view and focused review
+
+- The Wheel now reads in the approved order: family bubbles, five-segment Weekly Vault progress, `Ask family to come`, the Weekly panel, then persistent navigation. The 1080 × 2400 capture shows no clipping, overlap, unstable wrapping, or hidden navigation.
+- The focused comparison confirms the same low, wide ivory panel, quiet rounded geometry, warm-gold double line, centered concentric medallion, and generous internal space as the reference. The source shadow is intentionally omitted because the approved Keepers system forbids card shadows.
+- Fonts and typography: all added copy uses Schibsted Grotesk through `KeepersText`, with tracked uppercase visual treatment and natural-case semantics. The 10-pixel status roles use the contrast-safe `inkMuted` token; automated contrast coverage requires at least 4.5:1 on aura ivory.
+- Spacing and layout rhythm: the progress, invitation, and panel retain 12-pixel transitions and shared page gutters. The panel preserves a 104-logical-pixel touch target and the separate preview preserves 44 logical pixels.
+- Colors and visual tokens: the implementation uses existing ivory, warm gold, ink, line, and five pastel family tokens. No gradient, glass, decorative blur, or shadow was introduced.
+- Image and icon fidelity: no raster placeholder or approximate drawn asset is used. The installed Material key is the existing app-wide Memory Key symbol; its horizontal silhouette is a minor intentional departure from the reference keyhole so the symbol remains consistent across navigation and Weekly.
+- Copy and behavior: the progress reports the real qualifying count, names both missing requirements, and the real action unlocks only at five photos plus at least three quarters of the family present, rounded up. The explicitly requested prototype bypass remains a separately labeled, non-mutating `Preview weekly experience`; the opened capture confirms `REHEARSAL MODE` remains visible.
+- Accessibility: count semantics are not duplicated, requirement changes are a live region, disabled panels do not announce an open action, and the ready panel exposes one tap action.
+
+### Comparison history
+
+- Pass 1 found no visual P0, P1, or P2 mismatch after normalizing the source component against the installed panel. Read-only implementation review did identify contrast, duplicate announcement, clock-boundary, future-date, and unavailable-action truthfulness defects; each was repaired and regression-tested before the final capture.
+- Pass 2 re-captured the installed build after opening and returning from the rehearsal. The composition remained stable, the Weekly preview opened successfully, and no actionable P0, P1, or P2 visual issue remained. The horizontal key glyph and intentionally shadowless treatment remain accepted P3/product-system deviations.
+
+final result: passed
+
+## Modern Society typography migration
+
+### Evidence
+
+- Installed Android captures: `app/outputs/modern-society-audit/home.png`, `key.png`, `archive.png`, `settings.png`, and `capture.png` at 1080 × 2400 physical pixels.
+- Runtime owner: `app/lib/theme/keepers_theme.dart`; bundled asset and commercial-use notice: `app/assets/fonts/modern_society/`.
+- The previous font asset is absent from the source tree and built APK; the APK contains `assets/flutter_assets/assets/fonts/modern_society/modernsociety-regular.otf`.
+
+### Review
+
+- Modern Society now owns every themed text role, while the existing role-specific sizes, weights, line heights, and tracking remain unchanged.
+- App presentation uses Title Case through the shared `KeepersText` painter. Editable fields and stored content are not rewritten, and text-memory accessibility retains the authored value.
+- Home, Memory Key, Archive, Settings, and memory creation render without visible clipping, overlap, or navigation movement on the Android emulator.
+- Modern Society is a tall unicase-style display face, so its lowercase glyphs retain a deliberately capital-like silhouette even though the rendered strings use Title Case.
+
+final result: passed
+
+## Weekly cream gallery
+
+### Evidence
+
+- Motion reference: `C:\Users\Chris\Downloads\Diseno-de-ui-Disenos-de-unas-Diseno-de-app-Interfaces.mp4` (8 seconds, 720 × 720, 30 fps).
+- Reference frame: `app/outputs/weekly-video-frames/frame-06-4.36s.png`.
+- First installed gallery pass: `app/after-weekly-gallery-home.png`.
+- Second installed gallery pass: `app/after-weekly-gallery-pass2.png`.
+- Final installed photo state: `app/after-weekly-gallery-final.png` (1080 × 2400 physical pixels).
+- Same-input reference comparison: `design-qa-weekly-gallery-final.jpg`.
+- Target: Android Pixel 8 emulator `emulator-5554`.
+
+### Review and repair loop
+
+- The source's product pattern—not its presentation-video camera move—was translated into Keepers: contextual close, centered memory title, one portrait hero, centered date, and a synchronized horizontal thumbnail reel. The black source canvas was intentionally replaced by the app's supplied cream background, as requested.
+- Pass one exposed a vertically centered reel, excessive space between the header and hero, and a title collision with the rehearsal marker. The transition container was made full-height, the compact header was re-composed as a centered two-line title/status group, and its stack was given full screen width so Close returned to the expected leading edge.
+- Pass two confirmed the corrected hierarchy and stable voice presentation. The hero width and aspect ratio were then tuned closer to the reference, and the final source crop was cleaned to remove a captured black video edge.
+- The final combined comparison shows the same quiet top controls, dominant rounded portrait memory, date rhythm, and selected-thumbnail sequence. Added format/count metadata is deliberately subordinate and makes photo, voice, and text states explicit without competing with the memory.
+- Thumbnail taps and disclosed horizontal swipes update image, title, date, format, count, and selection semantics from one index. Selection uses a 170 ms opacity crossfade; reduced motion changes immediately. Voice retains a labeled play/pause control, the text memory retains its echo, and the final memory continues to the existing labeled Keep/Release decision.
+- Weekly playback has no persistent app navigation. Close returns to the Family Wheel. The five-photo and rounded-up 75%-of-family presence gate remains owned by the Wheel; the local bypass remains visibly labeled `Rehearsal Mode` and does not mutate gate state.
+- The 390 × 844 widget target and installed emulator were checked for hierarchy, alignment, crop, contrast, touch targets, navigation clarity, wrapping, overflow, and layout stability. No actionable P0, P1, or P2 visual issue remains.
+
+final result: passed

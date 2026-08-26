@@ -1,39 +1,90 @@
 # Keepers Supabase control plane
 
-Supabase stores account identity, family roster metadata, invitation state,
-token and recipient-email hashes, and the encrypted family-key envelope. It
-must never receive a plaintext family key, member key, memory payload,
-transcript, or media blob.
+Supabase stores account identity, family roster metadata, family-code hashes,
+encrypted display-code material, join-request state, public joining keys, and
+encrypted family-key envelopes. It must never receive a plaintext family or
+member key, joining private key, approval shared secret, decrypted envelope,
+memory payload, transcript, or media blob. Legacy recipient-email invitation
+rows remain temporarily supported only for already-issued clients.
 
 ## Project setup
 
-Install the Supabase CLI, sign in, and set the project URL, publishable key, and
-project reference in the current PowerShell session. Link and deploy the
-versioned migration with these commands:
+Install the Supabase CLI and sign in. From the repository root, link the target
+project and inspect the remote/local migration ledger before changing it:
 
 ```powershell
 supabase link --project-ref $env:KEEPERS_SUPABASE_PROJECT_REF
+supabase migration list
 supabase db push
-flutter run --dart-define=KEEPERS_SUPABASE_URL=$env:KEEPERS_SUPABASE_URL --dart-define=KEEPERS_SUPABASE_PUBLISHABLE_KEY=$env:KEEPERS_SUPABASE_PUBLISHABLE_KEY
+supabase functions deploy keepers-auth-bridge --no-verify-jwt
+```
+
+`supabase db push` must apply the checked-in migrations in this exact order:
+
+1. `migrations/202609050001_family_invitations.sql`
+2. `migrations/202609070001_family_code_join_requests.sql`
+3. `migrations/202609070002_membership_join_serialization.sql`
+
+Do not release a family-code client until all three appear in the linked
+project's migration history. The first remains for compatibility, the second
+adds permanent codes and join requests, and the third serializes every
+membership-producing path with those requests. Deploying the app before the
+second or third migration leaves the new membership contract incomplete.
+
+Keep the client URL and publishable key in the ignored
+`app/config/supabase.local.json`. From `app`, use the file without printing its
+values:
+
+```powershell
+flutter run --dart-define-from-file=config/supabase.local.json
+flutter build apk --debug --dart-define-from-file=config/supabase.local.json
 ```
 
 `KEEPERS_SUPABASE_URL` and `KEEPERS_SUPABASE_PUBLISHABLE_KEY` are client
 configuration, not privileged credentials. A Supabase service-role key must
 never be placed in Dart defines, committed to source control, or bundled in an
-app build.
+app build. On 2026-09-07, the hosted Keepers project was verified with all three
+migration-history rows and the deployed `keepers-auth-bridge` function. The
+migrations were submitted through Supabase's official Management API because a
+noninteractive CLI link also requires the database password. This proves the
+hosted schema and callback deployment, but not the separate concurrency CI gate.
 
-## Email OTP template
+## Email authentication and callback
 
-Email OTP is the only authentication method for this release. In the Supabase
-Dashboard, configure the email OTP template to render the six-digit token using
-the exact variable:
+Keepers supports a Supabase email sign-in link and is ready for a six-digit
+code fallback once custom SMTP is configured. In Authentication → URL
+Configuration, allow both the HTTPS handoff and the final app callback:
 
 ```text
-{{ .Token }}
+https://<project-ref>.supabase.co/functions/v1/keepers-auth-bridge
+keepers://auth-callback
 ```
 
-Do not replace it with a magic-link-only template. Keepers asks the user to
-enter this token in the app.
+Set the Site URL to the same HTTPS handoff so a missing or rejected runtime
+redirect never falls back to localhost.
+
+Deploy `functions/keepers-auth-bridge` with JWT verification disabled. This is
+the pre-login callback, so no session token exists yet. The endpoint validates
+the single PKCE `code`, returns a no-store platform redirect, and does not read
+or mutate family data. Android is sent to a package-scoped `intent://` callback;
+iOS and other clients are sent to `keepers://auth-callback`.
+
+Supabase's hosted default email currently supplies the sign-in link. After
+custom SMTP is configured, keep both the sign-in link and the six-digit token
+available in Authentication → Email Templates using these exact variables:
+
+```text
+Sign in: {{ .ConfirmationURL }}
+Code: {{ .Token }}
+```
+
+The sign-in link must use Supabase's confirmation URL and return first to the
+HTTPS handoff. The handoff opens the installed Keepers app and resumes the
+waiting account or family-Join flow. With the custom template above, entering
+the six-digit token in the app establishes the same account session when an
+email client blocks external-app links. Email authenticates the account; it no
+longer carries or addresses a new family invitation. Do not ship a custom
+template that omits both authentication recovery paths.
 
 ## Database verification
 
@@ -56,53 +107,48 @@ only local, non-secret settings.
 
 ### Required concurrent-transition CI gate
 
-The pgTAP transaction covers both serialized orderings (revoke then claim, and
-claim then revoke), but a single pgTAP transaction cannot prove simultaneous
-multi-session behavior. Before deployment, CI must start and reset an ephemeral
-Supabase stack with the three commands above, then use two independent
-PostgreSQL/PostgREST connections to release these calls at the same barrier:
+The family-code pgTAP suite contains 106 authorization, privacy, quota,
+projection, expiry, and transition assertions. A single pgTAP transaction
+cannot prove simultaneous multi-session behavior, so CI must also run the
+deterministic two-session race harness:
 
-1. Two recipients claim the same pending token. Exactly one may create the
-   membership; the other must receive `P0001/ALREADY_CLAIMED`.
-2. The recipient claims while the owner revokes the same pending invite. If
-   revoke obtains the row lock first, claim must receive
-   `P0001/INVITE_REVOKED`; if claim obtains it first, revoke must receive
-   `P0001/ALREADY_CLAIMED`.
-3. Two requests for the same previously unbootstrapped account call
-   `bootstrap_owner_family` at the same barrier. With identical payloads, both
-   calls must return the same successful result and create exactly one family,
-   profile, and membership. With the same family/member IDs but any different
-   family name, display name, demographic role, color, or avatar, the lock
-   winner may succeed but the loser must receive `P0001/BOOTSTRAP_CONFLICT`;
-   the committed profile and membership must contain only the winner's payload.
-
-After each race, the CI step must query as its administrative test connection
-and assert there is at most one membership, no claimed invitation is reported
-as revoked, no revoked invitation has a membership created by that race, and a
-bootstrap race never leaves mixed profile/membership fields. Bootstrap is
-serialized before its initial membership probe with a transaction-scoped,
-domain-separated 64-bit advisory lock derived from the complete authenticated
-account UUID. A hash collision can only over-serialize unrelated accounts; it
-cannot merge their data or weaken the replay checks.
-This external multi-session gate is required in addition to `supabase test db`;
-it was not run on the current CLI-less development host.
-
-For the database-only CI job documented by Supabase, use:
-
-```powershell
-supabase db start
-supabase test db
+```text
+supabase start
+supabase db reset --local
+supabase test db --local
+bash supabase/tests/run_family_code_join_request_races.sh
 ```
 
-The database-only job is sufficient for pgTAP but does not replace the
-independent two-session transition race described above.
+The race harness proves these five pairs against real PostgreSQL locks:
+
+1. approve / approve;
+2. approve / decline;
+3. regenerate / request;
+4. completion / expiry; and
+5. the same requester completing into two families.
+
+Every pair must produce one authoritative result, never two memberships or two
+decisions. The dedicated CI job is the runtime authority because this Windows
+development host has no local PostgreSQL, Docker, or Bash runtime for that
+harness. Static SQL review and Flutter adapter tests are not substitutes, and
+no green concurrency-run URL is claimed in this document until it is recorded.
 
 ## Family-code join-request rollout
 
-Deploy `migrations/202609070001_family_code_join_requests.sql` before releasing
-an app build that calls the family-code RPCs. The migration is additive: the
+After the legacy migration, deploy
+`migrations/202609070001_family_code_join_requests.sql` followed by
+`migrations/202609070002_membership_join_serialization.sql` before releasing an
+app build that calls the family-code RPCs. The migrations are additive: the
 seven recipient-email invitation RPCs below remain callable during the legacy
 compatibility window, while new clients use the eleven family-code RPCs.
+
+A code or link identifies a family but never grants membership. It creates a
+request from an authenticated account that is not already in a family. Any
+active member may approve or decline; only the family creator may regenerate
+the permanent code. The requester installs the encrypted family key and durable
+local recovery state before `complete_family_join_request` activates the single
+membership. Realtime only prompts a fresh authoritative RPC read, and restart
+recovery safely retries uncertain completion.
 
 Family-code requests stay pending for exactly seven days. SQL permits one
 unresolved request per account, limits a family to 100 pending requests, limits
@@ -126,11 +172,52 @@ that helper to client roles. Pending rows are lazily expired by authenticated
 request RPCs, while scheduled maintenance removes only installed, declined,
 cancelled, and expired rows older than the explicit cutoff.
 
+The first-release operations policy is a daily privileged run with a 30-day
+cutoff. Configure it through a trusted database/backend scheduler, never from a
+mobile client, and record a successful execution plus the next scheduled run in
+release evidence. The repository defines the helper but does not create the
+production schedule; that gate is currently open.
+
+The production API gateway/WAF must also throttle family-code preview and
+request creation by source IP in addition to the SQL account controls. It must
+return a generic rate-limit response without revealing code validity, redact
+the submitted code and URL, and be tested across multiple authenticated
+accounts from one IP. No ingress policy is checked into this repository, so the
+IP-throttle gate is currently open.
+
 Plaintext family codes and full family-join links are transient request inputs.
 Redact them from API, proxy, database, crash, analytics, and support logs. Never
 log joining private keys, family keys, approval shared secrets, or decrypted
 envelopes. The database persists only a SHA-256 code hash, encrypted display
 material, public keys, and ciphertext.
+
+## Verified family-link deployment
+
+The app accepts only `https://join.keepers.app/f/<code>` for family joining.
+Manual entry of the same code remains usable even when verified-link hosting is
+not ready. To enable direct native opening, publish both files over HTTPS with
+`application/json`, no authentication, and no redirect:
+
+- `https://join.keepers.app/.well-known/assetlinks.json`
+- `https://join.keepers.app/.well-known/apple-app-site-association`
+
+Android Digital Asset Links must name package `app.keepers.keepers` and the
+SHA-256 fingerprint of the real release certificate. The current Gradle
+`release` build uses the debug signing configuration, so its fingerprint is not
+a production association and the Android verified-link gate is open.
+
+iOS Universal Links must name application identifier
+`<APPLE_TEAM_ID>.app.keepers.keepers` and allow only `/f/*`. Both checked-in
+entitlement files request `applinks:join.keepers.app`, but no Apple Team ID,
+distribution signature, hosted AASA response, or physical iOS verification is
+recorded. The iOS verified-link gate is open.
+
+Before release, verify the hosted files from an uncached client, confirm the
+response bodies use the actual shipping identities, install those exact signed
+builds, and exercise cold start, warm start, signed-out authentication/resume,
+reopen, and app-not-installed/store fallback. Routing tests in this repository
+prove parsing and app navigation only; they do not prove domain ownership or OS
+association.
 
 The eleven authenticated family-code RPCs are:
 
@@ -146,7 +233,8 @@ The eleven authenticated family-code RPCs are:
 - `complete_family_join_request(uuid)`
 - `regenerate_family_join_code(uuid, integer, text, jsonb)`
 
-The seven authenticated RPCs are:
+The seven legacy authenticated recipient-email RPCs retained for compatibility
+are:
 
 - `bootstrap_owner_family(uuid, text, uuid, text, text, text, jsonb)`
 - `create_family_invite(uuid, uuid, text, text, jsonb)`
@@ -156,7 +244,19 @@ The seven authenticated RPCs are:
 - `revoke_family_invite(uuid)`
 - `list_active_family_members(uuid)`
 
-All invitation transitions execute through those RPCs. Client roles cannot
-read `family_memberships` or mutate any backing table directly. The roster RPC
-is the sole client projection of membership metadata, and unauthenticated
-callers cannot execute any RPC.
+All membership transitions execute through the corresponding narrow RPCs.
+Client roles cannot read `family_memberships` or mutate any backing table
+directly. The roster RPC is the sole client projection of membership metadata,
+and unauthenticated callers cannot execute any RPC.
+
+## Current release-gate truth
+
+The permanent-code schema, Dart gateway, crypto/storage units, requester and
+approver controllers, and native route declarations have focused automated
+coverage. All three migrations and the unauthenticated callback bridge are
+deployed to the hosted Keepers project. This does not establish a launch-ready
+backend. A green PostgreSQL concurrency run, configured daily purge job,
+verified external IP throttle, production Android signing and hosted
+Digital-Asset-Links/AASA files, two-physical-phone Android join run, iOS
+runtime/accessibility run, and a release proximity source are not yet recorded
+and must remain open release gates.
