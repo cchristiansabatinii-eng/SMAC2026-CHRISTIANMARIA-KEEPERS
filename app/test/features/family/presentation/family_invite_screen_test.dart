@@ -503,6 +503,12 @@ void main() {
     await _pump(tester, controller, authenticationOnly: true);
 
     expect(find.text('Sign in to continue'), findsOneWidget);
+    expect(
+      find.text(
+        'Use your email to securely connect this family and reveal its permanent code.',
+      ),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('invite-owner-email')), findsOneWidget);
     expect(find.byKey(const Key('invite-recipient-email')), findsNothing);
 

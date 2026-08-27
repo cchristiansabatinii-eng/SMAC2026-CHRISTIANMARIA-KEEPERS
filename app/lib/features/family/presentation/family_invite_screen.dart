@@ -153,7 +153,11 @@ final class _FamilyInviteScreenState extends ConsumerState<FamilyInviteScreen> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       KeepersText(
-        state.failure?.code == InvitationFailureCode.signedOut
+        widget.authenticationOnly
+            ? state.failure?.code == InvitationFailureCode.signedOut
+                  ? 'Sign in again to restore access to your family code.'
+                  : 'Use your email to securely connect this family and reveal its permanent code.'
+            : state.failure?.code == InvitationFailureCode.signedOut
             ? 'Sign in again as the family owner to continue safely.'
             : 'Sign in as the family owner to create an invitation.',
         style: const TextStyle(color: KeepersColors.inkMuted, height: 1.4),
