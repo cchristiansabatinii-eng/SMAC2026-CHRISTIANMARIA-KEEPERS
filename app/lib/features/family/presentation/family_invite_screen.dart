@@ -12,9 +12,11 @@ final class FamilyInviteScreen extends ConsumerStatefulWidget {
   const FamilyInviteScreen({
     super.key,
     @visibleForTesting this.initializeOnMount = true,
+    this.authenticationOnly = false,
   });
 
   final bool initializeOnMount;
+  final bool authenticationOnly;
 
   @override
   ConsumerState<FamilyInviteScreen> createState() => _FamilyInviteScreenState();
@@ -30,6 +32,7 @@ final class _FamilyInviteScreenState extends ConsumerState<FamilyInviteScreen> {
   final _otpFocus = FocusNode();
   final _recipientEmailFocus = FocusNode();
   String? _localError;
+  var _authenticationPopScheduled = false;
 
   @override
   void initState() {
@@ -90,14 +93,18 @@ final class _FamilyInviteScreenState extends ConsumerState<FamilyInviteScreen> {
                       ),
                       const SizedBox(height: 30),
                       KeepersText(
-                        'Invite family',
+                        widget.authenticationOnly
+                            ? 'Sign in to continue'
+                            : 'Invite family',
                         style: KeepersType.heading.copyWith(
                           color: KeepersColors.ink,
                         ),
                       ),
                       const SizedBox(height: 12),
-                      const KeepersText(
-                        'Memories stay encrypted. This invitation only adds a family member.',
+                      KeepersText(
+                        widget.authenticationOnly
+                            ? 'Sign in securely to access your permanent family code.'
+                            : 'Memories stay encrypted. This invitation only adds a family member.',
                         style: TextStyle(
                           color: KeepersColors.inkMuted,
                           height: 1.45,
@@ -117,6 +124,10 @@ final class _FamilyInviteScreenState extends ConsumerState<FamilyInviteScreen> {
   }
 
   Widget _content(FamilyInviteState state) {
+    if (widget.authenticationOnly && state.phase == FamilyInvitePhase.ready) {
+      _finishAuthenticationAfterFrame();
+      return const _Status(message: 'Finishing sign in', busy: true);
+    }
     if (state.phase == FamilyInvitePhase.failed &&
         state.failure?.code == InvitationFailureCode.signedOut) {
       return _ownerEmailContent(state, error: _failureMessage(state.failure));
@@ -430,6 +441,14 @@ final class _FamilyInviteScreenState extends ConsumerState<FamilyInviteScreen> {
 
   Future<void> _retry() =>
       ref.read(familyInviteControllerProvider.notifier).initialize();
+
+  void _finishAuthenticationAfterFrame() {
+    if (_authenticationPopScheduled) return;
+    _authenticationPopScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).maybePop(true);
+    });
+  }
 
   void _recoverFocus(FamilyInviteState state) {
     if (state.phase != FamilyInvitePhase.failed) return;

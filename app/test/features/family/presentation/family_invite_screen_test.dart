@@ -494,6 +494,24 @@ void main() {
     expect(find.byKey(const Key('invite-recipient-email')), findsOneWidget);
   });
 
+  testWidgets('authentication-only mode never exposes recipient controls', (
+    tester,
+  ) async {
+    final controller = _ScreenInviteController(
+      const FamilyInviteState(phase: FamilyInvitePhase.needsAuthentication),
+    );
+    await _pump(tester, controller, authenticationOnly: true);
+
+    expect(find.text('Sign in to continue'), findsOneWidget);
+    expect(find.byKey(const Key('invite-owner-email')), findsOneWidget);
+    expect(find.byKey(const Key('invite-recipient-email')), findsNothing);
+
+    controller.emit(const FamilyInviteState(phase: FamilyInvitePhase.ready));
+    await tester.pump();
+
+    expect(find.byKey(const Key('invite-recipient-email')), findsNothing);
+  });
+
   testWidgets('share and revoke failures keep the pending invitation visible', (
     tester,
   ) async {
@@ -569,6 +587,7 @@ Future<void> _pump(
   WidgetTester tester,
   _ScreenInviteController controller, {
   MediaQueryData mediaQuery = const MediaQueryData(disableAnimations: true),
+  bool authenticationOnly = false,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -580,7 +599,10 @@ Future<void> _pump(
         theme: ThemeData(fontFamily: KeepersType.primary),
         home: MediaQuery(
           data: mediaQuery,
-          child: const FamilyInviteScreen(initializeOnMount: false),
+          child: FamilyInviteScreen(
+            initializeOnMount: false,
+            authenticationOnly: authenticationOnly,
+          ),
         ),
       ),
     ),
@@ -603,6 +625,8 @@ final class _ScreenInviteController extends FamilyInviteController {
 
   @override
   FamilyInviteState build() => initialState;
+
+  void emit(FamilyInviteState value) => state = value;
 
   @override
   Future<void> initialize() async {}

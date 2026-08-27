@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/features/family/application/family_code_controller.dart';
+import 'package:keepers/features/family/application/family_invite_controller.dart';
 import 'package:keepers/features/family/domain/family_join_failure.dart';
 import 'package:keepers/features/family/presentation/family_invite_sheet.dart';
 import 'package:keepers/theme/keepers_theme.dart';
@@ -222,13 +223,50 @@ void main() {
     );
     expect(action.focusNode?.hasFocus, isTrue);
   });
+
+  testWidgets('signed-out status authenticates then reloads the family code', (
+    tester,
+  ) async {
+    final codeController = _SheetController(
+      const FamilyCodeState(
+        phase: FamilyCodePhase.failed,
+        failure: FamilyJoinFailure(FamilyJoinFailureCode.signedOut),
+      ),
+    );
+    final inviteController = _SheetInviteController(
+      const FamilyInviteState(phase: FamilyInvitePhase.needsAuthentication),
+    );
+    await _pump(tester, codeController, inviteController: inviteController);
+
+    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Retry'), findsNothing);
+    await tester.tap(find.text('Sign in'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sign in to continue'), findsOneWidget);
+    expect(find.byKey(const Key('invite-recipient-email')), findsNothing);
+
+    inviteController.emit(
+      const FamilyInviteState(phase: FamilyInvitePhase.ready),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sign in to continue'), findsNothing);
+    expect(codeController.loadCalls, 1);
+  });
 }
 
-Future<void> _pump(WidgetTester tester, _SheetController controller) async {
+Future<void> _pump(
+  WidgetTester tester,
+  _SheetController controller, {
+  _SheetInviteController? inviteController,
+}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         familyCodeControllerProvider(_familyId).overrideWith(() => controller),
+        if (inviteController != null)
+          familyInviteControllerProvider.overrideWith(() => inviteController),
       ],
       child: MaterialApp(
         theme: ThemeData(fontFamily: KeepersType.primary),
@@ -300,6 +338,20 @@ final class _SheetController extends FamilyCodeController {
 
   @override
   Future<void> regenerate() async => regenerateCalls += 1;
+}
+
+final class _SheetInviteController extends FamilyInviteController {
+  _SheetInviteController(this.initial);
+
+  final FamilyInviteState initial;
+
+  @override
+  FamilyInviteState build() => initial;
+
+  @override
+  Future<void> initialize() async {}
+
+  void emit(FamilyInviteState value) => state = value;
 }
 
 const _familyId = '11111111-1111-4111-8111-111111111111';

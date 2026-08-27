@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keepers/features/family/application/family_code_controller.dart';
 import 'package:keepers/features/family/domain/family_join_failure.dart';
+import 'package:keepers/features/family/presentation/family_invite_screen.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/keepers_app_background.dart';
 
@@ -187,7 +188,16 @@ final class _FamilyInviteSheetState extends ConsumerState<FamilyInviteSheet> {
                           height: 54,
                           child: _StatusSlot(
                             state: state,
-                            onRetry: state.phase == FamilyCodePhase.failed
+                            onSignIn:
+                                state.phase == FamilyCodePhase.failed &&
+                                    state.failure?.code ==
+                                        FamilyJoinFailureCode.signedOut
+                                ? _authenticateAndReload
+                                : null,
+                            onRetry:
+                                state.phase == FamilyCodePhase.failed &&
+                                    state.failure?.code !=
+                                        FamilyJoinFailureCode.signedOut
                                 ? () => state.hasCode && state.isCreator
                                       ? ref.read(provider.notifier).regenerate()
                                       : ref.read(provider.notifier).load()
@@ -204,6 +214,18 @@ final class _FamilyInviteSheetState extends ConsumerState<FamilyInviteSheet> {
         ),
       ),
     );
+  }
+
+  Future<void> _authenticateAndReload() async {
+    final authenticated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => const FamilyInviteScreen(authenticationOnly: true),
+      ),
+    );
+    if (!mounted || authenticated != true) return;
+    await ref
+        .read(familyCodeControllerProvider(widget.familyId).notifier)
+        .load();
   }
 
   Future<void> _confirmRegeneration() async {
@@ -296,10 +318,15 @@ final class _ActionRow extends StatelessWidget {
 }
 
 final class _StatusSlot extends StatelessWidget {
-  const _StatusSlot({required this.state, required this.onRetry});
+  const _StatusSlot({
+    required this.state,
+    required this.onRetry,
+    required this.onSignIn,
+  });
 
   final FamilyCodeState state;
   final FutureOr<void> Function()? onRetry;
+  final FutureOr<void> Function()? onSignIn;
 
   @override
   Widget build(BuildContext context) {
@@ -335,7 +362,10 @@ final class _StatusSlot extends StatelessWidget {
               ),
             ),
           ),
-          TextButton(onPressed: onRetry, child: const KeepersText('Retry')),
+          TextButton(
+            onPressed: onSignIn ?? onRetry,
+            child: KeepersText(onSignIn == null ? 'Retry' : 'Sign in'),
+          ),
         ],
       );
     }
