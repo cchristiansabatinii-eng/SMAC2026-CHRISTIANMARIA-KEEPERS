@@ -19,10 +19,12 @@ The mobile client is generated from Flutter stable and targets Android and iOS.
 
 ## Supabase family membership
 
-Cloud configuration is optional for local capture and browsing. Without it, the
-encrypted local memory experience remains available, while family-code display,
-Join, approval, and roster synchronization report that cloud membership is not
-configured.
+Supabase configuration is required for a new installation to pass account setup
+and access the app's normal family/local-memory flow. If the client is
+unconfigured, startup remains blocked on the account setup screen with Retry;
+configure `app/config/supabase.local.json` before running the app. Existing
+device-local encrypted data is not deleted, but it is not reachable through the
+normal startup flow until the required account configuration is available.
 
 ### Local configuration and exact build commands
 
