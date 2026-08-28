@@ -76,9 +76,9 @@ class EncryptedBlobStore implements EntryBlobStore {
     }
   }
 
-  Future<Uint8List> read(String relativeRef) {
+  Future<Uint8List> read(String relativeRef, {int? maxBytes}) {
     final entryId = _entryIdFromRelativeRef(relativeRef);
-    return _fileSystem.readBlob('$entryId.keeper');
+    return _fileSystem.readBlob('$entryId.keeper', maxBytes: maxBytes);
   }
 
   Future<bool> exists(String relativeRef) {

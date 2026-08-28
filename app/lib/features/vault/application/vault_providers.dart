@@ -38,3 +38,5 @@ final vaultControllerProvider = FutureProvider<VaultController>((ref) async {
     readEncryptedBlob: blobStore.read,
   );
 });
+    readEncryptedBlobBounded: (relativeRef, {required maxBytes}) =>
+        blobStore.read(relativeRef, maxBytes: maxBytes),

@@ -82,7 +82,7 @@ abstract interface class SecureBlobFileSystem {
     required String publishedRef,
   });
 
-  Future<Uint8List> readBlob(String destinationName);
+  Future<Uint8List> readBlob(String destinationName, {int? maxBytes});
 
   Future<bool> blobExists(String destinationName);
 
@@ -93,6 +93,81 @@ abstract interface class SecureBlobFileSystem {
   );
 
   Future<void> deletePlaintext(SecurePlaintextCleanup cleanup);
+}
+
+/// Collects owned read chunks without retaining data after a bounded failure.
+final class SecureBoundedBytesBuilder {
+  SecureBoundedBytesBuilder({
+    required this.maxBytes,
+    Uint8List Function(int length)? outputAllocator,
+  }) : _outputAllocator = outputAllocator ?? _allocateOutput {
+    RangeError.checkNotNegative(maxBytes, 'maxBytes');
+  }
+
+  final int maxBytes;
+  final Uint8List Function(int length) _outputAllocator;
+  final List<Uint8List> _chunks = [];
+  int _lengthInBytes = 0;
+  bool _consumed = false;
+
+  int get lengthInBytes => _lengthInBytes;
+
+  void add(Uint8List bytes) {
+    if (_consumed) {
+      bytes.fillRange(0, bytes.length, 0);
+      throw StateError('Bounded bytes have already been consumed');
+    }
+    if (bytes.lengthInBytes > maxBytes - _lengthInBytes) {
+      _clearChunks();
+      bytes.fillRange(0, bytes.length, 0);
+      _consumed = true;
+      throw const FileSystemException(
+        'Encrypted blob exceeds bounded read limit',
+        'encrypted blob',
+      );
+    }
+    _chunks.add(bytes);
+    _lengthInBytes += bytes.lengthInBytes;
+  }
+
+  Uint8List takeBytes() {
+    if (_consumed) {
+      throw StateError('Bounded bytes have already been consumed');
+    }
+    _consumed = true;
+    Uint8List? output;
+    try {
+      final allocated = _outputAllocator(_lengthInBytes);
+      output = allocated;
+      var offset = 0;
+      for (final chunk in _chunks) {
+        allocated.setRange(offset, offset + chunk.lengthInBytes, chunk);
+        offset += chunk.lengthInBytes;
+      }
+      return allocated;
+    } on Object {
+      output?.fillRange(0, output.length, 0);
+      rethrow;
+    } finally {
+      _clearChunks();
+    }
+  }
+
+  void clear() {
+    if (_consumed) return;
+    _consumed = true;
+    _clearChunks();
+  }
+
+  void _clearChunks() {
+    for (final chunk in _chunks) {
+      chunk.fillRange(0, chunk.length, 0);
+    }
+    _chunks.clear();
+    _lengthInBytes = 0;
+  }
+
+  static Uint8List _allocateOutput(int length) => Uint8List(length);
 }
 
 enum PosixFileBoundary {
@@ -440,7 +515,10 @@ final class PosixSecureBlobFileSystem
   }
 
   @override
-  Future<Uint8List> readBlob(String destinationName) async {
+  Future<Uint8List> readBlob(String destinationName, {int? maxBytes}) async {
+    if (maxBytes != null) {
+      RangeError.checkNotNegative(maxBytes, 'maxBytes');
+    }
     _ensureSupported();
     _validateDestinationName(destinationName);
     _PosixLayout? layout;
@@ -457,7 +535,9 @@ final class PosixSecureBlobFileSystem
         PosixFileBoundary.afterBlobLeafOpenBeforeRead,
         destinationName: destinationName,
       );
-      return _readAll(fileFd);
+      return maxBytes == null
+          ? _readAll(fileFd)
+          : _readBounded(fileFd, maxBytes);
     } finally {
       _closeIfOpen(fileFd);
       if (layout != null) {
@@ -1659,6 +1739,32 @@ final class PosixSecureBlobFileSystem
         output.add(Uint8List.fromList(buffer.asTypedList(count)));
       }
     } finally {
+      calloc.free(buffer);
+    }
+  }
+
+  Uint8List _readBounded(int fd, int maxBytes) {
+    const chunkSize = 64 * 1024;
+    final buffer = calloc<Uint8>(chunkSize);
+    final output = SecureBoundedBytesBuilder(maxBytes: maxBytes);
+    try {
+      while (true) {
+        final remaining = maxBytes - output.lengthInBytes;
+        final readSize = min(chunkSize, remaining + 1);
+        final count = _syscalls.read(fd, buffer.cast<Void>(), readSize);
+        if (count < 0) {
+          throw _lastError('read encrypted blob', 'encrypted blob');
+        }
+        if (count == 0) {
+          return output.takeBytes();
+        }
+        output.add(Uint8List.fromList(buffer.asTypedList(count)));
+      }
+    } on Object {
+      output.clear();
+      rethrow;
+    } finally {
+      buffer.asTypedList(chunkSize).fillRange(0, chunkSize, 0);
       calloc.free(buffer);
     }
   }

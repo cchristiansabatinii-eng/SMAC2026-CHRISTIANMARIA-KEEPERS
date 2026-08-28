@@ -165,9 +165,22 @@ final class TestSecureBlobFileSystem
   }
 
   @override
-  Future<Uint8List> readBlob(String destinationName) =>
-      File(p.join(supportDirectory.path, 'entries', 'blobs', destinationName))
-          .readAsBytes();
+  Future<Uint8List> readBlob(String destinationName, {int? maxBytes}) async {
+    if (maxBytes != null) {
+      RangeError.checkNotNegative(maxBytes, 'maxBytes');
+    }
+    final bytes = await File(
+      p.join(supportDirectory.path, 'entries', 'blobs', destinationName),
+    ).readAsBytes();
+    if (maxBytes != null && bytes.lengthInBytes > maxBytes) {
+      bytes.fillRange(0, bytes.length, 0);
+      throw const FileSystemException(
+        'Encrypted blob exceeds bounded read limit',
+        'encrypted blob',
+      );
+    }
+    return bytes;
+  }
 
   @override
   Future<bool> blobExists(String destinationName) =>

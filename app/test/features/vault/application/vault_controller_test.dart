@@ -28,6 +28,15 @@ void main() {
     expect(await scratch.list().toList(), isEmpty);
   });
 
+  test('a read-only decrypted buffer cannot cancel an opened memory', () async {
+    final harness = await _VaultHarness.create(readOnlyPlaintext: true);
+
+    final memory = await harness.controller.open(harness.metadata);
+
+    expect(memory, isA<OpenedMemory>());
+    expect((memory as OpenedMemory).payload.text, 'Only in memory');
+  });
+
   test('corrupt payload becomes unavailable without partial content', () async {
     final harness = await _VaultHarness.create(corruptTag: true);
 
@@ -65,6 +74,131 @@ void main() {
     expect(memory, isA<UnavailableMemory>());
   });
 
+  test(
+    'photo preview uses the derived bounded read and clears its envelope',
+    () async {
+      final source = Uint8List.fromList([1, 2, 3]);
+      final harness = await _VaultHarness.create(
+        format: MemoryFormat.photo,
+        primaryBytes: source,
+      );
+
+      final memory = await harness.controller.openPhotoPreview(
+        harness.metadata,
+        maxSourceBytes: source.lengthInBytes,
+      );
+
+      expect(memory, isA<OpenedMemory>());
+      expect((memory as OpenedMemory).payload.primaryBytes, source);
+      expect(harness.boundedReadLimits, [
+        EntryCipher.maxEnvelopeBytesForPlaintext(
+          EntryPayloadCodec.maxEncodedPayloadBytesForPrimary(
+            source.lengthInBytes,
+          ),
+        ),
+      ]);
+      expect(harness.boundedEnvelopeBuffers.single, everyElement(0));
+      expect(harness.cipher.lastPlaintext, everyElement(0));
+    },
+  );
+
+  test(
+    'photo preview rejects an oversized source while generic open remains',
+    () async {
+      final source = Uint8List.fromList([1, 2, 3]);
+      final harness = await _VaultHarness.create(
+        format: MemoryFormat.photo,
+        primaryBytes: source,
+      );
+
+      expect(
+        await harness.controller.openPhotoPreview(
+          harness.metadata,
+          maxSourceBytes: source.lengthInBytes - 1,
+        ),
+        isA<UnavailableMemory>(),
+      );
+
+      final generic = await harness.controller.open(harness.metadata);
+      expect(generic, isA<OpenedMemory>());
+      expect((generic as OpenedMemory).payload.primaryBytes, source);
+      expect(harness.boundedReadLimits, hasLength(1));
+    },
+  );
+
+  test('photo preview clears decoded primary on format mismatch', () async {
+    final harness = await _VaultHarness.create(
+      format: MemoryFormat.photo,
+      payloadFormatOverride: MemoryFormat.voice,
+    );
+
+    expect(
+      await harness.controller.openPhotoPreview(
+        harness.metadata,
+        maxSourceBytes: 3,
+      ),
+      isA<UnavailableMemory>(),
+    );
+    expect(harness.codec.lastDecodedPayload!.primaryBytes, everyElement(0));
+    expect(harness.boundedEnvelopeBuffers.single, everyElement(0));
+  });
+
+  test('photo preview clears its envelope when decryption fails', () async {
+    final harness = await _VaultHarness.create(
+      format: MemoryFormat.photo,
+      primaryBytes: Uint8List.fromList([1]),
+      corruptTag: true,
+    );
+
+    expect(
+      await harness.controller.openPhotoPreview(
+        harness.metadata,
+        maxSourceBytes: 1,
+      ),
+      isA<UnavailableMemory>(),
+    );
+    expect(harness.boundedEnvelopeBuffers.single, everyElement(0));
+  });
+
+  test(
+    'photo preview rejects and clears an over-limit returned envelope',
+    () async {
+      final harness = await _VaultHarness.create(
+        format: MemoryFormat.photo,
+        primaryBytes: Uint8List.fromList([1]),
+        returnOversizedBoundedEnvelope: true,
+      );
+
+      expect(
+        await harness.controller.openPhotoPreview(
+          harness.metadata,
+          maxSourceBytes: 1,
+        ),
+        isA<UnavailableMemory>(),
+      );
+      expect(harness.boundedEnvelopeBuffers.single, everyElement(0));
+    },
+  );
+
+  test('photo preview fails closed before reads for non-kept media', () async {
+    final harness = await _VaultHarness.create(
+      format: MemoryFormat.photo,
+      primaryBytes: Uint8List.fromList([1]),
+    );
+
+    for (final metadata in [
+      harness.metadata.copyWith(state: 'pending'),
+      harness.metadata.copyWith(format: MemoryFormat.voice),
+    ]) {
+      expect(
+        await harness.controller.openPhotoPreview(metadata, maxSourceBytes: 1),
+        isA<UnavailableMemory>(),
+      );
+    }
+    expect(harness.resolvedReferences, isEmpty);
+    expect(harness.boundedReadLimits, isEmpty);
+  });
+
   test('expired released memory fails closed before blob access', () async {
     final harness = await _VaultHarness.create(now: DateTime.utc(2026, 10, 8));
 
@@ -85,16 +219,29 @@ final class _VaultHarness {
     required this.controller,
     required this.metadata,
     required this.resolvedReferences,
+    required this.boundedReadLimits,
+    required this.boundedEnvelopeBuffers,
+    required this.cipher,
+    required this.codec,
   });
 
   final VaultController controller;
   final VaultEntryMetadata metadata;
   final List<String> resolvedReferences;
+  final List<int> boundedReadLimits;
+  final List<Uint8List> boundedEnvelopeBuffers;
+  final _RecordingEntryCipher cipher;
+  final _RecordingEntryPayloadCodec codec;
 
   static Future<_VaultHarness> create({
     bool corruptTag = false,
     bool missingKey = false,
     bool payloadFormatMismatch = false,
+    MemoryFormat format = MemoryFormat.text,
+    MemoryFormat? payloadFormatOverride,
+    Uint8List? primaryBytes,
+    bool returnOversizedBoundedEnvelope = false,
+    bool readOnlyPlaintext = false,
     DateTime? now,
   }) async {
     const identity = LocalIdentity(
@@ -112,29 +259,37 @@ final class _VaultHarness {
       familyId: 'family-1',
       authorId: 'member-1',
       createdAt: DateTime.utc(2026, 9, 1),
-      format: MemoryFormat.text,
+      format: format,
       privacy: PrivacyTier.reveal,
       blobRef: 'entries/blobs/entry-1.keeper',
-      state: 'pending',
+      state: format == MemoryFormat.photo ? 'kept' : 'pending',
     );
     final key = List<int>.filled(32, 7);
     final secureValues = _MemorySecureValueStore({
       if (!missingKey) 'family-key': base64UrlEncode(key),
       'member-key': base64UrlEncode(List<int>.filled(32, 8)),
     });
-    final cipher = EntryCipher(
-      nonceFactory: () => Uint8List.fromList(List<int>.generate(12, (i) => i)),
-    );
-    final codec = const EntryPayloadCodec();
+    final cipher = _RecordingEntryCipher(readOnlyPlaintext: readOnlyPlaintext);
+    final codec = _RecordingEntryPayloadCodec();
+    final payloadFormat =
+        payloadFormatOverride ??
+        (payloadFormatMismatch ? MemoryFormat.photo : format);
+    final mediaPrimary =
+        primaryBytes ??
+        (payloadFormat == MemoryFormat.text
+            ? null
+            : Uint8List.fromList([1, 2, 3]));
     final payload = EntryPayload(
-      format: payloadFormatMismatch ? MemoryFormat.photo : MemoryFormat.text,
-      primaryBytes: payloadFormatMismatch
-          ? Uint8List.fromList([1, 2, 3])
-          : null,
-      text: payloadFormatMismatch ? null : 'Only in memory',
+      format: payloadFormat,
+      primaryBytes: mediaPrimary,
+      text: payloadFormat == MemoryFormat.text ? 'Only in memory' : null,
       caption: null,
-      mediaExtension: payloadFormatMismatch ? 'jpg' : null,
-      mediaDurationMs: null,
+      mediaExtension: switch (payloadFormat) {
+        MemoryFormat.photo => 'jpg',
+        MemoryFormat.voice => 'm4a',
+        MemoryFormat.text => null,
+      },
+      mediaDurationMs: payloadFormat == MemoryFormat.voice ? 1000 : null,
     );
     final encrypted = await cipher.encrypt(
       plaintext: codec.encode(payload),
@@ -144,6 +299,8 @@ final class _VaultHarness {
     );
     final storedBytes = corruptTag ? _corruptTag(encrypted) : encrypted;
     final resolvedReferences = <String>[];
+    final boundedReadLimits = <int>[];
+    final boundedEnvelopeBuffers = <Uint8List>[];
     final controller = VaultController(
       identity: identity,
       keyResolver: EntryKeyResolver(IdentityKeyService(secureValues)),
@@ -157,12 +314,70 @@ final class _VaultHarness {
         }
         return Uint8List.fromList(storedBytes);
       },
+      readEncryptedBlobBounded: (relativeRef, {required maxBytes}) async {
+        resolvedReferences.add(relativeRef);
+        boundedReadLimits.add(maxBytes);
+        if (relativeRef != 'entries/blobs/entry-1.keeper') {
+          throw ArgumentError.value(relativeRef, 'relativeRef');
+        }
+        final bytes = returnOversizedBoundedEnvelope
+            ? Uint8List(maxBytes + 1)
+            : Uint8List.fromList(storedBytes);
+        boundedEnvelopeBuffers.add(bytes);
+        return bytes;
+      },
     );
     return _VaultHarness(
       controller: controller,
       metadata: metadata,
       resolvedReferences: resolvedReferences,
+      boundedReadLimits: boundedReadLimits,
+      boundedEnvelopeBuffers: boundedEnvelopeBuffers,
+      cipher: cipher,
+      codec: codec,
     );
+  }
+}
+
+final class _RecordingEntryCipher extends EntryCipher {
+  _RecordingEntryCipher({this.readOnlyPlaintext = false})
+    : super(
+        nonceFactory: () =>
+            Uint8List.fromList(List<int>.generate(12, (index) => index)),
+      );
+
+  final bool readOnlyPlaintext;
+  Uint8List? lastPlaintext;
+
+  @override
+  Future<Uint8List> decrypt({
+    required Uint8List envelopeBytes,
+    required List<int> keyBytes,
+    required EntryMetadata metadata,
+    int? maxPlaintextBytes,
+  }) async {
+    final plaintext = await super.decrypt(
+      envelopeBytes: envelopeBytes,
+      keyBytes: keyBytes,
+      metadata: metadata,
+      maxPlaintextBytes: maxPlaintextBytes,
+    );
+    final returned = readOnlyPlaintext
+        ? plaintext.asUnmodifiableView()
+        : plaintext;
+    lastPlaintext = returned;
+    return returned;
+  }
+}
+
+final class _RecordingEntryPayloadCodec extends EntryPayloadCodec {
+  EntryPayload? lastDecodedPayload;
+
+  @override
+  EntryPayload decode(Uint8List bytes, {int? maxPrimaryBytes}) {
+    final payload = super.decode(bytes, maxPrimaryBytes: maxPrimaryBytes);
+    lastDecodedPayload = payload;
+    return payload;
   }
 }
 

@@ -41,6 +41,79 @@ void main() {
     }
   });
 
+  test('bounded decode admits a primary at the exact source limit', () {
+    final primary = Uint8List.fromList([1, 2, 3]);
+    final encoded = codec.encode(
+      EntryPayload(
+        format: MemoryFormat.photo,
+        primaryBytes: primary,
+        text: null,
+        caption: 'Within the bounded metadata allowance',
+        mediaExtension: 'jpg',
+        mediaDurationMs: null,
+      ),
+    );
+
+    expect(
+      encoded.lengthInBytes,
+      lessThanOrEqualTo(
+        EntryPayloadCodec.maxEncodedPayloadBytesForPrimary(
+          primary.lengthInBytes,
+        ),
+      ),
+    );
+    expect(
+      codec
+          .decode(encoded, maxPrimaryBytes: primary.lengthInBytes)
+          .primaryBytes,
+      primary,
+    );
+  });
+
+  test('bounded payload allowance covers the capture caption contract', () {
+    final primary = Uint8List.fromList([1]);
+    final encoded = codec.encode(
+      EntryPayload(
+        format: MemoryFormat.photo,
+        primaryBytes: primary,
+        text: null,
+        caption: List.filled(280, '\u0001').join(),
+        mediaExtension: 'abcdefghij',
+        mediaDurationMs: null,
+      ),
+    );
+
+    expect(
+      encoded.lengthInBytes,
+      lessThanOrEqualTo(
+        EntryPayloadCodec.maxEncodedPayloadBytesForPrimary(
+          primary.lengthInBytes,
+        ),
+      ),
+    );
+  });
+
+  test('bounded decode rejects oversized plaintext before JSON decode', () {
+    final oversized =
+        Uint8List(EntryPayloadCodec.maxEncodedPayloadBytesForPrimary(1) + 1)
+          ..fillRange(
+            0,
+            EntryPayloadCodec.maxEncodedPayloadBytesForPrimary(1) + 1,
+            0xff,
+          );
+
+    expect(
+      () => codec.decode(oversized, maxPrimaryBytes: 1),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('payload exceeds bounded decode limit'),
+        ),
+      ),
+    );
+  });
+
   test(
     'payload v1 encoding has one canonical field order and representation',
     () {
@@ -124,6 +197,56 @@ void main() {
         throwsFormatException,
       );
     }
+  });
+
+  test('bounded decode rejects an oversized encoded primary before base64', () {
+    final oversizedPrimary = <String, Object?>{
+      'v': 1,
+      'format': 'photo',
+      'primary': 'AAAA',
+      'text': null,
+      'caption': null,
+      'extension': 'jpg',
+      'duration_ms': null,
+    };
+
+    expect(
+      () => codec.decode(
+        Uint8List.fromList(utf8.encode(jsonEncode(oversizedPrimary))),
+        maxPrimaryBytes: 2,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('primary exceeds bounded decode limit'),
+        ),
+      ),
+    );
+  });
+
+  test('decode zeroes primary bytes when later validation fails', () {
+    final invalid = <String, Object?>{
+      'v': 1,
+      'format': 'photo',
+      'primary': 'AQID',
+      'text': 'second primary',
+      'caption': null,
+      'extension': 'jpg',
+      'duration_ms': null,
+    };
+    FormatException? failure;
+
+    try {
+      codec.decode(Uint8List.fromList(utf8.encode(jsonEncode(invalid))));
+    } on FormatException catch (error) {
+      failure = error;
+    }
+
+    expect(failure, isNotNull);
+    final validation = failure!.source! as ArgumentError;
+    final rejectedPayload = validation.invalidValue! as EntryPayload;
+    expect(rejectedPayload.primaryBytes, everyElement(0));
   });
 
   test('codec rejects payloads containing two primary representations', () {

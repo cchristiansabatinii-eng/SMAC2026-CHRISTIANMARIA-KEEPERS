@@ -35,6 +35,106 @@ void main() {
     );
   });
 
+  test('bounded decrypt admits the exact plaintext limit', () async {
+    final cipher = deterministicCipher();
+    for (var length = 0; length <= 3; length++) {
+      final plaintext = Uint8List.fromList(
+        List<int>.generate(length, (index) => index + 1),
+      );
+      final encrypted = await cipher.encrypt(
+        plaintext: plaintext,
+        keyBytes: List<int>.filled(32, 1),
+        metadata: _entryMetadata(),
+        keyScope: EntryKeyScope.family,
+      );
+
+      expect(
+        encrypted.lengthInBytes,
+        lessThanOrEqualTo(
+          EntryCipher.maxEnvelopeBytesForPlaintext(plaintext.lengthInBytes),
+        ),
+      );
+      expect(
+        await cipher.decrypt(
+          envelopeBytes: encrypted,
+          keyBytes: List<int>.filled(32, 1),
+          metadata: _entryMetadata(),
+          maxPlaintextBytes: plaintext.lengthInBytes,
+        ),
+        plaintext,
+      );
+    }
+  });
+
+  test(
+    'bounded decrypt rejects oversized ciphertext before base64 decode',
+    () async {
+      final cipher = deterministicCipher();
+      final encrypted = await cipher.encrypt(
+        plaintext: Uint8List.fromList([1]),
+        keyBytes: List<int>.filled(32, 1),
+        metadata: _entryMetadata(),
+        keyScope: EntryKeyScope.family,
+      );
+      final envelope =
+          jsonDecode(utf8.decode(encrypted)) as Map<String, dynamic>;
+      envelope['ciphertext'] = 'AAAA';
+
+      await expectLater(
+        cipher.decrypt(
+          envelopeBytes: Uint8List.fromList(utf8.encode(jsonEncode(envelope))),
+          keyBytes: List<int>.filled(32, 1),
+          metadata: _entryMetadata(),
+          maxPlaintextBytes: 2,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('ciphertext exceeds bounded decrypt limit'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'bounded decrypt rejects oversized nonce and tag before base64 decode',
+    () async {
+      final cipher = deterministicCipher();
+      final encrypted = await cipher.encrypt(
+        plaintext: Uint8List.fromList([1]),
+        keyBytes: List<int>.filled(32, 1),
+        metadata: _entryMetadata(),
+        keyScope: EntryKeyScope.family,
+      );
+      final valid = jsonDecode(utf8.decode(encrypted)) as Map<String, dynamic>;
+
+      for (final candidate in <(String, int)>[('nonce', 13), ('tag', 17)]) {
+        final envelope = <String, dynamic>{...valid};
+        envelope[candidate.$1] = _unpaddedBase64Url(Uint8List(candidate.$2));
+
+        await expectLater(
+          cipher.decrypt(
+            envelopeBytes: Uint8List.fromList(
+              utf8.encode(jsonEncode(envelope)),
+            ),
+            keyBytes: List<int>.filled(32, 1),
+            metadata: _entryMetadata(),
+            maxPlaintextBytes: 64,
+          ),
+          throwsA(
+            isA<FormatException>().having(
+              (error) => error.message,
+              'message',
+              contains('${candidate.$1} exceeds bounded decrypt limit'),
+            ),
+          ),
+        );
+      }
+    },
+  );
+
   test(
     'envelope has exactly five fields and unpadded base64url values',
     () async {

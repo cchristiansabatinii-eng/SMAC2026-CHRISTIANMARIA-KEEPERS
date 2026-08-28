@@ -5,11 +5,79 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/features/capture/data/encrypted_blob_store.dart';
 import 'package:path/path.dart' as p;
 
+import 'test_secure_blob_file_system.dart';
+
 void main() {
   final requiresPosix = Platform.isWindows
       ? 'The production encrypted-blob filesystem intentionally does not '
             'support Windows.'
       : false;
+
+  test('bounded encrypted reads zero partial buffers on overflow', () {
+    final first = Uint8List.fromList([1, 2]);
+    final overflow = Uint8List.fromList([3, 4]);
+    final builder = SecureBoundedBytesBuilder(maxBytes: 3)..add(first);
+
+    expect(
+      () => builder.add(overflow),
+      throwsA(
+        isA<FileSystemException>().having(
+          (error) => error.message,
+          'message',
+          contains('bounded read limit'),
+        ),
+      ),
+    );
+    expect(first, everyElement(0));
+    expect(overflow, everyElement(0));
+  });
+
+  test('bounded encrypted reads transfer one combined owned buffer', () {
+    final first = Uint8List.fromList([1, 2]);
+    final second = Uint8List.fromList([3]);
+    final builder = SecureBoundedBytesBuilder(maxBytes: 3)
+      ..add(first)
+      ..add(second);
+
+    final combined = builder.takeBytes();
+
+    expect(combined, [1, 2, 3]);
+    expect(first, everyElement(0));
+    expect(second, everyElement(0));
+  });
+
+  test('bounded encrypted reads clear chunks if allocation fails', () {
+    final chunk = Uint8List.fromList([1, 2, 3]);
+    final builder = SecureBoundedBytesBuilder(
+      maxBytes: chunk.lengthInBytes,
+      outputAllocator: (_) => throw StateError('allocation failed'),
+    )..add(chunk);
+
+    expect(builder.takeBytes, throwsStateError);
+    expect(chunk, everyElement(0));
+  });
+
+  test('encrypted blob store forwards its bounded read limit', () async {
+    final roots = await _PosixRoots.create('keepers-store-bounded-read-');
+    addTearDown(roots.close);
+    final store = testEncryptedBlobStore(roots.support, roots.capture);
+    final encrypted = Uint8List.fromList([1, 2, 3]);
+    final finalized = await store.finalize(
+      await store.stage('entry-bounded', encrypted),
+    );
+
+    expect(
+      await store.read(
+        finalized.relativeRef,
+        maxBytes: encrypted.lengthInBytes,
+      ),
+      encrypted,
+    );
+    await expectLater(
+      store.read(finalized.relativeRef, maxBytes: 2),
+      throwsA(isA<FileSystemException>()),
+    );
+  });
 
   group('POSIX handle-anchored encrypted blob filesystem', () {
     test(
@@ -59,6 +127,46 @@ void main() {
         expect(await fileSystem.readBlob(finalized.destinationName), [4, 5, 6]);
         await fileSystem.rollbackBlob(finalized);
         expect(await fileSystem.blobExists(finalized.destinationName), isFalse);
+      },
+      skip: requiresPosix,
+    );
+
+    test(
+      'bounded reads reject an encrypted blob before full allocation',
+      () async {
+        final roots = await _PosixRoots.create('keepers-posix-bounded-read-');
+        addTearDown(roots.close);
+        final fileSystem = PosixSecureBlobFileSystem(
+          supportDirectory: roots.support,
+          captureTemporaryDirectory: roots.capture,
+        );
+        final encrypted = Uint8List.fromList(
+          List<int>.generate(128 * 1024, (index) => index & 0xff),
+        );
+        final staged = await fileSystem.stage(encrypted);
+        final finalized = await fileSystem.finalize(
+          staged,
+          destinationName: 'entry-bounded.keeper',
+          publishedRef: p.join('entries', 'blobs', 'entry-bounded.keeper'),
+        );
+
+        expect(
+          await fileSystem.readBlob(
+            finalized.destinationName,
+            maxBytes: encrypted.lengthInBytes,
+          ),
+          encrypted,
+        );
+        await expectLater(
+          fileSystem.readBlob(finalized.destinationName, maxBytes: 1024),
+          throwsA(
+            isA<FileSystemException>().having(
+              (error) => error.message,
+              'message',
+              contains('bounded read limit'),
+            ),
+          ),
+        );
       },
       skip: requiresPosix,
     );

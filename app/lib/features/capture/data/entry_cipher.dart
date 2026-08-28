@@ -17,6 +17,7 @@ class EntryCipher {
   static const int _keyLength = 32;
   static const int _nonceLength = 12;
   static const int _tagLength = 16;
+  static const int _maxEnvelopeMetadataBytes = 128;
 
   final EntryNonceFactory _nonceFactory;
   final AesGcm _algorithm;
@@ -52,31 +53,71 @@ class EntryCipher {
     return Uint8List.fromList(utf8.encode(jsonEncode(envelope)));
   }
 
+  static int maxEnvelopeBytesForPlaintext(int maxPlaintextBytes) {
+    RangeError.checkNotNegative(maxPlaintextBytes, 'maxPlaintextBytes');
+    return _maxUnpaddedBase64Length(maxPlaintextBytes) +
+        _maxEnvelopeMetadataBytes;
+  }
+
   Future<Uint8List> decrypt({
     required Uint8List envelopeBytes,
     required List<int> keyBytes,
     required EntryMetadata metadata,
-  }) {
+    int? maxPlaintextBytes,
+  }) async {
     _validateKey(keyBytes);
-    final envelope = _decodeEnvelope(envelopeBytes);
-    final scope = _decodeScope(envelope['scope']);
-    final nonce = _decodeBinary(envelope, 'nonce');
-    final cipherText = _decodeBinary(envelope, 'ciphertext');
-    final tag = _decodeBinary(envelope, 'tag');
-    if (nonce.length != _nonceLength) {
-      throw const FormatException('Invalid AES-GCM nonce length');
+    if (maxPlaintextBytes != null) {
+      RangeError.checkNotNegative(maxPlaintextBytes, 'maxPlaintextBytes');
+      if (envelopeBytes.lengthInBytes >
+          maxEnvelopeBytesForPlaintext(maxPlaintextBytes)) {
+        throw const FormatException(
+          'Entry envelope exceeds bounded decrypt limit',
+        );
+      }
     }
-    if (tag.length != _tagLength) {
-      throw const FormatException('Invalid AES-GCM tag length');
+
+    Uint8List? nonce;
+    Uint8List? cipherText;
+    Uint8List? tag;
+    try {
+      final envelope = _decodeEnvelope(envelopeBytes);
+      final scope = _decodeScope(envelope['scope']);
+      nonce = _decodeBinary(envelope, 'nonce', maxDecodedBytes: _nonceLength);
+      cipherText = _decodeBinary(
+        envelope,
+        'ciphertext',
+        maxDecodedBytes: maxPlaintextBytes,
+      );
+      tag = _decodeBinary(envelope, 'tag', maxDecodedBytes: _tagLength);
+      if (nonce.length != _nonceLength) {
+        throw const FormatException('Invalid AES-GCM nonce length');
+      }
+      if (tag.length != _tagLength) {
+        throw const FormatException('Invalid AES-GCM tag length');
+      }
+      final box = SecretBox(cipherText, nonce: nonce, mac: Mac(tag));
+      final decrypted = await _algorithm.decrypt(
+        box,
+        secretKey: SecretKey(keyBytes),
+        aad: _authenticatedData(metadata, scope),
+      );
+      if (maxPlaintextBytes != null && decrypted.length > maxPlaintextBytes) {
+        decrypted.fillRange(0, decrypted.length, 0);
+        throw const FormatException(
+          'Entry plaintext exceeds bounded decrypt limit',
+        );
+      }
+      if (decrypted is Uint8List) return decrypted;
+      try {
+        return Uint8List.fromList(decrypted);
+      } finally {
+        decrypted.fillRange(0, decrypted.length, 0);
+      }
+    } finally {
+      nonce?.fillRange(0, nonce.length, 0);
+      cipherText?.fillRange(0, cipherText.length, 0);
+      tag?.fillRange(0, tag.length, 0);
     }
-    final box = SecretBox(cipherText, nonce: nonce, mac: Mac(tag));
-    return _algorithm
-        .decrypt(
-          box,
-          secretKey: SecretKey(keyBytes),
-          aad: _authenticatedData(metadata, scope),
-        )
-        .then(Uint8List.fromList);
   }
 
   Map<String, dynamic> _decodeEnvelope(Uint8List envelopeBytes) {
@@ -112,25 +153,42 @@ class EntryCipher {
     }
   }
 
-  Uint8List _decodeBinary(Map<String, dynamic> envelope, String field) {
+  Uint8List _decodeBinary(
+    Map<String, dynamic> envelope,
+    String field, {
+    int? maxDecodedBytes,
+  }) {
     final value = envelope[field];
     final alphabet = RegExp(r'^[A-Za-z0-9_-]*$');
-    if (value is! String ||
-        !alphabet.hasMatch(value) ||
-        value.length % 4 == 1) {
+    if (value is! String) {
       throw FormatException('Invalid entry envelope $field');
     }
-    try {
-      final decoded = Uint8List.fromList(
-        base64Url.decode(base64Url.normalize(value)),
+    if (maxDecodedBytes != null &&
+        value.length > _maxUnpaddedBase64Length(maxDecodedBytes)) {
+      throw FormatException(
+        'Entry envelope $field exceeds bounded decrypt limit',
       );
+    }
+    if (!alphabet.hasMatch(value) || value.length % 4 == 1) {
+      throw FormatException('Invalid entry envelope $field');
+    }
+    Uint8List? decoded;
+    try {
+      decoded = base64Url.decode(base64Url.normalize(value));
+      if (maxDecodedBytes != null && decoded.lengthInBytes > maxDecodedBytes) {
+        throw FormatException(
+          'Entry envelope $field exceeds bounded decrypt limit',
+        );
+      }
       if (_unpaddedBase64Url(decoded) != value) {
         throw FormatException('Invalid entry envelope $field');
       }
       return decoded;
     } on FormatException {
+      decoded?.fillRange(0, decoded.length, 0);
       rethrow;
     } on Object catch (error) {
+      decoded?.fillRange(0, decoded.length, 0);
       throw FormatException('Invalid entry envelope $field', error);
     }
   }
@@ -154,6 +212,9 @@ class EntryCipher {
 
   static String _unpaddedBase64Url(List<int> bytes) =>
       base64UrlEncode(bytes).replaceAll('=', '');
+
+  static int _maxUnpaddedBase64Length(int decodedBytes) =>
+      (decodedBytes * 4 + 2) ~/ 3;
 
   static Uint8List _secureNonce() {
     final random = Random.secure();
