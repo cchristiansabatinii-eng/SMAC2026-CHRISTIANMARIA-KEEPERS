@@ -27,6 +27,7 @@ import 'package:keepers/features/members/presentation/member_page_screen.dart';
 import 'package:keepers/features/members/presentation/your_memories_screen.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/features/onboarding/domain/local_identity.dart';
+import 'package:keepers/features/onboarding/presentation/account_conflict_screen.dart';
 import 'package:keepers/features/settings/presentation/settings_screen.dart';
 import 'package:keepers/features/vault/application/vault_providers.dart';
 import 'package:keepers/features/vault/domain/vault_models.dart';
@@ -545,6 +546,13 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
       widget.identity.familyId,
     );
     final familyCode = ref.watch(codeProvider);
+    if (familyCode.failure?.code ==
+        FamilyJoinFailureCode.accountFamilyConflict) {
+      return AccountConflictScreen(
+        kind: AccountConflictKind.accountAlreadyHasFamily,
+        onUseAnotherAccount: widget.onUseAnotherAccount,
+      );
+    }
     final joinRequests = ref.watch(requestsProvider);
     ref.listen(requestsProvider, _handleJoinRequestsChanged);
     final rosterProvider = familyRosterProvider(widget.identity.familyId);
