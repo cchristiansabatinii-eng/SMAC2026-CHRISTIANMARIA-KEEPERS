@@ -86,6 +86,38 @@
     assertEqual(response.headers.get("content-type"), null, "redirect content type");
   });
 
+  test("a valid attempt marker is preserved for iOS and general clients", async function () {
+    const response = globalThis.keepersAuthBridge.handleAuthBridgeRequest(
+      request("?code=valid-code&attempt=auth_attempt-123"),
+    );
+    const body = await response.text();
+
+    assertEqual(response.status, 303, "status");
+    assertEqual(
+      response.headers.get("location"),
+      "keepers://auth-callback?code=valid-code&attempt=auth_attempt-123",
+      "attempt-correlated redirect",
+    );
+    assertEqual(body, "", "redirect body");
+  });
+
+  test("a valid attempt marker is preserved in the Android package redirect", async function () {
+    const response = globalThis.keepersAuthBridge.handleAuthBridgeRequest(
+      request("?code=valid-code&attempt=auth_attempt-123", {
+        userAgent: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36",
+      }),
+    );
+    const body = await response.text();
+
+    assertEqual(response.status, 303, "status");
+    assertEqual(
+      response.headers.get("location"),
+      "intent://auth-callback?code=valid-code&attempt=auth_attempt-123#Intent;scheme=keepers;package=app.keepers.keepers;end",
+      "attempt-correlated Android redirect",
+    );
+    assertEqual(body, "", "redirect body");
+  });
+
   test("missing, empty, duplicate, and oversized codes are rejected without an app link", async function () {
     const invalidPaths = [
       "",
@@ -110,6 +142,44 @@
         "invalid response must explain how to recover",
       );
     }
+  });
+
+  test("empty, duplicate, malformed, and oversized attempt markers are rejected", async function () {
+    const invalidPaths = [
+      "?code=valid&attempt=",
+      "?code=valid&attempt=%20",
+      "?code=valid&attempt=first&attempt=second",
+      "?code=valid&attempt=contains.dot",
+      "?code=valid&attempt=contains%2Fslash",
+      `?code=valid&attempt=${"a".repeat(129)}`,
+    ];
+
+    for (const path of invalidPaths) {
+      const response = globalThis.keepersAuthBridge.handleAuthBridgeRequest(request(path));
+      const body = await readText(response);
+
+      assertEqual(response.status, 400, `status for ${path.slice(0, 40)}`);
+      assert(
+        !body.includes("keepers://") &&
+          !body.includes("intent://") &&
+          !body.includes("valid") &&
+          !body.includes("attempt="),
+        "invalid response must not contain a callback, code, or attempt marker",
+      );
+    }
+  });
+
+  test("unknown parameters are rejected even when code and attempt are valid", async function () {
+    const response = globalThis.keepersAuthBridge.handleAuthBridgeRequest(
+      request("?code=valid&attempt=auth-123&next=https%3A%2F%2Fexample.com"),
+    );
+    const body = await readText(response);
+
+    assertEqual(response.status, 400, "status");
+    assert(
+      !body.includes("keepers://") && !body.includes("intent://") && !body.includes("valid"),
+      "invalid response must not expose authentication inputs",
+    );
   });
 
   test("non-GET requests are rejected with an Allow header", async function () {

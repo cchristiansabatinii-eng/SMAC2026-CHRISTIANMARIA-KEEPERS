@@ -164,6 +164,24 @@ void main() {
     expect(regenerate.onPressed, isNull);
   });
 
+  testWidgets('explains when the signed-in account has another family', (
+    tester,
+  ) async {
+    final controller = _SheetController(
+      const FamilyCodeState(
+        phase: FamilyCodePhase.failed,
+        failure: FamilyJoinFailure(FamilyJoinFailureCode.accountFamilyConflict),
+      ),
+    );
+
+    await _pump(tester, controller);
+
+    expect(
+      find.text('This account is already connected to another family.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('regenerating modal ignores barrier drag and system back', (
     tester,
   ) async {

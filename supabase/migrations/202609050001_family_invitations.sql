@@ -386,9 +386,9 @@ begin
     raise exception using errcode = 'P0001', message = 'INVALID_IDENTIFIER';
   end if;
 
-  p_family_name := pg_catalog.btrim(pg_catalog.coalesce(p_family_name, ''));
-  p_display_name := pg_catalog.btrim(pg_catalog.coalesce(p_display_name, ''));
-  p_color_token := pg_catalog.btrim(pg_catalog.coalesce(p_color_token, ''));
+  p_family_name := pg_catalog.btrim(coalesce(p_family_name, ''));
+  p_display_name := pg_catalog.btrim(coalesce(p_display_name, ''));
+  p_color_token := pg_catalog.btrim(coalesce(p_color_token, ''));
 
   if pg_catalog.char_length(p_family_name) not between 1 and 100
     or pg_catalog.char_length(p_display_name) not between 1 and 100
@@ -605,7 +605,7 @@ begin
     raise exception using errcode = 'P0001', message = 'NOT_OWNER';
   end if;
 
-  v_recipient_email := pg_catalog.lower(pg_catalog.btrim(pg_catalog.coalesce(p_recipient_email, '')));
+  v_recipient_email := pg_catalog.lower(pg_catalog.btrim(coalesce(p_recipient_email, '')));
   if pg_catalog.char_length(v_recipient_email) > 254
     or v_recipient_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
   then
@@ -798,7 +798,7 @@ set search_path = ''
 as $function$
 declare
   v_account_id pg_catalog.uuid := auth.uid();
-  v_email pg_catalog.text := pg_catalog.lower(pg_catalog.btrim(pg_catalog.coalesce(auth.jwt() ->> 'email', '')));
+  v_email pg_catalog.text := pg_catalog.lower(pg_catalog.btrim(coalesce(auth.jwt() ->> 'email', '')));
   v_token_hash pg_catalog.text;
   v_invite public.family_invites%rowtype;
   v_family_name pg_catalog.text;
@@ -915,7 +915,7 @@ set search_path = ''
 as $function$
 declare
   v_account_id pg_catalog.uuid := auth.uid();
-  v_email pg_catalog.text := pg_catalog.lower(pg_catalog.btrim(pg_catalog.coalesce(auth.jwt() ->> 'email', '')));
+  v_email pg_catalog.text := pg_catalog.lower(pg_catalog.btrim(coalesce(auth.jwt() ->> 'email', '')));
   v_token_hash pg_catalog.text;
   v_invite public.family_invites%rowtype;
   v_existing_family_id pg_catalog.uuid;
@@ -993,8 +993,8 @@ begin
       raise exception using errcode = 'P0001', message = 'INVITE_EXPIRED';
     end if;
 
-    p_display_name := pg_catalog.btrim(pg_catalog.coalesce(p_display_name, ''));
-    p_color_token := pg_catalog.btrim(pg_catalog.coalesce(p_color_token, ''));
+    p_display_name := pg_catalog.btrim(coalesce(p_display_name, ''));
+    p_color_token := pg_catalog.btrim(coalesce(p_color_token, ''));
     if p_member_id is null
       or pg_catalog.char_length(p_display_name) not between 1 and 100
       or pg_catalog.char_length(p_color_token) not between 1 and 64
@@ -1100,7 +1100,7 @@ begin
     raise exception using errcode = 'P0001', message = 'FAMILY_UNAVAILABLE';
   end if;
 
-  select pg_catalog.coalesce(
+  select coalesce(
     pg_catalog.jsonb_agg(
       pg_catalog.jsonb_build_object(
         'memberId', membership.member_id::pg_catalog.text,
@@ -1303,7 +1303,7 @@ begin
     raise exception using errcode = 'P0001', message = 'FORBIDDEN';
   end if;
 
-  select pg_catalog.coalesce(
+  select coalesce(
     pg_catalog.jsonb_agg(
       pg_catalog.jsonb_build_object(
         'memberId', membership.member_id::pg_catalog.text,

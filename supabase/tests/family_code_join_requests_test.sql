@@ -4,7 +4,31 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to anon, authenticated;
 grant execute on all functions in schema extensions to anon, authenticated;
 
-select plan(106);
+select plan(107);
+
+select ok(
+  not exists (
+    select 1
+    from pg_catalog.pg_proc as proc
+    join pg_catalog.pg_namespace as namespace
+      on namespace.oid = proc.pronamespace
+    where namespace.nspname in ('public', 'private')
+      and proc.proname in (
+        'bootstrap_owner_family',
+        'create_family_invite',
+        'preview_family_invite',
+        'claim_family_invite',
+        'list_active_family_members',
+        'own_family_join_request_json',
+        'preview_family_by_code',
+        'create_family_join_request',
+        'list_pending_family_join_requests'
+      )
+      and pg_catalog.pg_get_functiondef(proc.oid)
+        like '%pg_catalog.coalesce(%'
+  ),
+  'family routines use valid SQL COALESCE syntax'
+);
 
 -- Schema, constraints, RLS, grants, and compatibility.
 select has_table('public', 'family_join_codes');

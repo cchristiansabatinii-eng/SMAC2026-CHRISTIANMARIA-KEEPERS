@@ -38,6 +38,37 @@ abstract interface class CloudFamilyAuthEvents {
   Stream<void> get signedInEvents;
 }
 
+/// Optional capability for gateways that report changes to the active account.
+///
+/// Unlike [CloudFamilyAuthEvents], this includes session loss and switching
+/// from one authenticated account to another.
+abstract interface class CloudFamilyAccountSessionEvents {
+  Stream<String?> get accountSessionChangedEvents;
+}
+
+/// Optional capability for gateways that can end the current account session.
+abstract interface class CloudFamilyAccountSession {
+  Future<void> signOut();
+}
+
+enum SocialAuthProvider { google, microsoft, apple }
+
+/// Optional account-authentication capability for gateways that support
+/// browser-based identity providers.
+abstract interface class CloudFamilySocialAuth {
+  Future<void> signInWithProvider(SocialAuthProvider provider);
+
+  /// Abandons the outstanding browser flow before another PKCE method starts.
+  /// Returns false when its callback has already checked out the verifier and
+  /// therefore must finish as the sole in-flight authentication attempt.
+  Future<bool> cancelPendingProviderSignIn();
+
+  /// Clears PKCE state after the SDK reports that callback processing ended
+  /// in failure. Returns false when the error did not belong to the current
+  /// attempt, so a stale callback cannot release a newer PKCE verifier.
+  Future<bool> clearFailedProviderSignIn();
+}
+
 /// Independent family-code join capability for gateways that support it.
 abstract interface class FamilyCodeJoinGateway {
   bool get isConfigured;

@@ -151,6 +151,79 @@ void main() {
     },
   );
 
+  test(
+    'clearing an exact account binding preserves the local family and member',
+    () async {
+      final db = await _openSchemaV3Database();
+      addTearDown(db.close);
+      await _insertFamily(db);
+      await _insertAdult(
+        db,
+        id: 'member-1',
+        memberKeyRef: 'member-key-1',
+        createdAt: DateTime.utc(2026, 9, 1),
+      );
+      final repository = MemberRepository();
+      await repository.bindLocalIdentity(
+        db,
+        familyId: 'family-1',
+        memberId: 'member-1',
+        accountId: 'account-1',
+      );
+      final familiesBefore = await db.query('families');
+      final membersBefore = await db.query('members');
+
+      final cleared = await repository.clearLocalIdentityAccountBinding(
+        db,
+        familyId: 'family-1',
+        memberId: 'member-1',
+        accountId: 'account-1',
+      );
+
+      expect(cleared, isTrue);
+      expect((await repository.findLocalIdentity(db))?.accountId, isNull);
+      expect(await db.query('families'), familiesBefore);
+      expect(await db.query('members'), membersBefore);
+    },
+  );
+
+  test('clearing an account binding refuses every identity mismatch', () async {
+    final db = await _openSchemaV3Database();
+    addTearDown(db.close);
+    await _insertFamily(db);
+    await _insertAdult(
+      db,
+      id: 'member-1',
+      memberKeyRef: 'member-key-1',
+      createdAt: DateTime.utc(2026, 9, 1),
+    );
+    final repository = MemberRepository();
+    await repository.bindLocalIdentity(
+      db,
+      familyId: 'family-1',
+      memberId: 'member-1',
+      accountId: 'account-1',
+    );
+
+    for (final mismatch in const [
+      (familyId: 'family-1', memberId: 'member-1', accountId: 'account-2'),
+      (familyId: 'family-1', memberId: 'member-2', accountId: 'account-1'),
+      (familyId: 'family-2', memberId: 'member-1', accountId: 'account-1'),
+    ]) {
+      expect(
+        await repository.clearLocalIdentityAccountBinding(
+          db,
+          familyId: mismatch.familyId,
+          memberId: mismatch.memberId,
+          accountId: mismatch.accountId,
+        ),
+        isFalse,
+      );
+    }
+
+    expect((await repository.findLocalIdentity(db))?.accountId, 'account-1');
+  });
+
   test('local identity equality includes its nullable account binding', () {
     const unbound = LocalIdentity(
       familyId: 'family-1',

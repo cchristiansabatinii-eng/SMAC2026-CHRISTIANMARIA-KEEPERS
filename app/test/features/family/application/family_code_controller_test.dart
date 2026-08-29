@@ -50,6 +50,27 @@ void main() {
     expect(cached?.material.ciphertext, 'draft-2');
   });
 
+  test(
+    'bootstraps a bound local owner after a forbidden cloud lookup',
+    () async {
+      final gateway = _CodeGateway(
+        code: null,
+        getFailures: const [FamilyJoinFailure(FamilyJoinFailureCode.forbidden)],
+      );
+      final fixture = await _Fixture.create(
+        gateway: gateway,
+        candidates: ['ABCD1234'],
+      );
+      addTearDown(fixture.dispose);
+
+      await fixture.controller.load();
+
+      expect(gateway.bootstrapCalls, 1);
+      expect(fixture.state.phase, FamilyCodePhase.ready);
+      expect(fixture.state.displayCode, 'ABCD-1234');
+    },
+  );
+
   test('opens cached encrypted material while offline', () async {
     final material = _material(version: 3, ciphertext: 'cached-material');
     final gateway = _CodeGateway(

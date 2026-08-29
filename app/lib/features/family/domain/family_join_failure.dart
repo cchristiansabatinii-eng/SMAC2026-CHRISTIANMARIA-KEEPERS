@@ -3,6 +3,7 @@ enum FamilyJoinFailureCode {
   signedOut,
   networkUnavailable,
   familyNotFound,
+  accountFamilyConflict,
   alreadyMember,
   requestAlreadyPending,
   requestExpired,

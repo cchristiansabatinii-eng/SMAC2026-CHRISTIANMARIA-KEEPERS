@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
+import 'package:keepers/features/family/application/cloud_family_providers.dart';
 import 'package:keepers/features/family/application/family_join_controller.dart';
 import 'package:keepers/features/family/application/family_roster_provider.dart';
 import 'package:keepers/features/family/application/pending_join_completion_controller.dart';
+import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/members/application/avatar_editor_controller.dart';
 import 'package:keepers/features/members/domain/avatar_catalog.dart';
@@ -114,6 +116,9 @@ void main() {
               identityLoads += 1;
               return refreshedIdentity;
             }),
+            cloudFamilyGatewayProvider.overrideWithValue(
+              const _SignedInAccountGateway(),
+            ),
             avatarSaveProvider.overrideWithValue(({
               required memberId,
               required avatar,
@@ -188,6 +193,22 @@ LocalIdentity _identityWithAvatar(AvatarConfig avatar) => LocalIdentity(
   colorToken: _identity.colorToken,
   avatar: avatar,
 );
+
+final class _SignedInAccountGateway implements CloudFamilyGateway {
+  const _SignedInAccountGateway();
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  String? get authenticatedAccountId => 'account-1';
+
+  @override
+  String? get authenticatedEmail => 'keeper@example.com';
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 Future<void> _pumpSettings(WidgetTester tester, {MediaQueryData? mediaQuery}) =>
     tester.pumpWidget(

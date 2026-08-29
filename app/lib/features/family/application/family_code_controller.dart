@@ -216,7 +216,10 @@ base class FamilyCodeController extends Notifier<FamilyCodeState> {
         );
         if (identity == null) return;
       } on FamilyJoinFailure catch (failure) {
-        if (failure.code != FamilyJoinFailureCode.familyNotFound) rethrow;
+        if (failure.code != FamilyJoinFailureCode.familyNotFound &&
+            failure.code != FamilyJoinFailureCode.forbidden) {
+          rethrow;
+        }
         identity = await _revalidateIdentity(
           generation: generation,
           expectedAccountId: expectedAccountId,

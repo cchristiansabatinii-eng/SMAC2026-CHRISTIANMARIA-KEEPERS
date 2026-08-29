@@ -10,17 +10,26 @@ import 'package:keepers/features/family/application/family_join_controller.dart'
 import 'package:keepers/features/family/application/pending_join_completion_controller.dart';
 import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/domain/cloud_family_models.dart';
+import 'package:keepers/features/family/domain/family_code.dart';
+import 'package:keepers/features/family/domain/family_invitation.dart';
 import 'package:keepers/features/family/domain/family_join_request.dart';
+import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/family/presentation/family_join_screen.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
+import 'package:keepers/features/onboarding/data/family_repository.dart';
 import 'package:keepers/features/onboarding/data/identity_key_service.dart';
+import 'package:keepers/features/onboarding/data/member_repository.dart';
 import 'package:keepers/features/onboarding/domain/local_identity.dart';
+import 'package:keepers/features/onboarding/presentation/account_conflict_screen.dart';
+import 'package:keepers/features/onboarding/presentation/account_screen.dart';
 import 'package:keepers/features/onboarding/presentation/setup_screen.dart';
 import 'package:keepers/features/onboarding/presentation/startup_gate.dart';
+import 'package:keepers/features/vault/presentation/observatory_screen.dart';
 import 'package:keepers/storage/database_key_store.dart';
 import 'package:keepers/storage/database_providers.dart';
 import 'package:keepers/storage/schema.dart';
+import 'package:keepers/ui/family_wheel_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -152,7 +161,7 @@ void main() {
     },
   );
 
-  testWidgets('startup runs Task 3 recovery before identity and own request', (
+  testWidgets('startup resolves identity then recovers before own request', (
     tester,
   ) async {
     final events = <String>[];
@@ -168,6 +177,9 @@ void main() {
             events.add('identity');
             return null;
           }),
+          cloudFamilyGatewayProvider.overrideWithValue(
+            const _SignedInCloudGateway(),
+          ),
           familyCodeJoinGatewayProvider.overrideWithValue(gateway),
           secureValueStoreProvider.overrideWithValue(_MemorySecureValueStore()),
         ],
@@ -176,8 +188,417 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(events, ['recovery', 'identity', 'own']);
+    expect(events, ['identity', 'recovery', 'own']);
     expect(find.byType(SetupScreen), findsOneWidget);
+  });
+
+  testWidgets('first run requires an account before family setup', (
+    tester,
+  ) async {
+    final gateway = _AccountGateway();
+    addTearDown(gateway.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          familyJoinCompletionRecoveryProvider.overrideWithValue(
+            () async => const PendingJoinCompletionState(),
+          ),
+          localIdentityProvider.overrideWith((ref) async => null),
+          cloudFamilyGatewayProvider.overrideWithValue(gateway),
+        ],
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create your Keepers account'), findsOneWidget);
+    expect(find.text('CREATE A FAMILY'), findsNothing);
+    expect(find.byType(SetupScreen), findsNothing);
+  });
+
+  testWidgets(
+    'startup rejects a local family bound to a different signed-in account',
+    (tester) async {
+      final gateway = _DifferentSignedInCloudGateway();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            familyJoinCompletionRecoveryProvider.overrideWithValue(
+              () async => const PendingJoinCompletionState(),
+            ),
+            localIdentityProvider.overrideWith((ref) async => _startupIdentity),
+            cloudFamilyGatewayProvider.overrideWithValue(gateway),
+          ],
+          child: const MaterialApp(home: StartupGate()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ObservatoryScreen), findsNothing);
+      expect(find.byType(FamilyWheelScreen), findsNothing);
+      expect(
+        find.text('THIS KEEPERS PROFILE IS CONNECTED TO A DIFFERENT ACCOUNT.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Use another account'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.signOutCalls, 1);
+      expect(find.text('Create your Keepers account'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'account already in another family can switch without deleting local data',
+    (tester) async {
+      final fixture = await _WidgetFixture.create();
+      addTearDown(fixture.dispose);
+      final keys = await fixture.identityKeyService.createFor(
+        familyId: _startupFamilyId,
+        memberId: _startupMemberId,
+      );
+      await fixture.database.transaction((transaction) async {
+        await FamilyRepository().insert(
+          transaction,
+          id: _startupFamilyId,
+          name: 'Rahman family',
+          familyKeyRef: keys.familyKeyRef,
+          createdAt: DateTime.utc(2026, 9, 1),
+        );
+        await MemberRepository().insert(
+          transaction,
+          id: _startupMemberId,
+          familyId: _startupFamilyId,
+          name: 'Mariam',
+          memberKeyRef: keys.memberKeyRef,
+          colorToken: 'ochre',
+          avatar: const AvatarConfig.defaults(seed: _startupMemberId),
+          createdAt: DateTime.utc(2026, 9, 1),
+        );
+        await MemberRepository().bindLocalIdentity(
+          transaction,
+          familyId: _startupFamilyId,
+          memberId: _startupMemberId,
+          accountId: _startupAccountId,
+        );
+      });
+      final gateway = _ConflictingFamilyGateway();
+
+      await tester.pumpWidget(
+        fixture.scope(const KeepersApp(), gateway: gateway),
+      );
+      await _pumpUntilFound(
+        tester,
+        find.text('THIS ACCOUNT IS ALREADY CONNECTED TO ANOTHER FAMILY.'),
+      );
+
+      expect(find.byType(FamilyWheelScreen), findsNothing);
+      await tester.tap(find.text('Use another account'));
+      await _pumpUntilFound(tester, find.text('Create your Keepers account'));
+
+      expect(gateway.signOutCalls, 1);
+      expect(await fixture.database.query('families'), hasLength(1));
+      expect(await fixture.database.query('members'), hasLength(1));
+      expect(
+        (await fixture.database.query('local_identity_binding'))
+            .single['account_id'],
+        isNull,
+      );
+    },
+  );
+
+  testWidgets(
+    'signed-out first run reaches account gate before pending recovery',
+    (tester) async {
+      final gateway = _AccountGateway();
+      addTearDown(gateway.dispose);
+      var recoveryAttempts = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            familyJoinCompletionRecoveryProvider.overrideWithValue(() async {
+              recoveryAttempts += 1;
+              return const PendingJoinCompletionState(
+                phase: PendingJoinCompletionPhase.failed,
+                failure: FamilyJoinFailure(FamilyJoinFailureCode.signedOut),
+              );
+            }),
+            localIdentityProvider.overrideWith((ref) async => null),
+            cloudFamilyGatewayProvider.overrideWithValue(gateway),
+          ],
+          child: const MaterialApp(home: StartupGate()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Create your Keepers account'), findsOneWidget);
+      expect(find.byType(StartupError), findsNothing);
+      expect(recoveryAttempts, 0);
+    },
+  );
+
+  testWidgets(
+    'signed-out existing profile reaches account gate before pending recovery',
+    (tester) async {
+      final gateway = _AccountGateway();
+      addTearDown(gateway.dispose);
+      var recoveryAttempts = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            familyJoinCompletionRecoveryProvider.overrideWithValue(() async {
+              recoveryAttempts += 1;
+              return const PendingJoinCompletionState(
+                phase: PendingJoinCompletionPhase.failed,
+                failure: FamilyJoinFailure(FamilyJoinFailureCode.signedOut),
+              );
+            }),
+            localIdentityProvider.overrideWith((ref) async => _startupIdentity),
+            cloudFamilyGatewayProvider.overrideWithValue(gateway),
+          ],
+          child: const MaterialApp(home: StartupGate()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Create your Keepers account'), findsOneWidget);
+      expect(find.byType(StartupError), findsNothing);
+      expect(recoveryAttempts, 0);
+    },
+  );
+
+  testWidgets(
+    'gateway sign-out replaces an established family screen with account recovery',
+    (tester) async {
+      final gateway = _AccountGateway()..completeSignIn();
+      addTearDown(gateway.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            familyJoinCompletionRecoveryProvider.overrideWithValue(
+              () async => const PendingJoinCompletionState(),
+            ),
+            localIdentityProvider.overrideWith((ref) async => _startupIdentity),
+            cloudFamilyGatewayProvider.overrideWithValue(gateway),
+          ],
+          child: const MaterialApp(home: StartupGate()),
+        ),
+      );
+      await _pumpUntilFound(tester, find.byType(ObservatoryScreen));
+
+      gateway.emitSignOut();
+      await _pumpUntilFound(tester, find.byType(AccountScreen));
+
+      expect(find.byType(ObservatoryScreen), findsNothing);
+      expect(find.byType(AccountScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'gateway account change replaces an established family screen with conflict recovery',
+    (tester) async {
+      final gateway = _AccountGateway()..completeSignIn();
+      addTearDown(gateway.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            familyJoinCompletionRecoveryProvider.overrideWithValue(
+              () async => const PendingJoinCompletionState(),
+            ),
+            localIdentityProvider.overrideWith((ref) async => _startupIdentity),
+            cloudFamilyGatewayProvider.overrideWithValue(gateway),
+          ],
+          child: const MaterialApp(home: StartupGate()),
+        ),
+      );
+      await _pumpUntilFound(tester, find.byType(ObservatoryScreen));
+      expect(find.byType(ObservatoryScreen), findsOneWidget);
+
+      gateway.switchAccount(_differentStartupAccountId);
+      await _pumpUntilFound(tester, find.byType(AccountConflictScreen));
+
+      expect(find.byType(ObservatoryScreen), findsNothing);
+      expect(find.byType(AccountConflictScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets('account session events rebind when the cloud gateway reloads', (
+    tester,
+  ) async {
+    final originalGateway = _AccountGateway()..completeSignIn();
+    final reloadedGateway = _AccountGateway()..completeSignIn();
+    addTearDown(originalGateway.dispose);
+    addTearDown(reloadedGateway.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          initialCloudFamilyGatewayProvider.overrideWithValue(originalGateway),
+          cloudFamilyGatewayLoaderProvider.overrideWithValue(
+            () async => reloadedGateway,
+          ),
+          familyJoinCompletionRecoveryProvider.overrideWithValue(
+            () async => const PendingJoinCompletionState(),
+          ),
+          localIdentityProvider.overrideWith((ref) async => _startupIdentity),
+        ],
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(ObservatoryScreen));
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(StartupGate)),
+    );
+
+    await container.read(cloudFamilyGatewayStateProvider.notifier).reload();
+    await tester.pump();
+    originalGateway.emitSignOut();
+    await tester.pump();
+
+    expect(find.byType(ObservatoryScreen), findsOneWidget);
+
+    reloadedGateway.emitSignOut();
+    await _pumpUntilFound(tester, find.byType(AccountScreen));
+
+    expect(find.byType(AccountScreen), findsOneWidget);
+  });
+
+  testWidgets('account session subscription closes with StartupGate', (
+    tester,
+  ) async {
+    final gateway = _AccountGateway()..completeSignIn();
+    addTearDown(gateway.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          familyJoinCompletionRecoveryProvider.overrideWithValue(
+            () async => const PendingJoinCompletionState(),
+          ),
+          localIdentityProvider.overrideWith((ref) async => _startupIdentity),
+          cloudFamilyGatewayProvider.overrideWithValue(gateway),
+        ],
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(ObservatoryScreen));
+    expect(gateway.hasAccountSessionListener, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    expect(gateway.hasAccountSessionListener, isFalse);
+  });
+
+  testWidgets(
+    'unconfigured account retry installs a loaded gateway and resumes startup',
+    (tester) async {
+      final loadedGateway = _AccountGateway();
+      addTearDown(loadedGateway.dispose);
+      var loadAttempts = 0;
+      var recoveryAttempts = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            cloudFamilyGatewayLoaderProvider.overrideWithValue(() async {
+              loadAttempts += 1;
+              return loadedGateway;
+            }),
+            familyJoinCompletionRecoveryProvider.overrideWithValue(() async {
+              recoveryAttempts += 1;
+              return const PendingJoinCompletionState();
+            }),
+            localIdentityProvider.overrideWith((ref) async => null),
+          ],
+          child: const MaterialApp(home: StartupGate()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Account setup is unavailable right now.'),
+        findsOneWidget,
+      );
+      expect(loadAttempts, 0);
+      expect(recoveryAttempts, 0);
+
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+
+      expect(loadAttempts, 1);
+      expect(find.text('Create your Keepers account'), findsOneWidget);
+      expect(recoveryAttempts, 0);
+
+      loadedGateway.completeSignIn();
+      await tester.pumpAndSettle();
+
+      expect(recoveryAttempts, 1);
+      expect(find.byType(SetupScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets('completed account creation resumes first-run family setup', (
+    tester,
+  ) async {
+    final gateway = _AccountGateway();
+    addTearDown(gateway.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          familyJoinCompletionRecoveryProvider.overrideWithValue(
+            () async => const PendingJoinCompletionState(),
+          ),
+          localIdentityProvider.overrideWith((ref) async => null),
+          cloudFamilyGatewayProvider.overrideWithValue(gateway),
+        ],
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    gateway.completeSignIn();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SetupScreen), findsOneWidget);
+    expect(find.text('CREATE A FAMILY'), findsOneWidget);
+    expect(find.text('Create your Keepers account'), findsNothing);
+  });
+
+  testWidgets('session loss during Create offers a route back to account', (
+    tester,
+  ) async {
+    final gateway = _AccountGateway()..completeSignIn();
+    addTearDown(gateway.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          familyJoinCompletionRecoveryProvider.overrideWithValue(
+            () async => const PendingJoinCompletionState(),
+          ),
+          localIdentityProvider.overrideWith((ref) async => null),
+          cloudFamilyGatewayProvider.overrideWithValue(gateway),
+        ],
+        child: const MaterialApp(home: StartupGate()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _chooseCreate(tester);
+    gateway.signOut();
+    await tester.enterText(find.byKey(const Key('family-name')), 'Sabati');
+    await tester.enterText(find.byKey(const Key('member-name')), 'Chris');
+    await tester.pump();
+    await tester.tap(find.text('Enter the Observatory'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Your account session ended. Sign in again.'),
+      findsOneWidget,
+    );
+    expect(find.text('Sign in again'), findsOneWidget);
+
+    await tester.tap(find.text('Sign in again'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create your Keepers account'), findsOneWidget);
+    expect(find.byType(SetupScreen), findsNothing);
   });
 
   testWidgets('startup resumes a pending request before family setup', (
@@ -194,6 +615,9 @@ void main() {
             () async => const PendingJoinCompletionState(),
           ),
           localIdentityProvider.overrideWith((ref) async => null),
+          cloudFamilyGatewayProvider.overrideWithValue(
+            const _SignedInCloudGateway(),
+          ),
           familyCodeJoinGatewayProvider.overrideWithValue(gateway),
           secureValueStoreProvider.overrideWithValue(_MemorySecureValueStore()),
         ],
@@ -240,6 +664,9 @@ void main() {
                 identityReads += 1;
                 return _startupIdentity;
               }),
+              cloudFamilyGatewayProvider.overrideWithValue(
+                const _SignedInCloudGateway(),
+              ),
             ],
             child: const MaterialApp(home: StartupGate()),
           ),
@@ -249,7 +676,7 @@ void main() {
         expect(find.byType(StartupError), findsOneWidget);
         expect(find.text('THIS WEEK'), findsNothing);
         expect(find.byType(SetupScreen), findsNothing);
-        expect(identityReads, 0);
+        expect(identityReads, 1);
       },
     );
   }
@@ -274,6 +701,9 @@ void main() {
             return const PendingJoinCompletionState();
           }),
           localIdentityProvider.overrideWith((ref) async => null),
+          cloudFamilyGatewayProvider.overrideWithValue(
+            const _SignedInCloudGateway(),
+          ),
         ],
         child: const MaterialApp(home: StartupGate()),
       ),
@@ -303,6 +733,9 @@ void main() {
               () async => const PendingJoinCompletionState(),
             ),
             localIdentityProvider.overrideWith((ref) async => null),
+            cloudFamilyGatewayProvider.overrideWithValue(
+              const _SignedInCloudGateway(),
+            ),
             familyCodeJoinGatewayProvider.overrideWithValue(gateway),
             secureValueStoreProvider.overrideWithValue(
               _MemorySecureValueStore(),
@@ -349,6 +782,9 @@ void main() {
               () async => const PendingJoinCompletionState(),
             ),
             localIdentityProvider.overrideWith((ref) async => null),
+            cloudFamilyGatewayProvider.overrideWithValue(
+              const _SignedInCloudGateway(),
+            ),
             familyCodeJoinGatewayProvider.overrideWithValue(gateway),
             secureValueStoreProvider.overrideWithValue(
               _MemorySecureValueStore(),
@@ -512,6 +948,9 @@ void main() {
             if (attempts == 1) throw StateError('storage details');
             return null;
           }),
+          cloudFamilyGatewayProvider.overrideWithValue(
+            const _SignedInCloudGateway(),
+          ),
         ],
         child: const KeepersApp(),
       ),
@@ -561,6 +1000,9 @@ void main() {
             () async => const PendingJoinCompletionState(),
           ),
           localIdentityProvider.overrideWith((ref) => identity.future),
+          cloudFamilyGatewayProvider.overrideWithValue(
+            const _SignedInCloudGateway(),
+          ),
         ],
         child: const KeepersApp(),
       ),
@@ -598,11 +1040,14 @@ final class _WidgetFixture {
   final IdentityKeyService identityKeyService;
   final String Function() idFactory;
 
-  Widget scope(Widget child) => ProviderScope(
+  Widget scope(Widget child, {CloudFamilyGateway? gateway}) => ProviderScope(
     overrides: [
       databaseProvider.overrideWithValue(AsyncValue.data(database)),
       secureValueStoreProvider.overrideWithValue(store),
       identityKeyServiceProvider.overrideWithValue(identityKeyService),
+      cloudFamilyGatewayProvider.overrideWithValue(
+        gateway ?? const _SignedInCloudGateway(),
+      ),
       idFactoryProvider.overrideWithValue(idFactory),
       utcNowProvider.overrideWithValue(() => DateTime.utc(2026, 9, 1)),
     ],
@@ -707,6 +1152,161 @@ final class _StartupGateway implements FamilyCodeJoinGateway {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+final class _AccountGateway
+    implements
+        CloudFamilyGateway,
+        CloudFamilyAuthEvents,
+        CloudFamilyAccountSessionEvents {
+  final _signedIn = StreamController<void>.broadcast(sync: true);
+  final _accountSessionChanges = StreamController<String?>.broadcast(
+    sync: true,
+  );
+
+  String? _accountId;
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  String? get authenticatedAccountId => _accountId;
+
+  @override
+  String? get authenticatedEmail => null;
+
+  @override
+  Stream<void> get signedInEvents => _signedIn.stream;
+
+  @override
+  Stream<String?> get accountSessionChangedEvents =>
+      _accountSessionChanges.stream;
+
+  bool get hasAccountSessionListener => _accountSessionChanges.hasListener;
+
+  void completeSignIn() {
+    _accountId = _startupAccountId;
+    _signedIn.add(null);
+    _accountSessionChanges.add(_accountId);
+  }
+
+  void switchAccount(String accountId) {
+    _accountId = accountId;
+    _accountSessionChanges.add(_accountId);
+  }
+
+  void emitSignOut() {
+    _accountId = null;
+    _accountSessionChanges.add(_accountId);
+  }
+
+  void signOut() => _accountId = null;
+
+  Future<void> dispose() async {
+    await _signedIn.close();
+    await _accountSessionChanges.close();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _SignedInCloudGateway implements CloudFamilyGateway {
+  const _SignedInCloudGateway();
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  String? get authenticatedAccountId => _startupAccountId;
+
+  @override
+  String? get authenticatedEmail => 'keeper@example.com';
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _DifferentSignedInCloudGateway
+    implements CloudFamilyGateway, CloudFamilyAccountSession {
+  String? _accountId = _differentStartupAccountId;
+  var signOutCalls = 0;
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  String? get authenticatedAccountId => _accountId;
+
+  @override
+  String? get authenticatedEmail => 'different@example.com';
+
+  @override
+  Future<void> signOut() async {
+    signOutCalls += 1;
+    _accountId = null;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _ConflictingFamilyGateway
+    implements
+        CloudFamilyGateway,
+        CloudFamilyAccountSession,
+        FamilyCodeJoinGateway {
+  String? _accountId = _startupAccountId;
+  var signOutCalls = 0;
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  String? get authenticatedAccountId => _accountId;
+
+  @override
+  String? get authenticatedEmail => 'keeper@example.com';
+
+  @override
+  Future<EncryptedFamilyCodeRecord> getFamilyCode(String familyId) =>
+      Future.error(const FamilyJoinFailure(FamilyJoinFailureCode.forbidden));
+
+  @override
+  Future<EncryptedFamilyCodeRecord> bootstrapOwnerWithFamilyCode(
+    LocalOwnerFamily owner,
+    FamilyCodeDraft code,
+  ) => Future.error(
+    const FamilyJoinFailure(FamilyJoinFailureCode.accountFamilyConflict),
+  );
+
+  @override
+  Future<List<FamilyMember>> listActiveMembers(String familyId) =>
+      Future.error(const InvitationFailure(InvitationFailureCode.forbidden));
+
+  @override
+  Future<List<PendingFamilyJoinRequest>> listPendingJoinRequests(
+    String familyId,
+  ) async => const [];
+
+  @override
+  Future<OwnFamilyJoinRequest?> getOwnJoinRequest() async => null;
+
+  @override
+  Stream<void> watchPendingJoinRequests(String familyId) =>
+      const Stream<void>.empty();
+
+  @override
+  Stream<void> watchOwnJoinRequest() => const Stream<void>.empty();
+
+  @override
+  Future<void> signOut() async {
+    signOutCalls += 1;
+    _accountId = null;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 OwnFamilyJoinRequest _startupRequest(
   FamilyJoinRequestState state, {
   FamilyJoinRequestCancelReason? cancelReason,
@@ -731,6 +1331,7 @@ OwnFamilyJoinRequest _startupRequest(
 const _startupRequestId = '11111111-1111-4111-8111-111111111111';
 const _startupFamilyId = '22222222-2222-4222-8222-222222222222';
 const _startupAccountId = '33333333-3333-4333-8333-333333333333';
+const _differentStartupAccountId = '55555555-5555-4555-8555-555555555555';
 const _startupMemberId = '44444444-4444-4444-8444-444444444444';
 const _startupIdentity = LocalIdentity(
   familyId: _startupFamilyId,

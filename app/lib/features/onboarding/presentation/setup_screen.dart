@@ -7,9 +7,10 @@ import 'package:keepers/features/onboarding/domain/local_identity.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 
 final class SetupScreen extends ConsumerStatefulWidget {
-  const SetupScreen({super.key, this.statusMessage});
+  const SetupScreen({super.key, this.statusMessage, this.onReauthenticate});
 
   final String? statusMessage;
+  final VoidCallback? onReauthenticate;
 
   @override
   ConsumerState<SetupScreen> createState() => _SetupScreenState();
@@ -59,7 +60,8 @@ final class _SetupScreenState extends ConsumerState<SetupScreen> {
     final setup = ref.watch(setupControllerProvider);
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final canSubmit = _hasBothNames && !setup.isSubmitting;
+    final canSubmit =
+        _hasBothNames && !setup.isSubmitting && !setup.requiresAuthentication;
 
     return PopScope<void>(
       canPop: _branch == _SetupBranch.choice,
@@ -231,6 +233,18 @@ final class _SetupScreenState extends ConsumerState<SetupScreen> {
                               ),
                             ),
                           ),
+                        ),
+                      ],
+                      if (setup.requiresAuthentication &&
+                          widget.onReauthenticate != null) ...[
+                        const SizedBox(height: 16),
+                        OutlinedButton(
+                          key: const Key('setup-reauthenticate'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                          onPressed: widget.onReauthenticate,
+                          child: const KeepersText('Sign in again'),
                         ),
                       ],
                       const SizedBox(height: 24),

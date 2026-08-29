@@ -90,6 +90,21 @@ final class MemberRepository {
     }
   }
 
+  Future<bool> clearLocalIdentityAccountBinding(
+    DatabaseExecutor db, {
+    required String familyId,
+    required String memberId,
+    required String accountId,
+  }) async {
+    final count = await db.update(
+      'local_identity_binding',
+      {'account_id': null},
+      where: 'singleton = 1 AND family_id = ? AND member_id = ? AND account_id = ?',
+      whereArgs: [familyId, memberId, accountId],
+    );
+    return count == 1;
+  }
+
   Future<LocalIdentity?> findLocalIdentity(DatabaseExecutor db) async {
     final rows = await db.rawQuery(r'''
 SELECT

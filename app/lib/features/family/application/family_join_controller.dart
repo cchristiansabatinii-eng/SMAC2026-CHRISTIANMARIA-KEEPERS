@@ -16,6 +16,7 @@ enum FamilyJoinPhase {
   enteringCode,
   checking,
   needsAuthentication,
+  awaitingProvider,
   awaitingOtp,
   preview,
   requesting,
@@ -121,7 +122,9 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     if (gateway case CloudFamilyAuthEvents(:final signedInEvents)) {
       final subscription = signedInEvents.listen(
         (_) => unawaited(_resumeAfterExternalSignIn()),
-        onError: (Object _, StackTrace _) {},
+        onError: (Object _, StackTrace _) {
+          unawaited(_handleExternalSignInFailure());
+        },
       );
       ref.onDispose(subscription.cancel);
     }
@@ -214,6 +217,7 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
   });
 
   Future<void> requestEmailOtp(String email) => _deduplicate(() async {
+    if (state.phase == FamilyJoinPhase.awaitingProvider) return;
     final normalized = _normalizeJoinEmail(email);
     if (normalized == null) {
       state = _next(
@@ -252,6 +256,7 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
 
   Future<void> verifyEmailOtp({required String email, required String token}) =>
       _deduplicate(() async {
+        if (state.phase == FamilyJoinPhase.awaitingProvider) return;
         final normalized =
             _authenticationEmailNormalized ?? _normalizeJoinEmail(email);
         if (normalized == null) {
@@ -288,6 +293,51 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
         }
       });
 
+  Future<void> startSocialAuth(SocialAuthProvider provider) {
+    if (state.phase == FamilyJoinPhase.awaitingProvider) {
+      return Future<void>.value();
+    }
+    return _deduplicate(() async {
+      final gateway = ref.read(cloudFamilyGatewayProvider);
+      final socialGateway = switch (gateway) {
+        CloudFamilySocialAuth capability => capability,
+        _ => null,
+      };
+      if (socialGateway == null) {
+        state = _next(
+          phase: FamilyJoinPhase.needsAuthentication,
+          failure: const FamilyJoinFailure(FamilyJoinFailureCode.notConfigured),
+        );
+        return;
+      }
+
+      state = _next(phase: FamilyJoinPhase.checking, clearFailure: true);
+      try {
+        await socialGateway.signInWithProvider(provider);
+        if (!ref.mounted) return;
+        final code = _code;
+        if (gateway.authenticatedAccountId != null && code != null) {
+          await _loadCodeAfterInFlight(code);
+          return;
+        }
+        state = _next(
+          phase: FamilyJoinPhase.awaitingProvider,
+          clearFailure: true,
+        );
+      } on FamilyJoinFailure catch (failure) {
+        state = _next(
+          phase: FamilyJoinPhase.needsAuthentication,
+          failure: failure,
+        );
+      } on Object {
+        state = _next(
+          phase: FamilyJoinPhase.needsAuthentication,
+          failure: const FamilyJoinFailure(FamilyJoinFailureCode.unknown),
+        );
+      }
+    });
+  }
+
   void changeAuthenticationEmail() {
     _authenticationEmailNormalized = null;
     state = _next(
@@ -296,6 +346,52 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
       clearFailure: true,
     );
   }
+
+  Future<void> chooseAnotherAuthenticationMethod() => _deduplicate(() async {
+    if (state.phase != FamilyJoinPhase.awaitingProvider) return;
+    final gateway = ref.read(cloudFamilyGatewayProvider);
+    final socialGateway = switch (gateway) {
+      CloudFamilySocialAuth capability => capability,
+      _ => null,
+    };
+    if (socialGateway == null) {
+      state = _next(
+        phase: FamilyJoinPhase.awaitingProvider,
+        failure: const FamilyJoinFailure(FamilyJoinFailureCode.unknown),
+      );
+      return;
+    }
+    state = _next(
+      phase: FamilyJoinPhase.awaitingProvider,
+      isRefreshing: true,
+      clearFailure: true,
+    );
+    try {
+      final cancelled = await socialGateway.cancelPendingProviderSignIn();
+      if (!ref.mounted) return;
+      final code = _code;
+      if (gateway.authenticatedAccountId != null && code != null) {
+        await _loadCodeAfterInFlight(code);
+        return;
+      }
+      if (!cancelled) {
+        state = _next(
+          phase: FamilyJoinPhase.awaitingProvider,
+          clearFailure: true,
+        );
+        return;
+      }
+      state = _next(
+        phase: FamilyJoinPhase.needsAuthentication,
+        clearFailure: true,
+      );
+    } on Object {
+      state = _next(
+        phase: FamilyJoinPhase.awaitingProvider,
+        failure: const FamilyJoinFailure(FamilyJoinFailureCode.unknown),
+      );
+    }
+  });
 
   Future<void> requestJoin(
     FamilyJoinProfileDraft profile,
@@ -471,6 +567,17 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
   }
 
   Future<void> onResumed() {
+    if (state.phase == FamilyJoinPhase.needsAuthentication ||
+        state.phase == FamilyJoinPhase.awaitingProvider ||
+        state.phase == FamilyJoinPhase.awaitingOtp) {
+      final code = _code;
+      final accountId = ref
+          .read(familyCodeJoinGatewayProvider)
+          .authenticatedAccountId;
+      return code != null && accountId != null
+          ? loadCode(code)
+          : Future<void>.value();
+    }
     if (_code == null &&
         _request == null &&
         _accountId == null &&
@@ -519,6 +626,7 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
         currentAccountId != null &&
             (_accountId == null || currentAccountId != _accountId) ||
         state.phase == FamilyJoinPhase.needsAuthentication ||
+        state.phase == FamilyJoinPhase.awaitingProvider ||
         state.phase == FamilyJoinPhase.awaitingOtp ||
         (state.failure != null &&
             (state.retryPoint == FamilyJoinRetryPoint.requestOtp ||
@@ -526,6 +634,39 @@ final class FamilyJoinController extends Notifier<FamilyJoinState> {
     if (canResume && currentAccountId != null) {
       await loadCode(_code!);
     }
+  }
+
+  Future<void> _handleExternalSignInFailure() async {
+    final failedPhase = state.phase;
+    final gateway = ref.read(cloudFamilyGatewayProvider);
+    final socialGateway = switch (gateway) {
+      CloudFamilySocialAuth capability => capability,
+      _ => null,
+    };
+    if (socialGateway == null) return;
+    try {
+      final cleared = await socialGateway.clearFailedProviderSignIn();
+      if (!cleared) return;
+    } on Object {
+      return;
+    }
+    if (!ref.mounted || state.phase != failedPhase) return;
+    final code = _code;
+    if (gateway.authenticatedAccountId != null && code != null) {
+      await loadCode(code);
+      return;
+    }
+    if (failedPhase != FamilyJoinPhase.needsAuthentication &&
+        failedPhase != FamilyJoinPhase.awaitingProvider &&
+        failedPhase != FamilyJoinPhase.awaitingOtp) {
+      return;
+    }
+    state = _next(
+      phase: failedPhase == FamilyJoinPhase.awaitingOtp
+          ? FamilyJoinPhase.awaitingOtp
+          : FamilyJoinPhase.needsAuthentication,
+      failure: const FamilyJoinFailure(FamilyJoinFailureCode.unknown),
+    );
   }
 
   Future<void> _loadCodeAfterInFlight(FamilyCode code) async {

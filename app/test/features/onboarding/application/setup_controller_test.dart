@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:keepers/features/family/application/cloud_family_providers.dart';
+import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/features/onboarding/data/identity_key_service.dart';
@@ -56,6 +58,28 @@ void main() {
     expect(await fixture.database.query('members'), isEmpty);
   });
 
+  test(
+    'valid setup refuses to start without an authenticated account',
+    () async {
+      final fixture = await _OnboardingFixture.create(accountId: null);
+      addTearDown(fixture.dispose);
+
+      await fixture.container
+          .read(setupControllerProvider.notifier)
+          .submit(const SetupInput(familyName: 'Sabati', memberName: 'Chris'));
+
+      final state = fixture.container.read(setupControllerProvider);
+      expect(state.phase, SetupPhase.failed);
+      expect(state.errorMessage, 'Your account session ended. Sign in again.');
+      expect(state.requiresAuthentication, isTrue);
+      expect(fixture.generatedIds, 0);
+      expect(fixture.secureStore.values, isEmpty);
+      expect(await fixture.database.query('families'), isEmpty);
+      expect(await fixture.database.query('members'), isEmpty);
+      expect(await fixture.database.query('local_identity_binding'), isEmpty);
+    },
+  );
+
   test('successful setup commits one family and one adult member', () async {
     final fixture = await _OnboardingFixture.create();
     addTearDown(fixture.dispose);
@@ -109,6 +133,75 @@ void main() {
       isNotNull,
     );
   });
+
+  test(
+    'successful first-run setup defers account binding until cloud bootstrap',
+    () async {
+      final fixture = await _OnboardingFixture.create(accountId: 'account-2');
+      addTearDown(fixture.dispose);
+
+      await fixture.container
+          .read(setupControllerProvider.notifier)
+          .submit(const SetupInput(familyName: 'Sabati', memberName: 'Chris'));
+
+      expect(await fixture.database.query('local_identity_binding'), [
+        {
+          'singleton': 1,
+          'family_id': 'id-1',
+          'member_id': 'id-2',
+          'account_id': null,
+        },
+      ]);
+      expect(
+        (await fixture.container.read(localIdentityProvider.future))?.accountId,
+        isNull,
+      );
+    },
+  );
+
+  test('session loss before persistence rolls back identity keys', () async {
+    final fixture = await _OnboardingFixture.create(holdFirstKeyWrite: true);
+    addTearDown(fixture.dispose);
+    final submission = fixture.container
+        .read(setupControllerProvider.notifier)
+        .submit(const SetupInput(familyName: 'Sabati', memberName: 'Chris'));
+    await fixture.secureStore.firstWriteStarted;
+
+    fixture.gateway.accountId = null;
+    fixture.secureStore.releaseFirstWrite();
+    await submission;
+
+    final state = fixture.container.read(setupControllerProvider);
+    expect(state.phase, SetupPhase.failed);
+    expect(state.errorMessage, 'Your account session ended. Sign in again.');
+    expect(fixture.secureStore.values, isEmpty);
+    expect(await fixture.database.query('families'), isEmpty);
+    expect(await fixture.database.query('members'), isEmpty);
+    expect(await fixture.database.query('local_identity_binding'), isEmpty);
+  });
+
+  test(
+    'account switch inside the transaction rolls back all setup data',
+    () async {
+      final fixture = await _OnboardingFixture.create(
+        accountId: 'account-1',
+        accountIdAtTransactionStart: 'account-2',
+      );
+      addTearDown(fixture.dispose);
+
+      await fixture.container
+          .read(setupControllerProvider.notifier)
+          .submit(const SetupInput(familyName: 'Sabati', memberName: 'Chris'));
+
+      final state = fixture.container.read(setupControllerProvider);
+      expect(state.phase, SetupPhase.failed);
+      expect(state.errorMessage, 'Your account session ended. Sign in again.');
+      expect(fixture.secureStore.values, isEmpty);
+      expect(await fixture.database.query('families'), isEmpty);
+      expect(await fixture.database.query('members'), isEmpty);
+      expect(await fixture.database.query('local_identity_binding'), isEmpty);
+    },
+  );
 
   test(
     'database failure rolls back transaction and created identity keys',
@@ -187,12 +280,14 @@ final class _OnboardingFixture {
   _OnboardingFixture({
     required this.database,
     required this.secureStore,
+    required this.gateway,
     required this.container,
     required this._generatedIds,
   });
 
   final Database database;
   final _MemorySecureValueStore secureStore;
+  final _SetupGateway gateway;
   final ProviderContainer container;
   final int Function() _generatedIds;
 
@@ -201,6 +296,8 @@ final class _OnboardingFixture {
   static Future<_OnboardingFixture> create({
     bool failMemberInsert = false,
     bool holdFirstKeyWrite = false,
+    String? accountId = 'account-1',
+    String? accountIdAtTransactionStart,
   }) async {
     final database = await databaseFactoryFfi.openDatabase(
       inMemoryDatabasePath,
@@ -225,10 +322,21 @@ END
     final secureStore = _MemorySecureValueStore(
       holdFirstWrite: holdFirstKeyWrite,
     );
+    final gateway = _SetupGateway(accountId: accountId);
+    final databaseForProvider = accountIdAtTransactionStart == null
+        ? database
+        : _AccountChangingDatabase(
+            database,
+            gateway,
+            accountIdAtTransactionStart,
+          );
     var nextId = 0;
     final container = ProviderContainer(
       overrides: [
-        databaseProvider.overrideWithValue(AsyncValue.data(database)),
+        cloudFamilyGatewayProvider.overrideWithValue(gateway),
+        databaseProvider.overrideWithValue(
+          AsyncValue.data(databaseForProvider),
+        ),
         secureValueStoreProvider.overrideWithValue(secureStore),
         identityKeyServiceProvider.overrideWithValue(
           IdentityKeyService(
@@ -243,6 +351,7 @@ END
     return _OnboardingFixture(
       database: database,
       secureStore: secureStore,
+      gateway: gateway,
       container: container,
       generatedIds: () => nextId,
     );
@@ -252,6 +361,44 @@ END
     container.dispose();
     await database.close();
   }
+}
+
+final class _SetupGateway implements CloudFamilyGateway {
+  _SetupGateway({required this.accountId});
+
+  String? accountId;
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  String? get authenticatedAccountId => accountId;
+
+  @override
+  String? get authenticatedEmail => null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _AccountChangingDatabase implements Database {
+  _AccountChangingDatabase(this._database, this._gateway, this._accountId);
+
+  final Database _database;
+  final _SetupGateway _gateway;
+  final String _accountId;
+
+  @override
+  Future<T> transaction<T>(
+    Future<T> Function(Transaction txn) action, {
+    bool? exclusive,
+  }) => _database.transaction((transaction) {
+    _gateway.accountId = _accountId;
+    return action(transaction);
+  }, exclusive: exclusive);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 final class _MemorySecureValueStore implements SecureValueStore {

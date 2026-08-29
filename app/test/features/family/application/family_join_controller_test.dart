@@ -124,6 +124,144 @@ void main() {
     },
   );
 
+  test(
+    'social auth keeps one PKCE flow pending and resumes the retained code',
+    () async {
+      final fixture = _Fixture(authenticated: false);
+      addTearDown(fixture.dispose);
+      await fixture.controller.loadCode(_code);
+
+      await fixture.controller.startSocialAuth(SocialAuthProvider.google);
+      expect(fixture.gateway.socialProviders, [SocialAuthProvider.google]);
+      expect(fixture.state.phase, FamilyJoinPhase.awaitingProvider);
+
+      await fixture.controller.startSocialAuth(SocialAuthProvider.microsoft);
+      await fixture.controller.requestEmailOtp('other@example.com');
+      await fixture.controller.onResumed();
+      expect(fixture.gateway.socialProviders, [SocialAuthProvider.google]);
+      expect(fixture.gateway.requestedEmails, isEmpty);
+      expect(fixture.state.phase, FamilyJoinPhase.awaitingProvider);
+
+      await fixture.controller.chooseAnotherAuthenticationMethod();
+      expect(fixture.state.phase, FamilyJoinPhase.needsAuthentication);
+      expect(fixture.gateway.cancelledProviderSignIns, 1);
+      await fixture.controller.startSocialAuth(SocialAuthProvider.apple);
+      fixture.gateway
+        ..accountId = _accountId
+        ..emitSignedIn();
+      await fixture.waitFor((state) => state.phase == FamilyJoinPhase.preview);
+
+      expect(fixture.gateway.socialProviders, [
+        SocialAuthProvider.google,
+        SocialAuthProvider.apple,
+      ]);
+      expect(fixture.gateway.previewedCodes, [_code]);
+    },
+  );
+
+  test(
+    'a family-link provider exchange cannot be replaced after checkout',
+    () async {
+      final fixture = _Fixture(authenticated: false);
+      addTearDown(fixture.dispose);
+      fixture.gateway.canCancelProviderSignIn = false;
+      await fixture.controller.loadCode(_code);
+
+      await fixture.controller.startSocialAuth(SocialAuthProvider.google);
+      await fixture.controller.chooseAnotherAuthenticationMethod();
+      await fixture.controller.startSocialAuth(SocialAuthProvider.apple);
+
+      expect(fixture.gateway.socialProviders, [SocialAuthProvider.google]);
+      expect(fixture.state.phase, FamilyJoinPhase.awaitingProvider);
+    },
+  );
+
+  test(
+    'a failed family-link provider callback returns to account retry',
+    () async {
+      final fixture = _Fixture(authenticated: false);
+      addTearDown(fixture.dispose);
+      await fixture.controller.loadCode(_code);
+
+      await fixture.controller.startSocialAuth(SocialAuthProvider.microsoft);
+      fixture.gateway.emitAuthFailure();
+      await fixture.waitFor(
+        (state) => state.phase == FamilyJoinPhase.needsAuthentication,
+      );
+
+      expect(fixture.gateway.clearedFailedProviderSignIns, 1);
+      expect(fixture.state.failure?.code, FamilyJoinFailureCode.unknown);
+      await fixture.controller.startSocialAuth(SocialAuthProvider.apple);
+      expect(fixture.gateway.socialProviders, [
+        SocialAuthProvider.microsoft,
+        SocialAuthProvider.apple,
+      ]);
+    },
+  );
+
+  test(
+    'cold family-link callback failure releases PKCE before auth starts',
+    () async {
+      final fixture = _Fixture(authenticated: false);
+      addTearDown(fixture.dispose);
+      await fixture.controller.loadCode(_code);
+      expect(fixture.state.phase, FamilyJoinPhase.needsAuthentication);
+
+      fixture.gateway.emitAuthFailure();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fixture.gateway.clearedFailedProviderSignIns, 1);
+      expect(fixture.state.phase, FamilyJoinPhase.needsAuthentication);
+      expect(fixture.state.failure?.code, FamilyJoinFailureCode.unknown);
+
+      await fixture.controller.startSocialAuth(SocialAuthProvider.google);
+      expect(fixture.gateway.socialProviders, [SocialAuthProvider.google]);
+      expect(fixture.state.phase, FamilyJoinPhase.awaitingProvider);
+    },
+  );
+
+  test(
+    'a stale callback failure leaves the replacement family auth pending',
+    () async {
+      final fixture = _Fixture(authenticated: false);
+      addTearDown(fixture.dispose);
+      await fixture.controller.loadCode(_code);
+
+      await fixture.controller.startSocialAuth(SocialAuthProvider.google);
+      await fixture.controller.chooseAnotherAuthenticationMethod();
+      await fixture.controller.startSocialAuth(SocialAuthProvider.apple);
+      fixture.gateway
+        ..canClearFailedProviderSignIn = false
+        ..emitAuthFailure();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fixture.gateway.clearedFailedProviderSignIns, 1);
+      expect(fixture.state.phase, FamilyJoinPhase.awaitingProvider);
+
+      fixture.gateway
+        ..accountId = _accountId
+        ..emitSignedIn();
+      await fixture.waitFor((state) => state.phase == FamilyJoinPhase.preview);
+    },
+  );
+
+  test(
+    'a failed email-link callback keeps six-digit recovery available',
+    () async {
+      final fixture = _Fixture(authenticated: false);
+      addTearDown(fixture.dispose);
+      await fixture.controller.loadCode(_code);
+      await fixture.controller.requestEmailOtp('mariam@example.com');
+
+      fixture.gateway.emitAuthFailure();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fixture.gateway.clearedFailedProviderSignIns, 1);
+      expect(fixture.state.phase, FamilyJoinPhase.awaitingOtp);
+      expect(fixture.state.failure?.code, FamilyJoinFailureCode.unknown);
+    },
+  );
+
   testWidgets(
     'cold email auth restart resumes the securely retained family code',
     (tester) async {
@@ -635,7 +773,8 @@ final class _Gateway
     implements
         CloudFamilyGateway,
         FamilyCodeJoinGateway,
-        CloudFamilyAuthEvents {
+        CloudFamilyAuthEvents,
+        CloudFamilySocialAuth {
   _Gateway({required this.accountId});
 
   String? accountId;
@@ -644,6 +783,12 @@ final class _Gateway
   final List<FamilyJoinFailure> getOwnFailures = [];
   final List<FamilyJoinFailure> createFailures = [];
   final List<FamilyCode> previewedCodes = [];
+  final List<SocialAuthProvider> socialProviders = [];
+  final List<String> requestedEmails = [];
+  var cancelledProviderSignIns = 0;
+  var clearedFailedProviderSignIns = 0;
+  bool canCancelProviderSignIn = true;
+  bool canClearFailedProviderSignIn = true;
   final List<FamilyJoinRequestDraft> createdDrafts = [];
   final List<String> cancelledIds = [];
   final Map<FamilyCode, FamilyJoinPreview> previews = {};
@@ -664,6 +809,8 @@ final class _Gateway
   Stream<void> get signedInEvents => _auth.stream;
 
   void emitSignedIn() => _auth.add(null);
+  void emitAuthFailure() =>
+      _auth.addError(StateError('redacted auth callback failure'));
   void invalidateOwnRequest() => _ownInvalidations.add(null);
   void dispose() {
     _auth.close();
@@ -717,7 +864,27 @@ final class _Gateway
   }
 
   @override
-  Future<void> requestEmailOtp(String email) async {}
+  Future<void> requestEmailOtp(String email) async {
+    requestedEmails.add(email);
+  }
+
+  @override
+  Future<void> signInWithProvider(SocialAuthProvider provider) async {
+    socialProviders.add(provider);
+  }
+
+  @override
+  Future<bool> cancelPendingProviderSignIn() async {
+    cancelledProviderSignIns += 1;
+    return canCancelProviderSignIn;
+  }
+
+  @override
+  Future<bool> clearFailedProviderSignIn() async {
+    clearedFailedProviderSignIns += 1;
+    return canClearFailedProviderSignIn;
+  }
+
   @override
   Future<void> verifyEmailOtp({
     required String email,

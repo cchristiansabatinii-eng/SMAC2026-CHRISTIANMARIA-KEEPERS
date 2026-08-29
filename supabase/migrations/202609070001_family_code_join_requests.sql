@@ -626,7 +626,7 @@ begin
       'mac', p_request.approval_mac
     );
 
-    select pg_catalog.coalesce(
+    select coalesce(
       pg_catalog.jsonb_agg(roster.member_json order by roster.joined_at, roster.member_id),
       '[]'::pg_catalog.jsonb
     )
@@ -894,7 +894,7 @@ begin
     raise exception using errcode = 'P0001', message = 'FAMILY_NOT_FOUND';
   end if;
 
-  select pg_catalog.coalesce(
+  select coalesce(
     pg_catalog.jsonb_agg(
       private.family_member_json(membership)
       order by membership.joined_at, membership.member_id
@@ -1001,8 +1001,8 @@ begin
     raise exception using errcode = 'P0001', message = 'ALREADY_MEMBER';
   end if;
 
-  p_display_name := pg_catalog.btrim(pg_catalog.coalesce(p_display_name, ''));
-  p_color_token := pg_catalog.btrim(pg_catalog.coalesce(p_color_token, ''));
+  p_display_name := pg_catalog.btrim(coalesce(p_display_name, ''));
+  p_color_token := pg_catalog.btrim(coalesce(p_color_token, ''));
   if p_member_id is null
     or pg_catalog.char_length(p_display_name) not between 1 and 100
     or pg_catalog.char_length(p_color_token) not between 1 and 64
@@ -1145,7 +1145,7 @@ begin
     raise exception using errcode = 'P0001', message = 'FORBIDDEN';
   end if;
 
-  select pg_catalog.coalesce(
+  select coalesce(
     pg_catalog.jsonb_agg(
       private.pending_family_join_request_json(request)
       order by request.created_at, request.id

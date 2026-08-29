@@ -6,16 +6,23 @@ void main() {
   final migration = File(
     '../supabase/migrations/202609050001_family_invitations.sql',
   );
+  final recoveryMigration = File(
+    '../supabase/migrations/202609080001_family_code_bootstrap_recovery.sql',
+  );
   final config = File('../supabase/config.toml');
   final readme = File('../supabase/README.md');
   final pgTap = File('../supabase/tests/family_invitations_test.sql');
   late String sql;
+  late String recoverySql;
   late String configText;
   late String readmeText;
   late String pgTapText;
 
   setUpAll(() {
     sql = migration.existsSync() ? migration.readAsStringSync() : '';
+    recoverySql = recoveryMigration.existsSync()
+        ? recoveryMigration.readAsStringSync()
+        : '';
     configText = config.existsSync() ? config.readAsStringSync() : '';
     readmeText = readme.existsSync() ? readme.readAsStringSync() : '';
     pgTapText = pgTap.existsSync() ? pgTap.readAsStringSync() : '';
@@ -26,6 +33,34 @@ void main() {
       migration.existsSync(),
       isTrue,
       reason: 'The versioned Supabase migration must ship with the app.',
+    );
+  });
+
+  test('deployed family-code recovery migration repairs exact routines', () {
+    expect(recoveryMigration.existsSync(), isTrue);
+    expect(recoverySql, contains('pg_catalog.pg_get_functiondef'));
+    expect(recoverySql, contains("'pg_catalog.coalesce('"));
+    expect(recoverySql, contains("'coalesce('"));
+    for (final signature in <String>[
+      'public.bootstrap_owner_family(uuid,text,uuid,text,text,text,jsonb)',
+      'public.create_family_invite(uuid,uuid,text,text,jsonb)',
+      'public.preview_family_invite(text)',
+      'public.claim_family_invite(text,uuid,text,text,text,jsonb)',
+      'public.list_active_family_members(uuid)',
+      'private.own_family_join_request_json(public.family_join_requests)',
+      'public.preview_family_by_code(text)',
+      'public.create_family_join_request(uuid,text,uuid,text,text,text,jsonb,text)',
+      'public.list_pending_family_join_requests(uuid)',
+    ]) {
+      expect(recoverySql, contains("'$signature'::pg_catalog.regprocedure"));
+    }
+    expect(
+      recoverySql,
+      contains('create or replace function public.get_family_join_code'),
+    );
+    expect(
+      recoverySql,
+      contains('or not private.is_active_family_member(p_family_id)'),
     );
   });
 
@@ -123,6 +158,16 @@ void main() {
       helper,
       RegExp(r"\bset\s+search_path\s*=\s*''\s*\r?\n", caseSensitive: false),
       'empty search_path on private.is_active_family_member',
+    );
+  });
+
+  test('conditional COALESCE expressions are never schema-qualified', () {
+    expect(
+      sql,
+      isNot(
+        contains(RegExp(r'pg_catalog\.coalesce\s*\(', caseSensitive: false)),
+      ),
+      reason: 'COALESCE is PostgreSQL syntax, not a function that can be schema-qualified.',
     );
   });
 
@@ -612,7 +657,6 @@ const _securityDefinerBuiltIns = <String>[
   'btrim',
   'char_length',
   'clock_timestamp',
-  'coalesce',
   'decode',
   'encode',
   'jsonb_agg',

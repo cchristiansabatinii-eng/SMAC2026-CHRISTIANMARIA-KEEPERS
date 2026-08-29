@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/features/family/data/cloud_config.dart';
+import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/data/secure_supabase_auth_storage.dart';
 import 'package:keepers/features/family/data/supabase_cloud_family_gateway.dart';
 import 'package:keepers/features/family/data/supabase_cloud_gateway_bootstrap.dart';
@@ -7,6 +8,8 @@ import 'package:keepers/storage/database_key_store.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test(
     'configured bootstrap initializes Supabase with secure auth storage',
     () async {
@@ -33,6 +36,7 @@ void main() {
           return legacyStorage;
         },
         legacyPkceStorageFactory: () => legacyPkceStorage,
+        authAttemptIdFactory: () => 'bootstrap-attempt',
         initializeClient:
             ({
               required String url,
@@ -44,6 +48,8 @@ void main() {
               capturedKey = publishableKey;
               capturedDebug = debug;
               capturedAuthOptions = authOptions;
+              cloudClient.pkceStorage =
+                  authOptions.pkceAsyncStorage! as SecureSupabasePkceStorage;
               await authOptions.localStorage!.initialize();
               return cloudClient;
             },
@@ -53,8 +59,9 @@ void main() {
       await gateway!.requestEmailOtp('person@example.com');
       expect(cloudClient.requestedRedirects, const [
         'https://family-project.supabase.co/functions/v1/'
-            'keepers-auth-bridge',
+            'keepers-auth-bridge?attempt=bootstrap-attempt',
       ]);
+      expect(cloudClient.startedAuthAttempts, const ['bootstrap-attempt']);
       expect(capturedUrl, 'https://family-project.supabase.co');
       expect(capturedKey, 'sb_publishable_example');
       expect(capturedDebug, isFalse);
@@ -70,9 +77,51 @@ void main() {
       expect(callbackPredicate, isNotNull);
       expect(
         callbackPredicate!(
-          Uri.parse('keepers://auth-callback?code=authorization-code'),
+          Uri.parse(
+            'keepers://auth-callback?code=authorization-code'
+            '&attempt=bootstrap-attempt',
+          ),
         ),
         isTrue,
+      );
+      expect(
+        callbackPredicate(
+          Uri.parse(
+            'keepers://auth-callback?code=replayed-code'
+            '&attempt=bootstrap-attempt',
+          ),
+        ),
+        isFalse,
+        reason: 'one auth attempt must admit only one callback exchange',
+      );
+      final pkceStorage =
+          capturedAuthOptions!.pkceAsyncStorage! as SecureSupabasePkceStorage;
+      expect(await pkceStorage.cancelPendingVerifier(), isTrue);
+      await pkceStorage.beginAuthAttempt('bootstrap-attempt');
+      expect(
+        callbackPredicate(
+          Uri.parse(
+            'keepers://auth-callback?error=access_denied'
+            '&error_code=oauth_access_denied'
+            '&error_description=The+user+cancelled'
+            '&attempt=bootstrap-attempt',
+          ),
+        ),
+        isTrue,
+      );
+      expect(
+        callbackPredicate(
+          Uri.parse(
+            'keepers://auth-callback?code=stale-code&attempt=stale-attempt',
+          ),
+        ),
+        isFalse,
+      );
+      expect(
+        callbackPredicate(
+          Uri.parse('keepers://auth-callback?code=unmarked-code'),
+        ),
+        isFalse,
       );
       expect(
         callbackPredicate(
@@ -92,6 +141,15 @@ void main() {
         'keepers://auth-callback?access_token=attacker-session',
         'keepers://auth-callback?code=authorization-code'
             '&access_token=attacker-session',
+        'keepers://auth-callback?code=authorization-code'
+            '&error=access_denied',
+        'keepers://auth-callback?code=authorization-code'
+            '&attempt=first&attempt=second',
+        'keepers://auth-callback?code=authorization-code&attempt=',
+        'keepers://auth-callback?code=authorization-code&attempt=bad%20value',
+        'keepers://auth-callback?error=access_denied&unexpected=value',
+        'keepers://auth-callback?error=first&error=second',
+        'keepers://auth-callback?error=',
         'keepers://auth-callback?code=first-code&code=second-code',
         'keepers://auth-callback?code=',
         'keepers://auth-callback?code=authorization-code#unexpected',
@@ -138,6 +196,10 @@ void main() {
                 'R0q2KB67O8wczyhj8vJlL545KxiO4CAhAiRs3SRdXYQ.'
                 'supabase.auth.token-code-verifier':
             'new-secure-verifier',
+        'keepers.supabase.pkce.v1.'
+                'R0q2KB67O8wczyhj8vJlL545KxiO4CAhAiRs3SRdXYQ.'
+                'auth-attempt':
+            'bootstrap-attempt',
       });
     },
   );
@@ -170,6 +232,54 @@ void main() {
       expect(gateway, isNull);
       expect(initializerCalled, isFalse);
       expect(legacyFactoryCalled, isFalse);
+    },
+  );
+
+  test(
+    'a partial production initialization is disposed before retry',
+    () async {
+      if (_isSupabaseInitialized()) {
+        await Supabase.instance.dispose();
+      }
+      addTearDown(() async {
+        if (_isSupabaseInitialized()) {
+          await Supabase.instance.dispose();
+        }
+      });
+      final config = CloudConfig.parse(
+        url: 'https://retry-project.supabase.co',
+        publishableKey: _testAnonKey,
+      );
+
+      final failed = await configuredCloudFamilyGateway(
+        config: config,
+        secureValueStore: _MemorySecureValueStore(),
+        legacyStorageFactory: (_) =>
+            _MemoryLocalStorage(null, failRemoval: true),
+        legacyPkceStorageFactory: () => _MemoryPkceStorage(<String, String>{}),
+      );
+
+      expect(failed, isNull);
+      expect(
+        _isSupabaseInitialized(),
+        isFalse,
+        reason: 'Retry must not inherit a client bound to stale auth storage',
+      );
+
+      final retried = await configuredCloudFamilyGateway(
+        config: config,
+        secureValueStore: _MemorySecureValueStore(),
+        legacyStorageFactory: (_) => _MemoryLocalStorage(null),
+        legacyPkceStorageFactory: () => _MemoryPkceStorage(<String, String>{}),
+        authAttemptIdFactory: () => 'retry-attempt',
+      );
+
+      expect(retried, isA<SupabaseCloudFamilyGateway>());
+      expect(_isSupabaseInitialized(), isTrue);
+      expect(
+        await (retried! as CloudFamilySocialAuth).cancelPendingProviderSignIn(),
+        isTrue,
+      );
     },
   );
 
@@ -239,6 +349,14 @@ void main() {
   });
 }
 
+bool _isSupabaseInitialized() {
+  try {
+    return Supabase.instance.isInitialized;
+  } on AssertionError {
+    return false;
+  }
+}
+
 final class _MemorySecureValueStore implements SecureValueStore {
   final Map<String, String> values = <String, String>{};
 
@@ -257,9 +375,10 @@ final class _MemorySecureValueStore implements SecureValueStore {
 }
 
 final class _MemoryLocalStorage extends LocalStorage {
-  _MemoryLocalStorage(this.session);
+  _MemoryLocalStorage(this.session, {this.failRemoval = false});
 
   String? session;
+  final bool failRemoval;
 
   @override
   Future<String?> accessToken() async => session;
@@ -277,6 +396,7 @@ final class _MemoryLocalStorage extends LocalStorage {
 
   @override
   Future<void> removePersistedSession() async {
+    if (failRemoval) throw StateError('legacy session removal failed');
     session = null;
   }
 }
@@ -300,8 +420,21 @@ final class _MemoryPkceStorage extends GotrueAsyncStorage {
   }
 }
 
-final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
+final class _FakeSupabaseCloudClient
+    implements SupabaseCloudClient, SupabaseCloudAuthAttemptClient {
   final requestedRedirects = <String>[];
+  final startedAuthAttempts = <String>[];
+  SecureSupabasePkceStorage? pkceStorage;
+
+  @override
+  Future<void> beginAuthAttempt(String attemptId) async {
+    startedAuthAttempts.add(attemptId);
+    await pkceStorage?.beginAuthAttempt(attemptId);
+  }
+
+  @override
+  Future<bool> retirePendingAuthAttempt() async =>
+      await pkceStorage?.cancelPendingVerifier() ?? true;
 
   @override
   String? get authenticatedAccountId => null;
@@ -329,3 +462,8 @@ final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
     required String token,
   }) async {}
 }
+
+const _testAnonKey =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.'
+    'eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53emxkenlsb2pyemdqemloZHJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE2ODQxMzI2ODAsImV4cCI6MTk5OTcwODY4MH0.'
+    'MU-LVeAPic93VLcRsHktxzYtBKBUMWAQb8E-0AQETPs';

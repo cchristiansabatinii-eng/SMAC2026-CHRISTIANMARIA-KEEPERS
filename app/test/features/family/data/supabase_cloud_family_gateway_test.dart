@@ -1,26 +1,35 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:keepers/features/family/data/cloud_family_gateway.dart';
+import 'package:keepers/features/family/data/secure_supabase_auth_storage.dart';
 import 'package:keepers/features/family/data/supabase_cloud_family_gateway.dart';
 import 'package:keepers/features/family/domain/cloud_family_models.dart';
 import 'package:keepers/features/family/domain/family_invitation.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
+import 'package:keepers/storage/database_key_store.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
   late _FakeSupabaseCloudClient client;
   late SupabaseCloudFamilyGateway gateway;
+  late int authAttemptSequence;
 
   setUp(() {
     client = _FakeSupabaseCloudClient();
+    authAttemptSequence = 0;
     gateway = SupabaseCloudFamilyGateway(
       client,
       emailRedirectTo:
           'https://family-project.supabase.co/functions/v1/'
           'keepers-auth-bridge',
+      authAttemptIdFactory: () => 'attempt-${++authAttemptSequence}',
     );
   });
+
+  tearDown(() => client.dispose());
 
   test('exposes configured authentication state without session contents', () {
     client
@@ -31,6 +40,99 @@ void main() {
     expect(gateway.authenticatedAccountId, _ownerAccountId);
     expect(gateway.authenticatedEmail, 'owner@example.com');
   });
+
+  test(
+    'account session signs out the authenticated Supabase account',
+    () async {
+      client.accountId = _ownerAccountId;
+
+      await (gateway as CloudFamilyAccountSession).signOut();
+
+      expect(gateway.authenticatedAccountId, isNull);
+    },
+  );
+
+  test('forwards account session changes from the Supabase client', () async {
+    client.accountId = _ownerAccountId;
+    final event = expectLater(
+      (gateway as CloudFamilyAccountSessionEvents).accountSessionChangedEvents,
+      emits(_ownerAccountId),
+    );
+
+    client.emitAccountSessionChange();
+
+    await event;
+  });
+
+  test(
+    'Supabase adapter reports distinct account IDs from auth events',
+    () async {
+      final supabase = SupabaseClient(
+        'https://family-project.supabase.co',
+        'test-publishable-key',
+      );
+      addTearDown(supabase.dispose);
+      final adapter = SupabaseCloudClientAdapter(
+        supabase,
+        SecureSupabasePkceStorage(
+          secureStore: _MemorySecureValueStore(),
+          keyPrefix: 'keepers.test.pkce',
+        ),
+      );
+      final accountIds = <String?>[];
+      final subscription = adapter.accountSessionChangedEvents.listen(
+        accountIds.add,
+      );
+      addTearDown(subscription.cancel);
+      final session = Session(
+        accessToken: 'test-access-token',
+        tokenType: 'bearer',
+        user: const User(
+          id: _ownerAccountId,
+          appMetadata: {},
+          userMetadata: {},
+          aud: 'authenticated',
+          createdAt: '2026-09-08T00:00:00Z',
+        ),
+      );
+      final replacementSession = Session(
+        accessToken: 'replacement-access-token',
+        tokenType: 'bearer',
+        user: const User(
+          id: '66666666-6666-4666-8666-666666666666',
+          appMetadata: {},
+          userMetadata: {},
+          aud: 'authenticated',
+          createdAt: '2026-09-08T00:00:00Z',
+        ),
+      );
+
+      // ignore: invalid_use_of_internal_member
+      supabase.auth.notifyAllSubscribers(
+        AuthChangeEvent.signedIn,
+        session: session,
+      );
+      // ignore: invalid_use_of_internal_member
+      supabase.auth.notifyAllSubscribers(
+        AuthChangeEvent.tokenRefreshed,
+        session: session,
+      );
+      // ignore: invalid_use_of_internal_member
+      supabase.auth.notifyAllSubscribers(
+        AuthChangeEvent.tokenRefreshed,
+        session: replacementSession,
+      );
+      // ignore: invalid_use_of_internal_member
+      supabase.auth.notifyAllSubscribers(AuthChangeEvent.signedOut);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(accountIds, [
+        _ownerAccountId,
+        '66666666-6666-4666-8666-666666666666',
+        null,
+      ]);
+    },
+  );
 
   group('email OTP', () {
     test(
@@ -45,11 +147,13 @@ void main() {
         expect(client.requestedEmails, ['person@example.com']);
         expect(client.requestedRedirects, [
           'https://family-project.supabase.co/functions/v1/'
-              'keepers-auth-bridge',
+              'keepers-auth-bridge?attempt=attempt-1',
         ]);
+        expect(client.startedAuthAttempts, ['attempt-1']);
         expect(client.verifiedOtps, [
           const _VerifiedOtp('person@example.com', '123456'),
         ]);
+        expect(client.retiredAuthAttempts, 1);
       },
     );
 
@@ -144,6 +248,20 @@ void main() {
       );
     });
 
+    test('does not undo verified OTP when PKCE retirement fails', () async {
+      client.retireAuthAttemptError = StateError('secure cleanup unavailable');
+
+      await gateway.verifyEmailOtp(
+        email: 'person@example.com',
+        token: '123456',
+      );
+
+      expect(client.verifiedOtps, [
+        const _VerifiedOtp('person@example.com', '123456'),
+      ]);
+      expect(client.retiredAuthAttempts, 1);
+    });
+
     test('maps socket failures but redacts other auth failures', () async {
       client.requestError = const SocketException('host with secret path');
       await expectLater(
@@ -159,6 +277,74 @@ void main() {
         gateway.requestEmailOtp('person@example.com'),
         throwsInvitation(InvitationFailureCode.unknown),
       );
+    });
+  });
+
+  group('social OAuth', () {
+    test(
+      'maps providers and requests the email scope only for Microsoft',
+      () async {
+        final socialAuth = gateway as CloudFamilySocialAuth;
+
+        await socialAuth.signInWithProvider(SocialAuthProvider.google);
+        await socialAuth.signInWithProvider(SocialAuthProvider.microsoft);
+        await socialAuth.signInWithProvider(SocialAuthProvider.apple);
+
+        expect(client.socialAuthRequests, [
+          const (
+            provider: OAuthProvider.google,
+            redirectTo: '$supabaseAuthCallbackUrl?attempt=attempt-1',
+            authScreenLaunchMode: LaunchMode.externalApplication,
+            scopes: null,
+          ),
+          const (
+            provider: OAuthProvider.azure,
+            redirectTo: '$supabaseAuthCallbackUrl?attempt=attempt-2',
+            authScreenLaunchMode: LaunchMode.externalApplication,
+            scopes: 'email',
+          ),
+          const (
+            provider: OAuthProvider.apple,
+            redirectTo: '$supabaseAuthCallbackUrl?attempt=attempt-3',
+            authScreenLaunchMode: LaunchMode.externalApplication,
+            scopes: null,
+          ),
+        ]);
+        expect(client.startedAuthAttempts, [
+          'attempt-1',
+          'attempt-2',
+          'attempt-3',
+        ]);
+      },
+    );
+
+    test(
+      'maps a failed external browser launch to a generic failure',
+      () async {
+        client.socialAuthLaunchResult = false;
+
+        await expectLater(
+          (gateway as CloudFamilySocialAuth).signInWithProvider(
+            SocialAuthProvider.google,
+          ),
+          throwsInvitation(InvitationFailureCode.unknown),
+        );
+      },
+    );
+
+    test('cancels a pending provider verifier before another method', () async {
+      expect(
+        await (gateway as CloudFamilySocialAuth).cancelPendingProviderSignIn(),
+        isTrue,
+      );
+
+      expect(client.cancelledProviderSignIns, 1);
+
+      expect(
+        await (gateway as CloudFamilySocialAuth).clearFailedProviderSignIn(),
+        isTrue,
+      );
+      expect(client.clearedFailedProviderSignIns, 1);
     });
   });
 
@@ -660,6 +846,24 @@ void main() {
       }
     });
 
+    test(
+      'maps roster FORBIDDEN when PostgREST supplies its HTTP reason',
+      () async {
+        client.completeError(
+          const PostgrestException(
+            code: 'P0001',
+            message: 'FORBIDDEN',
+            details: 'Bad Request',
+          ),
+        );
+
+        await expectLater(
+          gateway.listActiveMembers(_familyId),
+          throwsInvitation(InvitationFailureCode.forbidden),
+        );
+      },
+    );
+
     test('rejects every non-exact RPC error tuple', () async {
       final errors = <PostgrestException>[
         const PostgrestException(
@@ -834,23 +1038,82 @@ Map<String, Object?> _claimResponse({
       ],
 };
 
-final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
+final class _FakeSupabaseCloudClient
+    implements
+        SupabaseCloudClient,
+        SupabaseCloudAuthClientEvents,
+        SupabaseCloudAccountSessionClient,
+        SupabaseCloudAuthAttemptClient,
+        SupabaseCloudSocialAuthClient {
+  final _signedInEvents = StreamController<void>.broadcast(sync: true);
+  final _accountSessionChangedEvents = StreamController<String?>.broadcast(
+    sync: true,
+  );
   String? accountId;
   String? email;
   Object? requestError;
   Object? verifyError;
+  Object? retireAuthAttemptError;
+  bool socialAuthLaunchResult = true;
+  var cancelledProviderSignIns = 0;
+  var clearedFailedProviderSignIns = 0;
+  var retiredAuthAttempts = 0;
+  bool canClearFailedProviderSignIn = true;
   Object? _rpcValue;
   Object? _rpcError;
   final requestedEmails = <String>[];
   final requestedRedirects = <String>[];
+  final startedAuthAttempts = <String>[];
   final verifiedOtps = <_VerifiedOtp>[];
+  final socialAuthRequests =
+      <
+        ({
+          OAuthProvider provider,
+          String redirectTo,
+          LaunchMode authScreenLaunchMode,
+          String? scopes,
+        })
+      >[];
   final rpcInvocations = <_RpcInvocation>[];
+
+  @override
+  Stream<void> get signedInEvents => _signedInEvents.stream;
+
+  @override
+  Stream<String?> get accountSessionChangedEvents =>
+      _accountSessionChangedEvents.stream;
+
+  void emitAccountSessionChange() =>
+      _accountSessionChangedEvents.add(accountId);
+
+  Future<void> dispose() async {
+    await _signedInEvents.close();
+    await _accountSessionChangedEvents.close();
+  }
+
+  @override
+  Future<void> beginAuthAttempt(String attemptId) async {
+    startedAuthAttempts.add(attemptId);
+  }
+
+  @override
+  Future<bool> retirePendingAuthAttempt() async {
+    retiredAuthAttempts += 1;
+    if (retireAuthAttemptError case final error?) throw error;
+    return true;
+  }
 
   @override
   String? get authenticatedAccountId => accountId;
 
   @override
   String? get authenticatedEmail => email;
+
+  @override
+  Future<void> signOut() async {
+    accountId = null;
+    email = null;
+  }
 
   @override
   Future<void> requestEmailOtp(
@@ -871,6 +1134,34 @@ final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
     if (verifyError case final error?) throw error;
   }
 
+  @override
+  Future<bool> signInWithOAuth(
+    OAuthProvider provider, {
+    required String redirectTo,
+    required LaunchMode authScreenLaunchMode,
+    required String? scopes,
+  }) async {
+    socialAuthRequests.add((
+      provider: provider,
+      redirectTo: redirectTo,
+      authScreenLaunchMode: authScreenLaunchMode,
+      scopes: scopes,
+    ));
+    return socialAuthLaunchResult;
+  }
+
+  @override
+  Future<bool> cancelPendingOAuth() async {
+    cancelledProviderSignIns += 1;
+    return true;
+  }
+
+  @override
+  Future<bool> clearFailedOAuth() async {
+    clearedFailedProviderSignIns += 1;
+    return canClearFailedProviderSignIn;
+  }
+
   void completeValue(Object? value) {
     _rpcValue = value;
     _rpcError = null;
@@ -889,6 +1180,23 @@ final class _FakeSupabaseCloudClient implements SupabaseCloudClient {
     rpcInvocations.add(_RpcInvocation(function, params));
     if (_rpcError case final error?) throw error;
     return _rpcValue;
+  }
+}
+
+final class _MemorySecureValueStore implements SecureValueStore {
+  final values = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String value) async {
+    values[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    values.remove(key);
   }
 }
 

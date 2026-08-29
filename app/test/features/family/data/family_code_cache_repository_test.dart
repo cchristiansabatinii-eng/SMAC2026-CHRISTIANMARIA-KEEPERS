@@ -83,7 +83,7 @@ void main() {
     expect(await repository.find(database, familyId: _familyId), record);
   });
 
-  test('same version is idempotent only for the exact cached record', () async {
+  test('same code version rejects authoritative record conflicts', () async {
     final record = _record(version: 2);
     await repository.upsert(database, record);
     await repository.upsert(database, record);
@@ -95,8 +95,35 @@ void main() {
       ),
       throwsStateError,
     );
+    await expectLater(
+      repository.upsert(
+        database,
+        _record(version: 2, creatorAccountId: _differentAccountId),
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      repository.upsert(
+        database,
+        _record(version: 2, updatedAt: DateTime.utc(2026, 9, 3)),
+      ),
+      throwsStateError,
+    );
     expect(await repository.find(database, familyId: _familyId), record);
   });
+
+  test(
+    'same authoritative version accepts a later cache observation',
+    () async {
+      final first = _record(version: 2);
+      final refreshed = _record(version: 2, cachedAt: DateTime.utc(2026, 9, 6));
+      await repository.upsert(database, first);
+
+      await repository.upsert(database, refreshed);
+
+      expect(await repository.find(database, familyId: _familyId), first);
+    },
+  );
 
   test('higher code version replaces the cached encrypted record', () async {
     await repository.upsert(database, _record(version: 1));
@@ -111,6 +138,9 @@ void main() {
 FamilyCodeCacheRecord _record({
   required int version,
   String ciphertext = 'ciphertext',
+  String creatorAccountId = _accountId,
+  DateTime? updatedAt,
+  DateTime? cachedAt,
 }) => FamilyCodeCacheRecord(
   material: EncryptedFamilyCodeMaterial(
     codecVersion: 1,
@@ -120,10 +150,11 @@ FamilyCodeCacheRecord _record({
     ciphertext: ciphertext,
     mac: 'mac',
   ),
-  creatorAccountId: _accountId,
-  updatedAt: DateTime.utc(2026, 9, version),
-  cachedAt: DateTime.utc(2026, 9, 5),
+  creatorAccountId: creatorAccountId,
+  updatedAt: updatedAt ?? DateTime.utc(2026, 9, version),
+  cachedAt: cachedAt ?? DateTime.utc(2026, 9, 5),
 );
 
 const _familyId = '11111111-1111-4111-8111-111111111111';
 const _accountId = '22222222-2222-4222-8222-222222222222';
+const _differentAccountId = '33333333-3333-4333-8333-333333333333';

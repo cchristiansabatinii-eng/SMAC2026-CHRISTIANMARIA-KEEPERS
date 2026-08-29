@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:keepers/features/family/data/cloud_family_gateway.dart';
+import 'package:keepers/features/family/data/secure_supabase_auth_storage.dart';
 import 'package:keepers/features/family/domain/cloud_family_models.dart';
 import 'package:keepers/features/family/domain/family_code.dart';
 import 'package:keepers/features/family/domain/family_invitation.dart';
@@ -11,8 +12,10 @@ import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/members/domain/avatar_catalog.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 
 const supabaseAuthCallbackUrl = 'keepers://auth-callback';
+const supabaseAuthAttemptParameter = 'attempt';
 
 /// The narrow external boundary used by [SupabaseCloudFamilyGateway].
 ///
@@ -32,6 +35,34 @@ abstract interface class SupabaseCloudClient {
 
 abstract interface class SupabaseCloudAuthClientEvents {
   Stream<void> get signedInEvents;
+
+  Stream<String?> get accountSessionChangedEvents;
+}
+
+/// Optional narrow account-session capability used by the production adapter.
+abstract interface class SupabaseCloudAccountSessionClient {
+  Future<void> signOut();
+}
+
+/// Optional app-owned correlation capability for PKCE authentication flows.
+abstract interface class SupabaseCloudAuthAttemptClient {
+  Future<void> beginAuthAttempt(String attemptId);
+
+  Future<bool> retirePendingAuthAttempt();
+}
+
+/// Optional narrow OAuth capability used by the production Supabase adapter.
+abstract interface class SupabaseCloudSocialAuthClient {
+  Future<bool> signInWithOAuth(
+    OAuthProvider provider, {
+    required String redirectTo,
+    required LaunchMode authScreenLaunchMode,
+    required String? scopes,
+  });
+
+  Future<bool> cancelPendingOAuth();
+
+  Future<bool> clearFailedOAuth();
 }
 
 /// Optional narrow Realtime capability. Events only invalidate RPC-backed
@@ -46,16 +77,23 @@ final class SupabaseCloudClientAdapter
     implements
         SupabaseCloudClient,
         SupabaseCloudAuthClientEvents,
+        SupabaseCloudAccountSessionClient,
+        SupabaseCloudAuthAttemptClient,
+        SupabaseCloudSocialAuthClient,
         SupabaseCloudRealtimeClient {
-  const SupabaseCloudClientAdapter(this._client);
+  const SupabaseCloudClientAdapter(this._client, this._pkceStorage);
 
   final SupabaseClient _client;
+  final SecureSupabasePkceStorage _pkceStorage;
 
   @override
   String? get authenticatedAccountId => _client.auth.currentSession?.user.id;
 
   @override
   String? get authenticatedEmail => _client.auth.currentUser?.email;
+
+  @override
+  Future<void> signOut() => _client.auth.signOut();
 
   @override
   Future<void> requestEmailOtp(
@@ -74,6 +112,40 @@ final class SupabaseCloudClientAdapter
             state.event == AuthChangeEvent.signedIn && state.session != null,
       )
       .map((_) {});
+
+  @override
+  Stream<String?> get accountSessionChangedEvents => _client
+      .auth
+      .onAuthStateChange
+      .map((state) => state.session?.user.id)
+      .distinct();
+
+  @override
+  Future<bool> signInWithOAuth(
+    OAuthProvider provider, {
+    required String redirectTo,
+    required LaunchMode authScreenLaunchMode,
+    required String? scopes,
+  }) => _client.auth.signInWithOAuth(
+    provider,
+    redirectTo: redirectTo,
+    authScreenLaunchMode: authScreenLaunchMode,
+    scopes: scopes,
+  );
+
+  @override
+  Future<void> beginAuthAttempt(String attemptId) =>
+      _pkceStorage.beginAuthAttempt(attemptId);
+
+  @override
+  Future<bool> retirePendingAuthAttempt() =>
+      _pkceStorage.cancelPendingVerifier();
+
+  @override
+  Future<bool> cancelPendingOAuth() => _pkceStorage.cancelPendingVerifier();
+
+  @override
+  Future<bool> clearFailedOAuth() => _pkceStorage.clearFailedVerifier();
 
   @override
   Future<void> verifyEmailOtp({
@@ -114,14 +186,19 @@ final class SupabaseCloudFamilyGateway
     implements
         CloudFamilyGateway,
         CloudFamilyAuthEvents,
+        CloudFamilyAccountSessionEvents,
+        CloudFamilyAccountSession,
+        CloudFamilySocialAuth,
         FamilyCodeJoinGateway {
-  const SupabaseCloudFamilyGateway(
+  SupabaseCloudFamilyGateway(
     this._client, {
     required this._emailRedirectTo,
-  });
+    String Function()? authAttemptIdFactory,
+  }) : _authAttemptIdFactory = authAttemptIdFactory ?? const Uuid().v4;
 
   final SupabaseCloudClient _client;
   final String _emailRedirectTo;
+  final String Function() _authAttemptIdFactory;
 
   @override
   bool get isConfigured => true;
@@ -139,14 +216,89 @@ final class SupabaseCloudFamilyGateway
   };
 
   @override
+  Stream<String?> get accountSessionChangedEvents => switch (_client) {
+    SupabaseCloudAuthClientEvents(:final accountSessionChangedEvents) =>
+      accountSessionChangedEvents,
+    _ => const Stream<String?>.empty(),
+  };
+
+  @override
+  Future<void> signOut() => _guard(() {
+    final client = switch (_client) {
+      SupabaseCloudAccountSessionClient capability => capability,
+      _ => throw UnsupportedError('Account sign-out is unavailable.'),
+    };
+    return client.signOut();
+  });
+
+  @override
+  Future<void> signInWithProvider(SocialAuthProvider provider) async {
+    final launched = await _guard(() async {
+      final client = switch (_client) {
+        SupabaseCloudSocialAuthClient capability => capability,
+        _ => throw UnsupportedError('Social authentication is unavailable.'),
+      };
+      final attemptId = await _beginAuthAttempt();
+      return client.signInWithOAuth(
+        switch (provider) {
+          SocialAuthProvider.google => OAuthProvider.google,
+          SocialAuthProvider.microsoft => OAuthProvider.azure,
+          SocialAuthProvider.apple => OAuthProvider.apple,
+        },
+        redirectTo: _redirectWithAuthAttempt(
+          supabaseAuthCallbackUrl,
+          attemptId,
+        ),
+        authScreenLaunchMode: LaunchMode.externalApplication,
+        scopes: provider == SocialAuthProvider.microsoft ? 'email' : null,
+      );
+    });
+    if (!launched) {
+      throw const InvitationFailure(InvitationFailureCode.unknown);
+    }
+  }
+
+  @override
+  Future<bool> cancelPendingProviderSignIn() => _guard(() {
+    final client = switch (_client) {
+      SupabaseCloudSocialAuthClient capability => capability,
+      _ => throw UnsupportedError('Social authentication is unavailable.'),
+    };
+    return client.cancelPendingOAuth();
+  });
+
+  @override
+  Future<bool> clearFailedProviderSignIn() => _guard(() {
+    final client = switch (_client) {
+      SupabaseCloudSocialAuthClient capability => capability,
+      _ => throw UnsupportedError('Social authentication is unavailable.'),
+    };
+    return client.clearFailedOAuth();
+  });
+
+  @override
   Future<void> requestEmailOtp(String email) async {
     final normalizedEmail = _normalizeEmail(email);
-    await _guard(
-      () => _client.requestEmailOtp(
+    await _guard(() async {
+      final attemptId = await _beginAuthAttempt();
+      await _client.requestEmailOtp(
         normalizedEmail,
-        emailRedirectTo: _emailRedirectTo,
-      ),
-    );
+        emailRedirectTo: _redirectWithAuthAttempt(_emailRedirectTo, attemptId),
+      );
+    });
+  }
+
+  Future<String> _beginAuthAttempt() async {
+    final attemptId = _authAttemptIdFactory();
+    if (!_isValidAuthAttempt(attemptId)) {
+      throw const InvitationFailure(InvitationFailureCode.unknown);
+    }
+    final client = switch (_client) {
+      SupabaseCloudAuthAttemptClient capability => capability,
+      _ => throw UnsupportedError('Authentication correlation is unavailable.'),
+    };
+    await client.beginAuthAttempt(attemptId);
+    return attemptId;
   }
 
   @override
@@ -166,6 +318,14 @@ final class SupabaseCloudFamilyGateway
       ),
       mapInvalidOtp: true,
     );
+    if (_client case SupabaseCloudAuthAttemptClient capability) {
+      try {
+        await capability.retirePendingAuthAttempt();
+      } on Object {
+        // The OTP already established a session. PKCE retirement is cleanup,
+        // so a secure-store failure must not turn successful auth into error.
+      }
+    }
   }
 
   @override
@@ -673,12 +833,15 @@ Future<T> _familyGuard<T>(Future<T> Function() operation) async {
 }
 
 FamilyJoinFailure _mapFamilyPostgrestFailure(PostgrestException error) {
-  if (error.code != 'P0001' || error.details != null || error.hint != null) {
+  if (error.code != 'P0001' ||
+      (error.details != null && error.details != 'Bad Request') ||
+      error.hint != null) {
     return const FamilyJoinFailure(FamilyJoinFailureCode.unknown);
   }
   final code = switch (error.message) {
     'SIGNED_OUT' => FamilyJoinFailureCode.signedOut,
     'FAMILY_NOT_FOUND' => FamilyJoinFailureCode.familyNotFound,
+    'DIFFERENT_FAMILY' => FamilyJoinFailureCode.accountFamilyConflict,
     'ALREADY_MEMBER' => FamilyJoinFailureCode.alreadyMember,
     'REQUEST_ALREADY_PENDING' => FamilyJoinFailureCode.requestAlreadyPending,
     'REQUEST_EXPIRED' => FamilyJoinFailureCode.requestExpired,
@@ -1068,7 +1231,9 @@ Future<T> _guard<T>(
 }
 
 InvitationFailure _mapPostgrestFailure(PostgrestException error) {
-  if (error.code != 'P0001' || error.details != null || error.hint != null) {
+  if (error.code != 'P0001' ||
+      (error.details != null && error.details != 'Bad Request') ||
+      error.hint != null) {
     return const InvitationFailure(InvitationFailureCode.unknown);
   }
   final code = switch (error.message) {
@@ -1088,6 +1253,23 @@ InvitationFailure _mapPostgrestFailure(PostgrestException error) {
   };
   return InvitationFailure(code);
 }
+
+String _redirectWithAuthAttempt(String redirect, String attemptId) {
+  final uri = Uri.parse(redirect);
+  return uri
+      .replace(
+        queryParameters: {
+          ...uri.queryParameters,
+          supabaseAuthAttemptParameter: attemptId,
+        },
+      )
+      .toString();
+}
+
+bool _isValidAuthAttempt(String value) =>
+    value.isNotEmpty &&
+    value.length <= 128 &&
+    RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
 
 String _normalizeEmail(String value) {
   final normalized = value.trim().toLowerCase();

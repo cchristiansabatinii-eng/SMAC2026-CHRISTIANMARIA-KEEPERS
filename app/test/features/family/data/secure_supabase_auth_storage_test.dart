@@ -122,13 +122,226 @@ void main() {
     expect(await storage.getItem(key: 'code-verifier'), isNull);
     expect(secureStore.values, isEmpty);
   });
+
+  test('pending PKCE cancellation is atomic with verifier checkout', () async {
+    final secureStore = _MemorySecureValueStore();
+    final storage = SecureSupabasePkceStorage(
+      secureStore: secureStore,
+      keyPrefix: 'keepers.test.pkce',
+    );
+
+    await storage.beginAuthAttempt('attempt-a');
+    await storage.setItem(
+      key: SecureSupabasePkceStorage.legacyVerifierKey,
+      value: 'opaque-verifier',
+    );
+    expect(
+      await storage.cancelPendingVerifier(),
+      isTrue,
+      reason: 'a verifier that has not been checked out can be cancelled',
+    );
+    expect(secureStore.values, isEmpty);
+
+    await storage.beginAuthAttempt('attempt-b');
+    await storage.setItem(
+      key: SecureSupabasePkceStorage.legacyVerifierKey,
+      value: 'replacement-verifier',
+    );
+    expect(storage.acceptCallbackAttempt('attempt-b'), isTrue);
+    expect(
+      await storage.getItem(key: SecureSupabasePkceStorage.legacyVerifierKey),
+      'replacement-verifier',
+    );
+    expect(
+      await storage.cancelPendingVerifier(),
+      isFalse,
+      reason: 'an exchange that already read the verifier must finish alone',
+    );
+    expect(secureStore.values, isNotEmpty);
+
+    expect(await storage.clearFailedVerifier(), isTrue);
+
+    expect(secureStore.values, isEmpty);
+    expect(
+      await storage.cancelPendingVerifier(),
+      isTrue,
+      reason: 'a terminal callback failure releases the verifier slot',
+    );
+  });
+
+  test(
+    'an already-issued unmarked callback can consume a legacy verifier',
+    () async {
+      final secureStore = _MemorySecureValueStore();
+      final storage = SecureSupabasePkceStorage(
+        secureStore: secureStore,
+        keyPrefix: 'keepers.test.pkce',
+      );
+      await storage.initialize();
+      await storage.setItem(
+        key: SecureSupabasePkceStorage.legacyVerifierKey,
+        value: 'legacy-unmarked-verifier',
+      );
+
+      expect(storage.acceptCallbackAttempt(null), isTrue);
+      expect(
+        await storage.getItem(key: SecureSupabasePkceStorage.legacyVerifierKey),
+        'legacy-unmarked-verifier',
+      );
+      await storage.removeItem(
+        key: SecureSupabasePkceStorage.legacyVerifierKey,
+      );
+
+      expect(secureStore.values, isEmpty);
+    },
+  );
+
+  test(
+    'a stale callback cannot consume or clear a newer PKCE attempt',
+    () async {
+      final secureStore = _MemorySecureValueStore();
+      final storage = SecureSupabasePkceStorage(
+        secureStore: secureStore,
+        keyPrefix: 'keepers.test.pkce',
+      );
+
+      await storage.beginAuthAttempt('attempt-a');
+      await storage.setItem(
+        key: SecureSupabasePkceStorage.legacyVerifierKey,
+        value: 'verifier-a',
+      );
+      expect(storage.acceptCallbackAttempt('attempt-a'), isTrue);
+      expect(await storage.cancelPendingVerifier(), isTrue);
+
+      await storage.beginAuthAttempt('attempt-b');
+      await storage.setItem(
+        key: SecureSupabasePkceStorage.legacyVerifierKey,
+        value: 'verifier-b',
+      );
+
+      final afterRestart = SecureSupabasePkceStorage(
+        secureStore: secureStore,
+        keyPrefix: 'keepers.test.pkce',
+      );
+      await afterRestart.initialize();
+
+      expect(afterRestart.acceptCallbackAttempt('attempt-a'), isFalse);
+      expect(
+        await afterRestart.getItem(
+          key: SecureSupabasePkceStorage.legacyVerifierKey,
+        ),
+        isNull,
+      );
+      expect(await afterRestart.clearFailedVerifier(), isFalse);
+      expect(
+        secureStore.values,
+        containsPair(
+          'keepers.test.pkce.${SecureSupabasePkceStorage.legacyVerifierKey}',
+          'verifier-b',
+        ),
+      );
+
+      expect(afterRestart.acceptCallbackAttempt('attempt-b'), isTrue);
+      expect(
+        await afterRestart.getItem(
+          key: SecureSupabasePkceStorage.legacyVerifierKey,
+        ),
+        'verifier-b',
+      );
+      await afterRestart.removeItem(
+        key: SecureSupabasePkceStorage.legacyVerifierKey,
+      );
+      expect(secureStore.values, isEmpty);
+    },
+  );
+
+  test(
+    'callback accepted before cancellation cannot remove its replacement',
+    () async {
+      final secureStore = _MemorySecureValueStore();
+      final storage = SecureSupabasePkceStorage(
+        secureStore: secureStore,
+        keyPrefix: 'keepers.test.pkce',
+      );
+
+      await storage.beginAuthAttempt('attempt-a');
+      await storage.setItem(
+        key: SecureSupabasePkceStorage.legacyVerifierKey,
+        value: 'verifier-a',
+      );
+      expect(storage.acceptCallbackAttempt('attempt-a'), isTrue);
+      expect(await storage.cancelPendingVerifier(), isTrue);
+      await storage.beginAuthAttempt('attempt-b');
+      await storage.setItem(
+        key: SecureSupabasePkceStorage.legacyVerifierKey,
+        value: 'verifier-b',
+      );
+
+      expect(
+        await storage.getItem(key: SecureSupabasePkceStorage.legacyVerifierKey),
+        isNull,
+      );
+      expect(await storage.clearFailedVerifier(), isFalse);
+      expect(storage.acceptCallbackAttempt('attempt-b'), isTrue);
+      expect(
+        storage.acceptCallbackAttempt('attempt-b'),
+        isFalse,
+        reason: 'one attempt may admit only one callback exchange',
+      );
+      expect(
+        await storage.getItem(key: SecureSupabasePkceStorage.legacyVerifierKey),
+        'verifier-b',
+      );
+    },
+  );
+
+  test('terminal delete failure leaves PKCE cleanup retryable', () async {
+    final secureStore = _MemorySecureValueStore();
+    final storage = SecureSupabasePkceStorage(
+      secureStore: secureStore,
+      keyPrefix: 'keepers.test.pkce',
+    );
+    await storage.beginAuthAttempt('attempt-a');
+    await storage.setItem(
+      key: SecureSupabasePkceStorage.legacyVerifierKey,
+      value: 'verifier-a',
+    );
+    expect(storage.acceptCallbackAttempt('attempt-a'), isTrue);
+    expect(
+      await storage.getItem(key: SecureSupabasePkceStorage.legacyVerifierKey),
+      'verifier-a',
+    );
+    secureStore.failNextDeleteKey =
+        'keepers.test.pkce.${SecureSupabasePkceStorage.legacyVerifierKey}';
+
+    await expectLater(
+      storage.removeItem(key: SecureSupabasePkceStorage.legacyVerifierKey),
+      throwsStateError,
+    );
+
+    expect(
+      await storage.clearFailedVerifier(),
+      isTrue,
+      reason: 'a terminal cleanup failure must not leave checkout locked',
+    );
+    await storage.beginAuthAttempt('attempt-b');
+    expect(
+      secureStore.values,
+      containsPair('keepers.test.pkce.auth-attempt', 'attempt-b'),
+    );
+  });
 }
 
 final class _MemorySecureValueStore implements SecureValueStore {
   final Map<String, String> values = <String, String>{};
+  String? failNextDeleteKey;
 
   @override
   Future<void> delete(String key) async {
+    if (failNextDeleteKey == key) {
+      failNextDeleteKey = null;
+      throw StateError('secure delete unavailable');
+    }
     values.remove(key);
   }
 

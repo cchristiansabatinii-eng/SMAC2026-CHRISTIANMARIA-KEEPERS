@@ -20,6 +20,67 @@ import 'package:keepers/storage/database_key_store.dart';
 import 'package:keepers/storage/database_providers.dart';
 
 void main() {
+  testWidgets('first-run family link offers every account method', (
+    tester,
+  ) async {
+    final gateway = _Gateway(authenticated: false);
+    await _pumpManual(
+      tester,
+      gateway: gateway,
+      screen: FamilyJoinScreen.forCode(_code),
+    );
+
+    expect(find.text('Create your Keepers account'), findsOneWidget);
+    expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.text('Continue with Microsoft'), findsOneWidget);
+    expect(find.text('Continue with Apple'), findsOneWidget);
+    expect(find.byKey(const Key('join-email')), findsOneWidget);
+    final googleButton = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Continue with Google'),
+    );
+    expect(googleButton.focusNode?.hasFocus, isTrue);
+
+    await tester.tap(find.text('Continue with Google'));
+    await tester.pump();
+    await tester.pump();
+    expect(gateway.socialProviders, [SocialAuthProvider.google]);
+    expect(find.text('Finish in your browser'), findsOneWidget);
+    expect(find.text('Continue with Microsoft'), findsNothing);
+
+    await tester.tap(find.text('Choose another way'));
+    await tester.pumpAndSettle();
+    expect(find.text('Continue with Microsoft'), findsOneWidget);
+  });
+
+  testWidgets('family-link account choices stay reachable at 1.4x text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await _pumpManual(
+      tester,
+      gateway: _Gateway(authenticated: false),
+      screen: FamilyJoinScreen.forCode(_code),
+      textScale: 1.4,
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Continue with Google'),
+          )
+          .focusNode
+          ?.hasFocus,
+      isTrue,
+    );
+    await tester.ensureVisible(find.text('Continue with email'));
+    expect(find.text('Continue with email').hitTestable(), findsOneWidget);
+  });
+
   testWidgets('manual entry accepts pasted formatting and previews a family', (
     tester,
   ) async {
@@ -211,6 +272,28 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('explains when the signed-in account has another family', (
+    tester,
+  ) async {
+    await _pumpSnapshot(
+      tester,
+      FamilyJoinState(
+        phase: FamilyJoinPhase.pending,
+        request: _pendingRequest,
+        preview: _preview,
+        failure: const FamilyJoinFailure(
+          FamilyJoinFailureCode.accountFamilyConflict,
+        ),
+        retryPoint: FamilyJoinRetryPoint.refreshStatus,
+      ),
+    );
+
+    expect(
+      find.text('This account is already connected to another family.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('recoverable failure moves focus to Retry', (tester) async {
     await _pumpManual(
       tester,
@@ -260,6 +343,7 @@ Future<void> _pumpManual(
   WidgetTester tester, {
   Widget screen = const FamilyJoinScreen.manual(),
   _Gateway? gateway,
+  double textScale = 1,
 }) async {
   final resolvedGateway = gateway ?? _Gateway();
   final values = _MemorySecureValueStore();
@@ -280,7 +364,13 @@ Future<void> _pumpManual(
         idFactoryProvider.overrideWithValue(() => _memberId),
         localIdentityProvider.overrideWith((ref) async => null),
       ],
-      child: MaterialApp(theme: ThemeData(), home: screen),
+      child: MaterialApp(
+        theme: ThemeData(),
+        home: MediaQuery(
+          data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+          child: screen,
+        ),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -316,16 +406,23 @@ Future<void> _pumpSnapshot(
   await tester.pump();
 }
 
-final class _Gateway implements CloudFamilyGateway, FamilyCodeJoinGateway {
-  _Gateway({this.previewFailure});
+final class _Gateway
+    implements
+        CloudFamilyGateway,
+        FamilyCodeJoinGateway,
+        CloudFamilySocialAuth {
+  _Gateway({this.previewFailure, bool authenticated = true})
+    : accountId = authenticated ? _accountId : null;
 
   final FamilyJoinFailure? previewFailure;
+  String? accountId;
+  final socialProviders = <SocialAuthProvider>[];
   final _invalidations = StreamController<void>.broadcast();
   void dispose() => _invalidations.close();
   @override
   bool get isConfigured => true;
   @override
-  String? get authenticatedAccountId => _accountId;
+  String? get authenticatedAccountId => accountId;
   @override
   String? get authenticatedEmail => 'mariam@example.com';
   @override
@@ -340,6 +437,18 @@ final class _Gateway implements CloudFamilyGateway, FamilyCodeJoinGateway {
   Stream<void> watchOwnJoinRequest() => _invalidations.stream;
   @override
   Future<void> requestEmailOtp(String email) async {}
+
+  @override
+  Future<void> signInWithProvider(SocialAuthProvider provider) async {
+    socialProviders.add(provider);
+  }
+
+  @override
+  Future<bool> cancelPendingProviderSignIn() async => true;
+
+  @override
+  Future<bool> clearFailedProviderSignIn() async => true;
+
   @override
   Future<void> verifyEmailOtp({
     required String email,

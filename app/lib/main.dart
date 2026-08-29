@@ -23,7 +23,9 @@ Future<void> main() async {
   // Supabase must attach the first AppLinks listener so a cold auth callback
   // reaches its non-replaying mobile stream. Invite routing starts afterward
   // and still recovers a cold Join target through getInitialLink.
-  final configuredGateway = await configuredCloudFamilyGateway();
+  final CloudFamilyGatewayLoader cloudGatewayLoader =
+      configuredCloudFamilyGateway;
+  final configuredGateway = await cloudGatewayLoader();
   final inviteUriSource = AppLinksInviteUriSource(AppLinks());
   final inviteLinkCoordinator = InviteLinkCoordinator(inviteUriSource);
   unawaited(inviteLinkCoordinator.resolveInitialLink());
@@ -34,8 +36,8 @@ Future<void> main() async {
   runApp(
     ProviderScope(
       overrides: [
-        if (configuredGateway != null)
-          cloudFamilyGatewayProvider.overrideWithValue(configuredGateway),
+        cloudFamilyGatewayLoaderProvider.overrideWithValue(cloudGatewayLoader),
+        initialCloudFamilyGatewayProvider.overrideWithValue(configuredGateway),
       ],
       child: KeepersApp(
         inviteLinkCoordinator: inviteLinkCoordinator,

@@ -51,20 +51,28 @@
     }
 
     const codes = url.searchParams.getAll("code");
+    const attempts = url.searchParams.getAll("attempt");
     if (
-      Array.from(url.searchParams.keys()).some((key) => key !== "code") ||
+      Array.from(url.searchParams.keys()).some(
+        (key) => key !== "code" && key !== "attempt",
+      ) ||
       codes.length !== 1 ||
       codes[0].trim().length === 0 ||
-      codes[0].length > 2048
+      codes[0].length > 2048 ||
+      attempts.length > 1 ||
+      (attempts.length === 1 && !/^[A-Za-z0-9_-]{1,128}$/.test(attempts[0]))
     ) {
       return invalidLinkResponse();
     }
 
     const encodedCode = encodeURIComponent(codes[0]);
+    const encodedAttempt =
+      attempts.length === 1 ? `&attempt=${encodeURIComponent(attempts[0])}` : "";
+    const callbackQuery = `code=${encodedCode}${encodedAttempt}`;
     const userAgent = request.headers.get("user-agent") || "";
     const location = /android/i.test(userAgent)
-      ? `intent://auth-callback?code=${encodedCode}#Intent;scheme=keepers;package=app.keepers.keepers;end`
-      : `keepers://auth-callback?code=${encodedCode}`;
+      ? `intent://auth-callback?${callbackQuery}#Intent;scheme=keepers;package=app.keepers.keepers;end`
+      : `keepers://auth-callback?${callbackQuery}`;
 
     return redirectResponse(location);
   }

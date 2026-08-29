@@ -8,7 +8,7 @@ void main() {
     () {
       final startup = File('lib/main.dart').readAsStringSync();
       final cloudBootstrap = startup.indexOf(
-        'await configuredCloudFamilyGateway()',
+        'final configuredGateway = await cloudGatewayLoader()',
       );
       final inviteSource = startup.indexOf(
         'AppLinksInviteUriSource(AppLinks())',

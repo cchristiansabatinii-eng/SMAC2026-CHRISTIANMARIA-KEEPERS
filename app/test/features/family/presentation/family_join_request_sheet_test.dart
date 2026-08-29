@@ -144,6 +144,26 @@ void main() {
     );
   });
 
+  testWidgets('explains when the signed-in account has another family', (
+    tester,
+  ) async {
+    final controller = _SheetController(
+      FamilyJoinRequestsState(
+        requests: [_request],
+        failure: const FamilyJoinFailure(
+          FamilyJoinFailureCode.accountFamilyConflict,
+        ),
+      ),
+    );
+
+    await _pumpSheet(tester, controller);
+
+    expect(
+      find.text('This account is already connected to another family.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'authoritative resolution announces, closes, and restores trigger focus',
     (tester) async {

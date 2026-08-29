@@ -116,6 +116,12 @@ WHERE excluded.code_version > family_code_cache.code_version
     final stored = await find(db, familyId: record.material.familyId);
     if (stored == record) return;
     if (stored != null &&
+        stored.material == record.material &&
+        stored.creatorAccountId == record.creatorAccountId &&
+        stored.updatedAt == record.updatedAt) {
+      return;
+    }
+    if (stored != null &&
         record.material.codeVersion < stored.material.codeVersion) {
       throw StateError('Refusing to roll back cached family code material');
     }

@@ -1,27 +1,42 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keepers/features/family/application/cloud_family_providers.dart';
+import 'package:keepers/features/family/application/family_code_controller.dart';
 import 'package:keepers/features/family/application/family_join_controller.dart';
 import 'package:keepers/features/family/application/family_join_crypto_providers.dart';
 import 'package:keepers/features/family/application/pending_invite_completion_controller.dart';
 import 'package:keepers/features/family/application/pending_join_completion_controller.dart';
+import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/domain/family_code.dart';
 import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/features/family/presentation/family_join_screen.dart';
+import 'package:keepers/features/onboarding/application/account_auth_controller.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/features/onboarding/domain/local_identity.dart';
+import 'package:keepers/features/onboarding/presentation/account_conflict_screen.dart';
+import 'package:keepers/features/onboarding/presentation/account_screen.dart';
 import 'package:keepers/features/onboarding/presentation/setup_screen.dart';
 import 'package:keepers/features/vault/presentation/observatory_screen.dart';
 import 'package:keepers/storage/database_providers.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 
-enum StartupDestination { setup, resumeJoin, resumeCode, observatory }
+enum StartupDestination {
+  account,
+  accountConflict,
+  setup,
+  resumeJoin,
+  resumeCode,
+  observatory,
+}
 
 final class StartupResolution {
   const StartupResolution._({
     required this.destination,
     this.identity,
     this.code,
+    this.accountConflictKind,
     this.statusMessage,
   });
 
@@ -29,6 +44,18 @@ final class StartupResolution {
     : this._(
         destination: StartupDestination.setup,
         statusMessage: statusMessage,
+      );
+
+  const StartupResolution.account()
+    : this._(destination: StartupDestination.account);
+
+  const StartupResolution.accountConflict(
+    LocalIdentity identity,
+    AccountConflictKind kind,
+  ) : this._(
+        destination: StartupDestination.accountConflict,
+        identity: identity,
+        accountConflictKind: kind,
       );
 
   const StartupResolution.resumeJoin()
@@ -43,6 +70,7 @@ final class StartupResolution {
   final StartupDestination destination;
   final LocalIdentity? identity;
   final FamilyCode? code;
+  final AccountConflictKind? accountConflictKind;
   final String? statusMessage;
 }
 
@@ -60,6 +88,10 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
   ProviderSubscription<FamilyJoinCompletionRecovery>? _joinRecoveryListener;
   ProviderSubscription<AsyncValue<LocalIdentity?>>? _identityListener;
   ProviderSubscription<PendingInviteCompletionState>? _legacyRecoveryListener;
+  ProviderSubscription<CloudFamilyGateway>? _cloudGatewayListener;
+  StreamSubscription<String?>? _accountSessionListener;
+  CloudFamilyGateway? _accountSessionGateway;
+  String? _observedAccountId;
   var _legacyRecoveryScheduled = false;
   var _bootGeneration = 0;
 
@@ -78,6 +110,11 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       pendingInviteCompletionControllerProvider,
       (_, _) {},
     );
+    _cloudGatewayListener = ref.listenManual(
+      cloudFamilyGatewayProvider,
+      (_, gateway) => _bindAccountSessionEvents(gateway),
+    );
+    _bindAccountSessionEvents(ref.read(cloudFamilyGatewayProvider));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _bootstrap();
     });
@@ -89,6 +126,11 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
     _joinRecoveryListener?.close();
     _identityListener?.close();
     _legacyRecoveryListener?.close();
+    _cloudGatewayListener?.close();
+    final accountSessionListener = _accountSessionListener;
+    if (accountSessionListener != null) {
+      unawaited(accountSessionListener.cancel());
+    }
     super.dispose();
   }
 
@@ -101,7 +143,7 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       );
     }
     final established = _establishedIdentity;
-    if (established != null) return ObservatoryScreen(identity: established);
+    if (established != null) return _observatory(established);
     final resolution = _resolution;
     if (resolution == null) {
       return const Scaffold(
@@ -110,6 +152,17 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       );
     }
     return switch (resolution.destination) {
+      StartupDestination.account => AccountScreen(
+        onAuthenticated: _bootstrap,
+        onRetry: _retryAccountGateway,
+      ),
+      StartupDestination.accountConflict => AccountConflictScreen(
+        kind: resolution.accountConflictKind!,
+        onUseAnotherAccount: () => _useAnotherAccount(
+          resolution.identity!,
+          clearInvalidBinding: false,
+        ),
+      ),
       StartupDestination.observatory => _observatory(resolution.identity!),
       StartupDestination.resumeJoin => FamilyJoinScreen.manual(
         resumePendingRequest: true,
@@ -123,19 +176,47 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
       ),
       StartupDestination.setup => SetupScreen(
         statusMessage: resolution.statusMessage,
+        onReauthenticate: _reauthenticateSetup,
       ),
     };
   }
 
-  Future<void> _bootstrap() async {
+  Future<void> _bootstrap({
+    ({CloudFamilyGateway gateway, String? accountId})? accountSnapshot,
+  }) async {
     final generation = ++_bootGeneration;
     if (mounted) {
       setState(() {
+        _establishedIdentity = null;
         _resolution = null;
         _startupError = null;
       });
     }
     try {
+      var identity = await ref.read(localIdentityProvider.future);
+      if (!mounted || generation != _bootGeneration) return;
+      var accountGateway = ref.read(cloudFamilyGatewayProvider);
+      final accountId = _accountIdFor(accountGateway, accountSnapshot);
+      _rememberObservedAccount(accountGateway, accountId);
+      if (accountId == null) {
+        setState(() {
+          _resolution = const StartupResolution.account();
+          _startupError = null;
+        });
+        return;
+      }
+      if (identity?.accountId case final boundAccountId?
+          when boundAccountId != accountId) {
+        setState(() {
+          _resolution = StartupResolution.accountConflict(
+            identity!,
+            AccountConflictKind.profileAccountMismatch,
+          );
+          _startupError = null;
+        });
+        return;
+      }
+
       final recovery = await _joinRecoveryListener!.read()();
       if (!mounted || generation != _bootGeneration) return;
       if (recovery.phase != PendingJoinCompletionPhase.idle &&
@@ -151,6 +232,15 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
         next.when(
           data: (identity) {
             if (identity != null) {
+              final accountId = ref
+                  .read(cloudFamilyGatewayProvider)
+                  .authenticatedAccountId;
+              if (accountId == null ||
+                  (identity.accountId != null &&
+                      identity.accountId != accountId)) {
+                unawaited(_bootstrap());
+                return;
+              }
               setState(() {
                 _establishedIdentity = identity;
                 _resolution = StartupResolution.observatory(identity);
@@ -166,18 +256,49 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
           loading: () {},
         );
       });
-      final identity = await ref.read(localIdentityProvider.future);
+      identity = await ref.read(localIdentityProvider.future);
       if (!mounted || generation != _bootGeneration) return;
-      if (identity != null) {
+      if (identity case final establishedIdentity?) {
+        accountGateway = ref.read(cloudFamilyGatewayProvider);
+        final currentAccountId = _accountIdFor(accountGateway, accountSnapshot);
+        _rememberObservedAccount(accountGateway, currentAccountId);
+        if (currentAccountId == null) {
+          setState(() {
+            _resolution = const StartupResolution.account();
+            _startupError = null;
+          });
+          return;
+        }
+        if (establishedIdentity.accountId case final boundAccountId?
+            when boundAccountId != currentAccountId) {
+          setState(() {
+            _resolution = StartupResolution.accountConflict(
+              establishedIdentity,
+              AccountConflictKind.profileAccountMismatch,
+            );
+            _startupError = null;
+          });
+          return;
+        }
         setState(() {
-          _establishedIdentity = identity;
-          _resolution = StartupResolution.observatory(identity);
+          _establishedIdentity = establishedIdentity;
+          _resolution = StartupResolution.observatory(establishedIdentity);
           _startupError = null;
         });
         return;
       }
 
       final gateway = ref.read(familyCodeJoinGatewayProvider);
+      accountGateway = ref.read(cloudFamilyGatewayProvider);
+      final currentAccountId = _accountIdFor(accountGateway, accountSnapshot);
+      _rememberObservedAccount(accountGateway, currentAccountId);
+      if (currentAccountId == null) {
+        setState(() {
+          _resolution = const StartupResolution.account();
+          _startupError = null;
+        });
+        return;
+      }
       final pendingCode = gateway.isConfigured
           ? await ref.read(pendingFamilyCodeStoreProvider).find()
           : null;
@@ -203,6 +324,62 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
         setState(() => _startupError = error);
       }
     }
+  }
+
+  Future<void> _retryAccountGateway() async {
+    await ref.read(cloudFamilyGatewayStateProvider.notifier).reload();
+    if (!mounted) return;
+    ref.invalidate(accountAuthControllerProvider);
+    await _bootstrap();
+  }
+
+  void _bindAccountSessionEvents(CloudFamilyGateway gateway) {
+    if (identical(gateway, _accountSessionGateway)) return;
+    _accountSessionGateway = gateway;
+    _observedAccountId = gateway.authenticatedAccountId;
+    final previous = _accountSessionListener;
+    _accountSessionListener = null;
+    if (previous != null) unawaited(previous.cancel());
+    if (gateway case CloudFamilyAccountSessionEvents events) {
+      _accountSessionListener = events.accountSessionChangedEvents.listen(
+        (accountId) => _handleAccountSessionChange(gateway, accountId),
+        onError: (Object _, StackTrace _) {},
+      );
+    }
+  }
+
+  void _handleAccountSessionChange(
+    CloudFamilyGateway gateway,
+    String? accountId,
+  ) {
+    if (!mounted ||
+        !identical(gateway, _accountSessionGateway) ||
+        !identical(gateway, ref.read(cloudFamilyGatewayProvider)) ||
+        accountId == _observedAccountId) {
+      return;
+    }
+    _observedAccountId = accountId;
+    unawaited(
+      _bootstrap(accountSnapshot: (gateway: gateway, accountId: accountId)),
+    );
+  }
+
+  String? _accountIdFor(
+    CloudFamilyGateway gateway,
+    ({CloudFamilyGateway gateway, String? accountId})? snapshot,
+  ) => snapshot != null && identical(snapshot.gateway, gateway)
+      ? snapshot.accountId
+      : gateway.authenticatedAccountId;
+
+  void _rememberObservedAccount(CloudFamilyGateway gateway, String? accountId) {
+    if (identical(gateway, _accountSessionGateway)) {
+      _observedAccountId = accountId;
+    }
+  }
+
+  void _reauthenticateSetup() {
+    ref.invalidate(setupControllerProvider);
+    _bootstrap();
   }
 
   static StartupResolution _resolutionFor(OwnFamilyJoinRequest? own) {
@@ -237,7 +414,59 @@ final class _StartupGateState extends ConsumerState<StartupGate> {
   Widget _observatory(LocalIdentity identity) {
     _establishedIdentity = identity;
     _scheduleLegacyRecovery();
-    return ObservatoryScreen(identity: identity);
+    return ObservatoryScreen(
+      identity: identity,
+      onUseAnotherAccount: () =>
+          _useAnotherAccount(identity, clearInvalidBinding: true),
+    );
+  }
+
+  Future<void> _useAnotherAccount(
+    LocalIdentity identity, {
+    required bool clearInvalidBinding,
+  }) async {
+    final gateway = ref.read(cloudFamilyGatewayProvider);
+    final currentAccountId = gateway.authenticatedAccountId;
+    final boundAccountId = identity.accountId;
+    if (clearInvalidBinding &&
+        currentAccountId != null &&
+        boundAccountId != null &&
+        currentAccountId != boundAccountId) {
+      throw StateError('The authenticated account changed.');
+    }
+    if (currentAccountId != null) {
+      if (gateway case CloudFamilyAccountSession session) {
+        await session.signOut();
+      } else {
+        throw StateError('Account switching is unavailable.');
+      }
+    }
+    if (clearInvalidBinding && boundAccountId != null) {
+      final database = await ref.read(databaseProvider.future);
+      final cleared = await database.transaction(
+        (transaction) => ref
+            .read(memberRepositoryProvider)
+            .clearLocalIdentityAccountBinding(
+              transaction,
+              familyId: identity.familyId,
+              memberId: identity.memberId,
+              accountId: boundAccountId,
+            ),
+      );
+      if (!cleared) {
+        throw StateError('The local account binding changed.');
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _establishedIdentity = null;
+      _resolution = null;
+      _startupError = null;
+    });
+    ref.invalidate(accountAuthControllerProvider);
+    ref.invalidate(familyCodeControllerProvider(identity.familyId));
+    ref.invalidate(localIdentityProvider);
+    await _bootstrap();
   }
 
   void _refreshAfterJoin() {

@@ -4,9 +4,11 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/app.dart';
+import 'package:keepers/features/family/application/cloud_family_providers.dart';
 import 'package:keepers/features/family/application/family_join_controller.dart';
 import 'package:keepers/features/family/application/family_roster_provider.dart';
 import 'package:keepers/features/family/application/pending_join_completion_controller.dart';
+import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/data/invite_link_coordinator.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/family/presentation/family_join_screen.dart';
@@ -28,6 +30,9 @@ void main() {
             ),
             localIdentityProvider.overrideWithValue(
               const AsyncValue.data(null),
+            ),
+            cloudFamilyGatewayProvider.overrideWithValue(
+              const _ConfiguredAccountGateway(),
             ),
           ],
           child: const KeepersApp(playLaunchSequence: true),
@@ -54,6 +59,9 @@ void main() {
             _idleJoinRecovery,
           ),
           localIdentityProvider.overrideWithValue(const AsyncValue.data(null)),
+          cloudFamilyGatewayProvider.overrideWithValue(
+            const _ConfiguredAccountGateway(),
+          ),
         ],
         child: const KeepersApp(playLaunchSequence: true),
       ),
@@ -64,10 +72,13 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const ValueKey('keepers-launch-sequence')), findsNothing);
-    expect(find.text('CREATE A FAMILY').hitTestable(), findsOneWidget);
+    expect(
+      find.text('Create your Keepers account').hitTestable(),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('routes a first run to the family setup', (tester) async {
+  testWidgets('routes a first run to account creation', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -75,6 +86,9 @@ void main() {
             _idleJoinRecovery,
           ),
           localIdentityProvider.overrideWithValue(const AsyncValue.data(null)),
+          cloudFamilyGatewayProvider.overrideWithValue(
+            const _ConfiguredAccountGateway(),
+          ),
         ],
         child: const KeepersApp(),
       ),
@@ -85,8 +99,11 @@ void main() {
       find.byKey(const ValueKey('keepers-global-background')),
       findsOneWidget,
     );
-    expect(find.text('CREATE A FAMILY'), findsOneWidget);
-    expect(find.text('JOIN A FAMILY'), findsOneWidget);
+    expect(find.text('Create your Keepers account'), findsOneWidget);
+    expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.text('Continue with Microsoft'), findsOneWidget);
+    expect(find.text('Continue with Apple'), findsOneWidget);
+    expect(find.text('CREATE A FAMILY'), findsNothing);
   });
 
   testWidgets('routes an established identity to the Family Wheel', (
@@ -111,6 +128,9 @@ void main() {
                 avatar: AvatarConfig.defaults(seed: 'member-1'),
               ),
             ),
+          ),
+          cloudFamilyGatewayProvider.overrideWithValue(
+            const _SignedInAccountGateway(),
           ),
           vaultEntriesProvider.overrideWithValue(const AsyncValue.data([])),
           familyRosterProvider('family-1').overrideWithBuild(
@@ -473,4 +493,36 @@ final class _TestInviteUriSource implements InviteUriSource {
   final Uri? _initial;
   @override
   Future<Uri?> getInitialUri() async => _initial;
+}
+
+final class _ConfiguredAccountGateway implements CloudFamilyGateway {
+  const _ConfiguredAccountGateway();
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  String? get authenticatedAccountId => null;
+
+  @override
+  String? get authenticatedEmail => null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _SignedInAccountGateway implements CloudFamilyGateway {
+  const _SignedInAccountGateway();
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  String? get authenticatedAccountId => 'account-1';
+
+  @override
+  String? get authenticatedEmail => 'keeper@example.com';
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

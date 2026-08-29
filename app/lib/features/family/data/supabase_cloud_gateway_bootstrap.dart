@@ -32,6 +32,7 @@ Future<CloudFamilyGateway?> configuredCloudFamilyGateway({
   SupabaseCloudClientInitializer? initializeClient,
   LegacySessionStorageFactory? legacyStorageFactory,
   LegacyPkceStorageFactory? legacyPkceStorageFactory,
+  String Function()? authAttemptIdFactory,
 }) async {
   late final CloudConfig resolvedConfig;
   try {
@@ -62,6 +63,7 @@ Future<CloudFamilyGateway?> configuredCloudFamilyGateway({
   );
 
   try {
+    await pkceStorage.initialize();
     final client = await (initializeClient ?? _initializeSupabaseClient)(
       url: url.toString(),
       publishableKey: resolvedConfig.publishableKey!,
@@ -69,7 +71,8 @@ Future<CloudFamilyGateway?> configuredCloudFamilyGateway({
         localStorage: authStorage,
         pkceAsyncStorage: pkceStorage,
         detectSessionInUri: true,
-        detectSessionInUriPredicate: _isKeepersAuthCallback,
+        detectSessionInUriPredicate: (uri) =>
+            _isKeepersAuthCallback(uri, pkceStorage),
         persistSession: true,
       ),
       debug: false,
@@ -77,13 +80,14 @@ Future<CloudFamilyGateway?> configuredCloudFamilyGateway({
     return SupabaseCloudFamilyGateway(
       client,
       emailRedirectTo: _authBridgeRedirectUrl(url),
+      authAttemptIdFactory: authAttemptIdFactory,
     );
   } on Object {
     return null;
   }
 }
 
-bool _isKeepersAuthCallback(Uri uri) {
+bool _isKeepersAuthCallback(Uri uri, SecureSupabasePkceStorage pkceStorage) {
   if (uri.scheme != 'keepers' ||
       uri.host != 'auth-callback' ||
       uri.authority != 'auth-callback' ||
@@ -95,14 +99,41 @@ bool _isKeepersAuthCallback(Uri uri) {
   }
 
   final parameters = uri.queryParametersAll;
-  if (parameters.length != 1 || !parameters.containsKey('code')) {
+  final attempts = parameters[supabaseAuthAttemptParameter];
+  String? attemptId;
+  if (attempts != null) {
+    if (attempts.length != 1 || !_isValidAuthAttempt(attempts.single)) {
+      return false;
+    }
+    attemptId = attempts.single;
+  }
+  final authParameters = Map<String, List<String>>.from(parameters)
+    ..remove(supabaseAuthAttemptParameter);
+  final codes = authParameters['code'];
+  if (codes != null) {
+    return authParameters.length == 1 &&
+        _hasOneBoundedValue(codes) &&
+        pkceStorage.acceptCallbackAttempt(attemptId);
+  }
+
+  const errorKeys = {'error', 'error_code', 'error_description'};
+  if (authParameters.isEmpty ||
+      authParameters.keys.any((key) => !errorKeys.contains(key)) ||
+      !authParameters.values.every(_hasOneBoundedValue)) {
     return false;
   }
-  final codes = parameters['code']!;
-  return codes.length == 1 &&
-      codes.single.isNotEmpty &&
-      codes.single.length <= 2048;
+  return pkceStorage.acceptCallbackAttempt(attemptId);
 }
+
+bool _isValidAuthAttempt(String value) =>
+    value.isNotEmpty &&
+    value.length <= 128 &&
+    RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
+
+bool _hasOneBoundedValue(List<String> values) =>
+    values.length == 1 &&
+    values.single.isNotEmpty &&
+    values.single.length <= 2048;
 
 String _originDigest(Uri url) =>
     base64UrlEncode(const DartSha256().hashSync(utf8.encode(url.origin)).bytes)
@@ -124,11 +155,38 @@ Future<SupabaseCloudClient> _initializeSupabaseClient({
   required FlutterAuthClientOptions authOptions,
   required bool debug,
 }) async {
-  final supabase = await Supabase.initialize(
-    url: url,
-    publishableKey: publishableKey,
-    authOptions: authOptions,
-    debug: debug,
-  );
-  return SupabaseCloudClientAdapter(supabase.client);
+  final previous = _initializedSupabaseOrNull();
+  if (previous != null) await previous.dispose();
+  try {
+    final supabase = await Supabase.initialize(
+      url: url,
+      publishableKey: publishableKey,
+      authOptions: authOptions,
+      debug: debug,
+    );
+    final pkceStorage = authOptions.pkceAsyncStorage;
+    if (pkceStorage is! SecureSupabasePkceStorage) {
+      throw StateError('Keepers requires secure PKCE storage.');
+    }
+    return SupabaseCloudClientAdapter(supabase.client, pkceStorage);
+  } on Object {
+    final partial = _initializedSupabaseOrNull();
+    if (partial != null) {
+      try {
+        await partial.dispose();
+      } on Object {
+        // A later retry attempts disposal again before reinitializing.
+      }
+    }
+    rethrow;
+  }
+}
+
+Supabase? _initializedSupabaseOrNull() {
+  try {
+    final supabase = Supabase.instance;
+    return supabase.isInitialized ? supabase : null;
+  } on AssertionError {
+    return null;
+  }
 }

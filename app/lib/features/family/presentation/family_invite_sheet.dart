@@ -390,6 +390,8 @@ String _failureMessage(FamilyJoinFailure? failure) => switch (failure?.code) {
   FamilyJoinFailureCode.notConfigured => 'Family sharing is not configured.',
   FamilyJoinFailureCode.signedOut => 'Sign in again, then retry.',
   FamilyJoinFailureCode.networkUnavailable => 'Keepers is offline.',
+  FamilyJoinFailureCode.accountFamilyConflict =>
+    'This account is already connected to another family.',
   FamilyJoinFailureCode.notCreator => 'Only the family creator can do that.',
   FamilyJoinFailureCode.codeVersionChanged =>
     'The family code changed on another device.',

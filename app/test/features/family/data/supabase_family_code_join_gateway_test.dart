@@ -461,6 +461,71 @@ void main() {
     },
   );
 
+  test('maps the live DIFFERENT_FAMILY PostgREST shape to an account-family conflict', () async {
+    client.errors.add(
+      const PostgrestException(
+        code: 'P0001',
+        message: 'DIFFERENT_FAMILY',
+        details: 'Bad Request',
+        hint: null,
+      ),
+    );
+
+    await expectLater(
+      gateway.getFamilyCode(_familyId),
+      throwsFamilyJoin(FamilyJoinFailureCode.accountFamilyConflict),
+    );
+  });
+
+  test('rejects DIFFERENT_FAMILY when PostgREST supplies a hint', () async {
+    client.errors.add(
+      const PostgrestException(
+        code: 'P0001',
+        message: 'DIFFERENT_FAMILY',
+        details: 'Bad Request',
+        hint: 'unexpected hint',
+      ),
+    );
+
+    await expectLater(
+      gateway.getFamilyCode(_familyId),
+      throwsFamilyJoin(FamilyJoinFailureCode.unknown),
+    );
+  });
+
+  test(
+    'maps a clean P0001 failure when PostgREST supplies its HTTP reason',
+    () async {
+      client.errors.add(
+        const PostgrestException(
+          code: 'P0001',
+          message: 'FAMILY_NOT_FOUND',
+          details: 'Bad Request',
+        ),
+      );
+
+      await expectLater(
+        gateway.getFamilyCode(_familyId),
+        throwsFamilyJoin(FamilyJoinFailureCode.familyNotFound),
+      );
+    },
+  );
+
+  test('maps a forbidden P0001 with the PostgREST HTTP reason', () async {
+    client.errors.add(
+      const PostgrestException(
+        code: 'P0001',
+        message: 'FORBIDDEN',
+        details: 'Bad Request',
+      ),
+    );
+
+    await expectLater(
+      gateway.getFamilyCode(_familyId),
+      throwsFamilyJoin(FamilyJoinFailureCode.forbidden),
+    );
+  });
+
   test('Realtime remains optional invalidation-only capability', () async {
     expect(await gateway.watchOwnJoinRequest().toList(), isEmpty);
     expect(await gateway.watchPendingJoinRequests(_familyId).toList(), isEmpty);

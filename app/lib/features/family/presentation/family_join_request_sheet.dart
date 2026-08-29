@@ -406,6 +406,8 @@ String _failureMessage(FamilyJoinFailure failure) => switch (failure.code) {
   FamilyJoinFailureCode.signedOut => 'Sign in again, then retry.',
   FamilyJoinFailureCode.networkUnavailable => 'Keepers is offline. Try again.',
   FamilyJoinFailureCode.familyNotFound => 'This family is no longer available.',
+  FamilyJoinFailureCode.accountFamilyConflict =>
+    'This account is already connected to another family.',
   FamilyJoinFailureCode.alreadyMember =>
     'This person is already in the family.',
   FamilyJoinFailureCode.requestExpired => 'This request expired.',

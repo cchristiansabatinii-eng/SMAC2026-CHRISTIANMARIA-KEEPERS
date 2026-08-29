@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keepers/features/family/application/family_join_controller.dart';
+import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/domain/cloud_family_models.dart';
 import 'package:keepers/features/family/domain/family_code.dart';
 import 'package:keepers/features/family/domain/family_join_request.dart';
@@ -57,6 +58,7 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
   final _emailFocus = FocusNode(debugLabel: 'join email');
   final _otpFocus = FocusNode(debugLabel: 'join email code');
   final _nameFocus = FocusNode(debugLabel: 'join profile name');
+  final _providerFocus = FocusNode(debugLabel: 'join Google account');
   final _actionFocus = FocusNode(debugLabel: 'join recovery action');
   final _retryFocus = FocusNode(debugLabel: 'retry family join');
   AvatarConfig? _avatar;
@@ -103,6 +105,7 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
     _emailFocus.dispose();
     _otpFocus.dispose();
     _nameFocus.dispose();
+    _providerFocus.dispose();
     _actionFocus.dispose();
     _retryFocus.dispose();
     super.dispose();
@@ -201,6 +204,7 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
             : _checking('Finding your family'),
       FamilyJoinPhase.checking => _checking('Finding your family'),
       FamilyJoinPhase.needsAuthentication => _emailEntry(state),
+      FamilyJoinPhase.awaitingProvider => _providerPending(state),
       FamilyJoinPhase.awaitingOtp => _otpEntry(state),
       FamilyJoinPhase.preview ||
       FamilyJoinPhase.requesting ||
@@ -254,13 +258,40 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
   Widget _emailEntry(FamilyJoinState state) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const _Title('Sign in to request access'),
+      const _Title('Create your Keepers account'),
       const SizedBox(height: 12),
       const KeepersText(
-        'Use your email to continue with this family code.',
+        'Choose an account to continue with this family code. Your memories and keys stay private on this device.',
         style: TextStyle(color: KeepersColors.inkMuted, height: 1.4),
       ),
       const SizedBox(height: 28),
+      _JoinProviderButton(
+        provider: SocialAuthProvider.google,
+        label: 'Continue with Google',
+        focusNode: _providerFocus,
+        onPressed: state.isBusy
+            ? null
+            : () => _startSocialAuth(SocialAuthProvider.google),
+      ),
+      const SizedBox(height: 12),
+      _JoinProviderButton(
+        provider: SocialAuthProvider.microsoft,
+        label: 'Continue with Microsoft',
+        onPressed: state.isBusy
+            ? null
+            : () => _startSocialAuth(SocialAuthProvider.microsoft),
+      ),
+      const SizedBox(height: 12),
+      _JoinProviderButton(
+        provider: SocialAuthProvider.apple,
+        label: 'Continue with Apple',
+        onPressed: state.isBusy
+            ? null
+            : () => _startSocialAuth(SocialAuthProvider.apple),
+      ),
+      const SizedBox(height: 24),
+      const _JoinDividerLabel(),
+      const SizedBox(height: 24),
       TextField(
         key: const Key('join-email'),
         controller: _email,
@@ -276,10 +307,44 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
       ),
       _feedbackSlot(state),
       _ActionButton(
-        label: 'Send code',
+        label: 'Continue with email',
         busy: state.isBusy,
         focusNode: _actionFocus,
         onPressed: state.isBusy ? null : _requestOtp,
+      ),
+    ],
+  );
+
+  Widget _providerPending(FamilyJoinState state) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const _Title('Finish in your browser'),
+      const SizedBox(height: 12),
+      const KeepersText(
+        'Complete the secure sign-in, then return to Keepers. This family code will stay ready.',
+        style: TextStyle(color: KeepersColors.inkMuted, height: 1.4),
+      ),
+      const SizedBox(height: 32),
+      const Center(
+        child: SizedBox.square(
+          dimension: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+      const SizedBox(height: 24),
+      if (state.failure != null) _feedbackSlot(state),
+      TextButton(
+        key: const Key('choose-another-join-auth'),
+        focusNode: _actionFocus,
+        style: TextButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        onPressed: state.isBusy
+            ? null
+            : () => unawaited(
+                ref
+                    .read(familyJoinControllerProvider.notifier)
+                    .chooseAnotherAuthenticationMethod(),
+              ),
+        child: const KeepersText('Choose another way'),
       ),
     ],
   );
@@ -601,6 +666,13 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
     );
   }
 
+  void _startSocialAuth(SocialAuthProvider provider) {
+    setState(() => _localMessage = null);
+    unawaited(
+      ref.read(familyJoinControllerProvider.notifier).startSocialAuth(provider),
+    );
+  }
+
   void _requestJoin() {
     final state = ref.read(familyJoinControllerProvider);
     final memberId = state.proposedMemberId;
@@ -643,7 +715,9 @@ final class _FamilyJoinScreenState extends ConsumerState<FamilyJoinScreen>
       case FamilyJoinPhase.enteringCode:
         _codeFocus.requestFocus();
       case FamilyJoinPhase.needsAuthentication:
-        _emailFocus.requestFocus();
+        _providerFocus.requestFocus();
+      case FamilyJoinPhase.awaitingProvider:
+        _actionFocus.requestFocus();
       case FamilyJoinPhase.awaitingOtp:
         _otpFocus.requestFocus();
       case FamilyJoinPhase.preview:
@@ -729,6 +803,105 @@ final class _ActionButton extends StatelessWidget {
       ),
     ),
   );
+}
+
+final class _JoinProviderButton extends StatelessWidget {
+  const _JoinProviderButton({
+    required this.provider,
+    required this.label,
+    required this.onPressed,
+    this.focusNode,
+  });
+
+  final SocialAuthProvider provider;
+  final String label;
+  final VoidCallback? onPressed;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+    style: OutlinedButton.styleFrom(
+      minimumSize: const Size.fromHeight(48),
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+    ),
+    onPressed: onPressed,
+    focusNode: focusNode,
+    icon: ExcludeSemantics(
+      child: SizedBox(
+        width: 24,
+        child: Center(child: _JoinProviderMark(provider)),
+      ),
+    ),
+    label: Center(child: KeepersText(label)),
+  );
+}
+
+final class _JoinProviderMark extends StatelessWidget {
+  const _JoinProviderMark(this.provider);
+
+  final SocialAuthProvider provider;
+
+  @override
+  Widget build(BuildContext context) => switch (provider) {
+    SocialAuthProvider.google => const Text(
+      'G',
+      style: TextStyle(
+        color: Color(0xFF4285F4),
+        fontWeight: FontWeight.w800,
+        fontSize: 18,
+      ),
+    ),
+    SocialAuthProvider.microsoft => SizedBox.square(
+      dimension: 17,
+      child: Wrap(
+        spacing: 2,
+        runSpacing: 2,
+        children: const [
+          _JoinMicrosoftSquare(Color(0xFFF25022)),
+          _JoinMicrosoftSquare(Color(0xFF7FBA00)),
+          _JoinMicrosoftSquare(Color(0xFF00A4EF)),
+          _JoinMicrosoftSquare(Color(0xFFFFB900)),
+        ],
+      ),
+    ),
+    SocialAuthProvider.apple => const Icon(Icons.apple, size: 21),
+  };
+}
+
+final class _JoinMicrosoftSquare extends StatelessWidget {
+  const _JoinMicrosoftSquare(this.color);
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) =>
+      ColoredBox(color: color, child: const SizedBox.square(dimension: 7.5));
+}
+
+final class _JoinDividerLabel extends StatelessWidget {
+  const _JoinDividerLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.outlineVariant;
+    return Row(
+      children: [
+        Expanded(child: Divider(color: color)),
+        const Flexible(
+          flex: 4,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: KeepersText(
+              'or continue with email',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+        Expanded(child: Divider(color: color)),
+      ],
+    );
+  }
 }
 
 final class _JoinAvatarPicker extends StatelessWidget {
@@ -886,6 +1059,8 @@ String? _recoverableMessage(FamilyJoinFailureCode? code) => switch (code) {
     'Keepers could not connect. Try again.',
   FamilyJoinFailureCode.notConfigured =>
     'Family joining is not available on this device.',
+  FamilyJoinFailureCode.accountFamilyConflict =>
+    'This account is already connected to another family.',
   FamilyJoinFailureCode.rateLimited =>
     'Please wait a moment before trying again.',
   FamilyJoinFailureCode.invalidJoinKey ||
