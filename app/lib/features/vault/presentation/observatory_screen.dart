@@ -112,11 +112,13 @@ final class WeeklyMemoryPayloadLease {
 final class ObservatoryScreen extends ConsumerStatefulWidget {
   const ObservatoryScreen({
     required this.identity,
+    required this.onUseAnotherAccount,
     this.showCapture,
     super.key,
   });
 
   final LocalIdentity identity;
+  final Future<void> Function() onUseAnotherAccount;
   final CaptureSheetLauncher? showCapture;
 
   @override

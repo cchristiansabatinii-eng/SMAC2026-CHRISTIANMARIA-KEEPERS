@@ -1341,7 +1341,11 @@ Widget _observatoryWithOverride(
       theme: KeepersTheme.dark(),
       home: MediaQuery(
         data: mediaQuery ?? const MediaQueryData(disableAnimations: true),
-        child: ObservatoryScreen(identity: _identity, showCapture: showCapture),
+        child: ObservatoryScreen(
+          identity: _identity,
+          onUseAnotherAccount: () async {},
+          showCapture: showCapture,
+        ),
       ),
     ),
   );
