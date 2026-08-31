@@ -1,0 +1,28 @@
+Resolving dependencies...
+Downloading packages...
+  _fe_analyzer_shared 103.0.0 (106.0.0 available)
+  analyzer 13.3.0 (14.2.0 available)
+  code_assets 1.2.1 (2.0.0 available)
+  hooks 2.0.2 (2.2.0 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.3 (1.19.0 available)
+  native_toolchain_c 0.19.2 (0.19.4 available)
+  objective_c 9.5.0 (9.6.0 available)
+  package_config 2.2.0 (3.0.0 available)
+  record_use 0.6.0 (1.1.1 available)
+  test 1.31.1 (1.31.2 available)
+  test_api 0.7.12 (0.7.13 available)
+  test_core 0.6.18 (0.6.19 available)
+  vector_math 2.4.0 (2.4.2 available)
+Got dependencies!
+14 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Upgrading analysis_options.yaml to exclude build and platform directories.
+Analyzing app...                                                
+
+   info • Use interpolation to compose strings and values. Try using string interpolation to build the composite string • lib/storage/schema.dart:215:9 • prefer_interpolation_to_compose_strings
+   info • Use interpolation to compose strings and values. Try using string interpolation to build the composite string • lib/storage/schema.dart:217:13 • prefer_interpolation_to_compose_strings
+   info • The import of 'package:sqflite_common/sqlite_api.dart' is unnecessary because all of the used elements are also provided by the import of 'package:sqflite_common_ffi/sqflite_ffi.dart'. Try removing the import directive • test/storage/schema_test.dart:3:8 • unnecessary_import
+   info • Unnecessary use of double quotes. Try using single quotes unless the string contains single quotes • test/storage/schema_test.dart:21:7 • prefer_single_quotes
+
+4 issues found. (ran in 9.2s)
