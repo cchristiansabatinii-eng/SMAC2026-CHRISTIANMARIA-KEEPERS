@@ -27,7 +27,6 @@ final class MemberPageScreen extends StatefulWidget {
     this.sealedCount,
     required this.keptMemories,
     required this.onOpenMemory,
-    this.showLegacyLock = false,
     super.key,
   });
 
@@ -35,7 +34,6 @@ final class MemberPageScreen extends StatefulWidget {
   final int? sealedCount;
   final List<MemberMemorySummary> keptMemories;
   final ValueChanged<MemberMemorySummary> onOpenMemory;
-  final bool showLegacyLock;
 
   @override
   State<MemberPageScreen> createState() => _MemberPageScreenState();
@@ -72,10 +70,6 @@ final class _MemberPageScreenState extends State<MemberPageScreen> {
                     color: widget.member.color,
                     onOpenMemory: widget.onOpenMemory,
                   ),
-                  if (widget.showLegacyLock) ...[
-                    const SizedBox(height: 28),
-                    const _LegacyLockCard(),
-                  ],
                 ],
               ),
             ),
@@ -295,52 +289,6 @@ final class _KeptHistory extends StatelessWidget {
             ),
           ),
     ],
-  );
-}
-
-final class _LegacyLockCard extends StatelessWidget {
-  const _LegacyLockCard();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      color: KeepersColors.ink,
-      borderRadius: BorderRadius.circular(28),
-      border: Border.all(color: KeepersColors.memorialGold),
-    ),
-    child: Row(
-      children: [
-        const Icon(
-          Icons.lock_outline_rounded,
-          color: KeepersColors.brassLight,
-          size: 32,
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              KeepersText(
-                'Legacy Lock',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: KeepersColors.cream,
-                  fontFamily: KeepersType.primary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              KeepersText(
-                'Milestone memories remain sealed until their family-approved date.',
-                style: TextStyle(
-                  color: KeepersColors.cream.withValues(alpha: .68),
-                  height: 1.35,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
   );
 }
 

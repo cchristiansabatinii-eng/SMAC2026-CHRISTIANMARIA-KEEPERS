@@ -10,7 +10,7 @@ import 'package:keepers/storage/database_key_store.dart';
 
 void main() {
   test(
-    'journal uses member key while reveal and legacy use family key',
+    'journal uses member key while reveal and Capsule use family key',
     () async {
       final store = _MemorySecureValueStore()
         ..values['family-key'] = base64UrlEncode(List<int>.filled(32, 7))
@@ -19,14 +19,14 @@ void main() {
 
       final journal = await resolver.resolve(PrivacyTier.journal, _identity);
       final reveal = await resolver.resolve(PrivacyTier.reveal, _identity);
-      final legacy = await resolver.resolve(PrivacyTier.legacy, _identity);
+      final capsule = await resolver.resolve(PrivacyTier.capsule, _identity);
 
       expect(journal.scope, EntryKeyScope.member);
       expect(journal.bytes, List<int>.filled(32, 9));
       expect(reveal.scope, EntryKeyScope.family);
       expect(reveal.bytes, List<int>.filled(32, 7));
-      expect(legacy.scope, EntryKeyScope.family);
-      expect(legacy.bytes, List<int>.filled(32, 7));
+      expect(capsule.scope, EntryKeyScope.family);
+      expect(capsule.bytes, List<int>.filled(32, 7));
       expect(store.readReferences, ['member-key', 'family-key', 'family-key']);
     },
   );

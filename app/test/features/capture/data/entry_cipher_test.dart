@@ -183,6 +183,46 @@ void main() {
     );
   });
 
+  test(
+    'Capsule decrypts an envelope authenticated with the legacy privacy token',
+    () async {
+      final plaintext = Uint8List.fromList([10, 20, 30]);
+      final nonce = Uint8List.fromList(
+        List<int>.generate(12, (index) => index),
+      );
+      final secretBox = await AesGcm.with256bits(nonceLength: 12).encrypt(
+        plaintext,
+        secretKey: SecretKey(List<int>.filled(32, 1)),
+        nonce: nonce,
+        aad: utf8.encode(
+          '{"author_id":"member-1","created_at":1788265800000,'
+          '"entry_id":"entry-1","entry_type":"photo",'
+          '"family_id":"family-1","key_scope":"family",'
+          '"privacy_tier":"legacy"}',
+        ),
+      );
+      final legacyEnvelope = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'v': 1,
+            'scope': 'family',
+            'nonce': _unpaddedBase64Url(secretBox.nonce),
+            'ciphertext': _unpaddedBase64Url(secretBox.cipherText),
+            'tag': _unpaddedBase64Url(secretBox.mac.bytes),
+          }),
+        ),
+      );
+
+      final decrypted = await deterministicCipher().decrypt(
+        envelopeBytes: legacyEnvelope,
+        keyBytes: List<int>.filled(32, 1),
+        metadata: _entryMetadata().copyWith(privacy: PrivacyTier.capsule),
+      );
+
+      expect(decrypted, plaintext);
+    },
+  );
+
   test('every authenticated metadata field rejects mutation', () async {
     final cipher = deterministicCipher();
     final metadata = _entryMetadata();

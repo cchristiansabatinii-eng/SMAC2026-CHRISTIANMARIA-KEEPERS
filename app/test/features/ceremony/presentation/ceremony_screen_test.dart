@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
+import 'package:keepers/features/capsule/domain/capsule_models.dart';
 import 'package:keepers/features/capture/data/audio_playback_adapter.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/ceremony/presentation/ceremony_screen.dart';
@@ -13,10 +13,9 @@ import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/keepers_bottom_nav.dart';
 
 void main() {
-  testWidgets('memory key owns legacy and capsule, not weekly or random', (
+  testWidgets('memory key is one Capsule list with no Legacy preview route', (
     tester,
   ) async {
-    KeepersNavDestination? selected;
     await tester.pumpWidget(
       MaterialApp(
         theme: KeepersTheme.daylight(),
@@ -25,120 +24,125 @@ void main() {
           child: CeremonyScreen(
             familyName: 'Rahman',
             currentMemberName: 'Chris',
-            onDestinationSelected: (destination) => selected = destination,
-          ),
-        ),
-      ),
-    );
-
-    expect(
-      find.byKey(const ValueKey('memory-key-legacy-entry')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('memory-key-capsule-entry')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('weekly-recap-mode')), findsNothing);
-    expect(find.byKey(const ValueKey('random-memory-mode')), findsNothing);
-    expect(find.text('No family condition yet'), findsOneWidget);
-    expect(find.text('No capsule scheduled'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('memory-key-legacy-entry')));
-    expect(selected, KeepersNavDestination.locks);
-  });
-
-  testWidgets('memory key exposes only available shortcut actions', (
-    tester,
-  ) async {
-    final semantics = tester.ensureSemantics();
-    KeepersNavDestination? selected;
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: KeepersTheme.daylight(),
-        home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: CeremonyScreen(
-            familyName: 'Rahman',
-            currentMemberName: 'Chris',
-            onDestinationSelected: (destination) => selected = destination,
-          ),
-        ),
-      ),
-    );
-
-    final legacy = find.semantics.byLabel(
-      'LEGACY LOCK. No family condition yet',
-    );
-    final capsule = find.semantics.byLabel('CAPSULE. No capsule scheduled');
-    expect(
-      legacy.evaluate().single.getSemanticsData().hasAction(
-        SemanticsAction.tap,
-      ),
-      isTrue,
-    );
-    expect(
-      capsule.evaluate().single.getSemanticsData().hasAction(
-        SemanticsAction.tap,
-      ),
-      isFalse,
-    );
-
-    tester.semantics.tap(legacy);
-    await tester.pump();
-    expect(selected, KeepersNavDestination.locks);
-    semantics.dispose();
-  });
-
-  testWidgets('memory key carries a family challenge and dated capsule', (
-    tester,
-  ) async {
-    LockedMemoryChallenge? opened;
-    const challenge = LockedMemoryChallenge(
-      id: 'recipe',
-      title: 'Nana\'s Sunday recipe',
-      task: 'Cook the recipe together and keep a photo.',
-      assignedBy: 'Assigned by Layla',
-      approvalBy: 'Approved by Layla',
-      state: LockedMemoryChallengeState.approved,
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: KeepersTheme.daylight(),
-        home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: CeremonyScreen(
-            familyName: 'Rahman',
-            currentMemberName: 'Chris',
-            lockedMemories: const [challenge],
-            timeCapsule: const MemoryKeyCapsule(
-              from: 'From Hana',
-              title: 'For your birthday',
-              openingLabel: 'Opens 12 October',
-              daysRemaining: 41,
-            ),
-            onOpenLockedMemory: (value) => opened = value,
             onDestinationSelected: (_) {},
           ),
         ),
       ),
     );
 
-    expect(find.text('ASSIGNED BY LAYLA'), findsOneWidget);
-    expect(find.text(challenge.title), findsOneWidget);
-    expect(find.text(challenge.task), findsOneWidget);
-    expect(find.text('Time capsule'), findsOneWidget);
-    expect(find.text('Opens 12 October'), findsWidgets);
+    expect(find.byKey(const ValueKey('memory-key-legacy-entry')), findsNothing);
+    expect(find.textContaining('Legacy'), findsNothing);
+    expect(find.textContaining('PREVIEW'), findsNothing);
+    expect(find.text('Capsule'), findsOneWidget);
+    expect(find.text('No Capsule memories for you yet.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('weekly-recap-mode')), findsNothing);
+    expect(find.byKey(const ValueKey('random-memory-mode')), findsNothing);
+  });
 
-    await tester.tap(find.byKey(const ValueKey('memory-key-capsule-entry')));
-    await tester.pumpAndSettle();
-    expect(find.text('For your birthday').hitTestable(), findsOneWidget);
+  testWidgets('memory key keeps loading and error states stable with Retry', (
+    tester,
+  ) async {
+    var retries = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Rahman',
+            currentMemberName: 'Chris',
+            capsuleLoading: true,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
 
-    final openChallenge = find.widgetWithText(FilledButton, 'Open memory');
-    await tester.ensureVisible(openChallenge);
-    await tester.tap(openChallenge);
+    expect(find.byKey(const ValueKey('capsule-loading')), findsOneWidget);
+    expect(find.text('Loading Capsule memories…'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Rahman',
+            currentMemberName: 'Chris',
+            capsuleErrorMessage: 'Capsule memories could not be loaded.',
+            onRetryCapsules: () => retries += 1,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
     await tester.pump();
-    expect(opened?.id, challenge.id);
+
+    expect(find.byKey(const ValueKey('capsule-error')), findsOneWidget);
+    expect(find.text('Capsule memories could not be loaded.'), findsOneWidget);
+    final retry = find.widgetWithText(FilledButton, 'Retry');
+    expect(retry, findsOneWidget);
+    expect(tester.getSize(retry).height, greaterThanOrEqualTo(48));
+    await tester.tap(retry);
+    expect(retries, 1);
+  });
+
+  testWidgets('memory key partitions locked and available Capsule memories', (
+    tester,
+  ) async {
+    CapsuleAssignment? opened;
+    final locked = _capsuleAssignment(
+      id: 'locked',
+      contentEntryId: 'locked-entry',
+      unlockTask: 'Call Grandma together.',
+      state: CapsuleAssignmentState.locked,
+    );
+    final ready = _capsuleAssignment(
+      id: 'ready',
+      contentEntryId: 'ready-entry',
+      state: CapsuleAssignmentState.ready,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Rahman',
+            currentMemberName: 'Chris',
+            capsuleAssignments: [locked, ready],
+            capsuleEntries: {
+              'locked-entry': _capsuleMetadata(
+                id: 'locked-entry',
+                format: MemoryFormat.photo,
+              ),
+              'ready-entry': _capsuleMetadata(
+                id: 'ready-entry',
+                format: MemoryFormat.voice,
+              ),
+            },
+            capsuleAuthorNames: const {'member-2': 'Layla'},
+            onCompleteCapsuleTask: (_) async => true,
+            onOpenCapsule: (value) => opened = value,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Locked by family'), findsOneWidget);
+    expect(find.text('Capsule'), findsOneWidget);
+    expect(find.text('Call Grandma together.'), findsOneWidget);
+    expect(find.text('Photo memory · 07 Sep 2026'), findsOneWidget);
+    expect(find.text('Voice memory · 07 Sep 2026'), findsOneWidget);
+    expect(find.text('From Layla'), findsNWidgets(2));
+    expect(find.text('Complete task'), findsOneWidget);
+    final open = find.widgetWithText(FilledButton, 'Open memory');
+    await tester.ensureVisible(open);
+    await tester.tap(open);
+    await tester.pump();
+    expect(opened?.id, ready.id);
   });
 
   testWidgets('memory key owns the selected slot in the five-control dock', (
@@ -196,7 +200,7 @@ void main() {
 
     final headerBottom = tester.getBottomLeft(find.text('Memory Key')).dy;
     final entriesTop = tester
-        .getTopLeft(find.byKey(const ValueKey('memory-key-legacy-entry')))
+        .getTopLeft(find.byKey(const ValueKey('capsule-locked-section')))
         .dy;
     expect(entriesTop - headerBottom, lessThan(48));
   });
@@ -584,25 +588,15 @@ void main() {
     expect(find.text('Release this memory'), findsOneWidget);
   });
 
-  testWidgets('only an approved family task can open its locked memory', (
+  testWidgets('task completion requires app-owned confirmation', (
     tester,
   ) async {
-    LockedMemoryChallenge? opened;
-    const locked = LockedMemoryChallenge(
+    final completed = <CapsuleAssignment>[];
+    final locked = _capsuleAssignment(
       id: 'locked',
-      title: 'Still waiting',
-      task: 'Finish the walk together.',
-      assignedBy: 'Assigned by Dana',
-      approvalBy: 'Dana must approve it',
-      state: LockedMemoryChallengeState.locked,
-    );
-    const approved = LockedMemoryChallenge(
-      id: 'approved',
-      title: 'Ready for you',
-      task: 'Finish the recipe together.',
-      assignedBy: 'Assigned by Dana',
-      approvalBy: 'Approved by Dana',
-      state: LockedMemoryChallengeState.approved,
+      contentEntryId: 'locked-entry',
+      unlockTask: 'Finish the walk together.',
+      state: CapsuleAssignmentState.locked,
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -612,32 +606,100 @@ void main() {
           child: CeremonyScreen(
             familyName: 'Sabati',
             currentMemberName: 'Chris',
-            lockedMemories: const [locked, approved],
-            onOpenLockedMemory: (challenge) => opened = challenge,
+            capsuleAssignments: [locked],
+            capsuleEntries: {
+              'locked-entry': _capsuleMetadata(
+                id: 'locked-entry',
+                format: MemoryFormat.photo,
+              ),
+            },
+            capsuleAuthorNames: const {'member-2': 'Dana'},
+            onCompleteCapsuleTask: (assignment) async {
+              completed.add(assignment);
+              return true;
+            },
             onDestinationSelected: (_) {},
           ),
         ),
       ),
     );
 
-    expect(find.text('Open memory'), findsOneWidget);
-    await tester.ensureVisible(find.text('Open memory'));
-    await tester.tap(find.widgetWithText(FilledButton, 'Open memory'));
-    await tester.pump();
-    expect(opened?.id, 'approved');
+    final complete = find.byKey(const ValueKey('capsule-complete-locked'));
+    await tester.ensureVisible(complete);
+    expect(tester.getSize(complete).height, greaterThanOrEqualTo(48));
+    await tester.tap(complete);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('Complete this task?'), findsOneWidget);
+    expect(find.text('Finish the walk together.'), findsWidgets);
+    expect(completed, isEmpty);
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(completed, isEmpty);
+
+    await tester.tap(complete);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('capsule-complete-confirm')));
+    await tester.pumpAndSettle();
+    expect(completed.map((assignment) => assignment.id), ['locked']);
   });
 
-  testWidgets('approved task opens through the existing pastel flood', (
+  testWidgets('failed completion leaves the Capsule locked with Retry', (
     tester,
   ) async {
-    LockedMemoryChallenge? opened;
-    const challenge = LockedMemoryChallenge(
-      id: 'approved',
-      title: 'Ready for you',
-      task: 'Finish the recipe together.',
-      assignedBy: 'Assigned by Dana',
-      approvalBy: 'Approved by Dana',
-      state: LockedMemoryChallengeState.approved,
+    final locked = _capsuleAssignment(
+      id: 'locked',
+      contentEntryId: 'locked-entry',
+      unlockTask: 'Finish the walk together.',
+      state: CapsuleAssignmentState.locked,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.daylight(),
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CeremonyScreen(
+            familyName: 'Sabati',
+            currentMemberName: 'Chris',
+            capsuleAssignments: [locked],
+            capsuleEntries: {
+              'locked-entry': _capsuleMetadata(
+                id: 'locked-entry',
+                format: MemoryFormat.photo,
+              ),
+            },
+            onCompleteCapsuleTask: (_) async => false,
+            onDestinationSelected: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('capsule-complete-locked')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('capsule-complete-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Task could not be completed. Try again.'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('capsule-complete-locked')),
+      findsOneWidget,
+    );
+    expect(find.text('Open memory'), findsNothing);
+  });
+
+  testWidgets('ready Capsule opens through the existing pastel flood', (
+    tester,
+  ) async {
+    CapsuleAssignment? opened;
+    final ready = _capsuleAssignment(
+      id: 'ready',
+      contentEntryId: 'ready-entry',
+      state: CapsuleAssignmentState.ready,
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -645,22 +707,29 @@ void main() {
         home: CeremonyScreen(
           familyName: 'Sabati',
           currentMemberName: 'Chris',
-          lockedMemories: const [challenge],
-          onOpenLockedMemory: (value) => opened = value,
+          capsuleAssignments: [ready],
+          capsuleEntries: {
+            'ready-entry': _capsuleMetadata(
+              id: 'ready-entry',
+              format: MemoryFormat.photo,
+            ),
+          },
+          onOpenCapsule: (value) => opened = value,
           onDestinationSelected: (_) {},
         ),
       ),
     );
 
-    final open = find.widgetWithText(FilledButton, 'Open memory');
+    final open = find.byKey(const ValueKey('capsule-open-ready'));
     await tester.ensureVisible(open);
+    expect(tester.getSize(open).height, greaterThanOrEqualTo(48));
     await tester.tap(open);
     await tester.pump();
     expect(find.byKey(const ValueKey('pastel-flood')), findsOneWidget);
     expect(opened, isNull);
 
     await tester.pump(const Duration(milliseconds: 600));
-    expect(opened?.id, challenge.id);
+    expect(opened?.id, ready.id);
   });
 
   testWidgets('memory key reflows on a narrow phone at 1.4x text', (
@@ -689,8 +758,9 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('LEGACY LOCK'), findsOneWidget);
-    expect(find.text('CAPSULE'), findsOneWidget);
+    expect(find.textContaining('Legacy'), findsNothing);
+    expect(find.textContaining('PREVIEW'), findsNothing);
+    expect(find.text('Capsule'), findsOneWidget);
     expect(find.text('Locked by family'), findsOneWidget);
   });
 
@@ -860,6 +930,47 @@ Widget _liveVoiceCeremony({required AudioPlaybackAdapter playback}) {
     ),
   );
 }
+
+VaultEntryMetadata _weeklyMetadata({
+  required String id,
+  required MemoryFormat format,
+}) => VaultEntryMetadata(
+  id: id,
+  familyId: 'family-1',
+  authorId: 'member-2',
+  createdAt: DateTime.utc(2026, 9, 7, 12),
+  format: format,
+  privacy: PrivacyTier.reveal,
+  blobRef: 'entries/blobs/$id.keeper',
+  state: 'pending',
+);
+
+CapsuleAssignment _capsuleAssignment({
+  required String id,
+  required String contentEntryId,
+  required CapsuleAssignmentState state,
+  String? unlockTask,
+}) => CapsuleAssignment(
+  id: id,
+  familyId: 'family-1',
+  authorId: 'member-2',
+  targetId: 'member-1',
+  contentEntryId: contentEntryId,
+  unlockTask: unlockTask,
+  state: state,
+  createdAt: DateTime.utc(2026, 9, 7, 12),
+  openedAt: state == CapsuleAssignmentState.opened
+      ? DateTime.utc(2026, 9, 8, 12)
+      : null,
+);
+
+VaultEntryMetadata _capsuleMetadata({
+  required String id,
+  required MemoryFormat format,
+}) => _weeklyMetadata(
+  id: id,
+  format: format,
+).copyWith(privacy: PrivacyTier.capsule);
 
 final class _ControllablePlaybackAdapter implements AudioPlaybackAdapter {
   _ControllablePlaybackAdapter({this.stopError});

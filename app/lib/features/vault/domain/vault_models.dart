@@ -25,7 +25,7 @@ final class VaultEntryMetadata {
           isUtc: true,
         ),
         format: MemoryFormat.values.byName(row['entry_type']! as String),
-        privacy: PrivacyTier.values.byName(row['privacy_tier']! as String),
+        privacy: PrivacyTier.fromStorage(row['privacy_tier']! as String),
         blobRef: row['blob_ref']! as String,
         state: row['state']! as String,
         expiresAt: row['expires_at'] == null
@@ -111,6 +111,6 @@ extension PrivacyTierVaultCopy on PrivacyTier {
   String get vaultLabel => switch (this) {
     PrivacyTier.journal => 'Private Journal',
     PrivacyTier.reveal => 'Weekly Reveal',
-    PrivacyTier.legacy => 'Legacy Milestone',
+    PrivacyTier.capsule => 'Capsule',
   };
 }

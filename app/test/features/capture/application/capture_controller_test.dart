@@ -86,6 +86,177 @@ void main() {
     expect(state.canSave, isTrue);
   });
 
+  test(
+    'Capsule task mode requires 1 to 180 non-whitespace characters',
+    () async {
+      final container = captureContainer();
+      addTearDown(container.dispose);
+      final controller = container.read(captureControllerProvider.notifier);
+      await controller.selectFormat(MemoryFormat.text);
+      controller.updateText('A memory for later');
+      controller.setPrivacy(PrivacyTier.capsule);
+      controller.setCapsuleTaskEnabled(true);
+
+      expect(
+        container.read(captureControllerProvider).capsuleTaskValid,
+        isFalse,
+      );
+      expect(container.read(captureControllerProvider).canSave, isFalse);
+
+      controller.updateCapsuleTask('   ');
+      expect(
+        container.read(captureControllerProvider).capsuleTaskValid,
+        isFalse,
+      );
+      expect(container.read(captureControllerProvider).canSave, isFalse);
+
+      controller.updateCapsuleTask('Call Grandma together');
+      expect(
+        container.read(captureControllerProvider).capsuleTaskValid,
+        isTrue,
+      );
+      expect(container.read(captureControllerProvider).canSave, isTrue);
+
+      controller.updateCapsuleTask(''.padRight(181, 'x'));
+      expect(
+        container.read(captureControllerProvider).capsuleTaskValid,
+        isFalse,
+      );
+      expect(container.read(captureControllerProvider).canSave, isFalse);
+    },
+  );
+
+  test('Capsule task survives content edits within the same capture', () async {
+    final container = captureContainer();
+    addTearDown(container.dispose);
+    final controller = container.read(captureControllerProvider.notifier);
+    controller.setPrivacy(PrivacyTier.capsule);
+    controller.setCapsuleTaskEnabled(true);
+    controller.updateCapsuleTask('Ask for the recipe');
+    controller.updateCaption('For the next gathering');
+
+    await controller.selectFormat(MemoryFormat.text);
+    controller.updateText('Grandma made this every winter.');
+
+    final state = container.read(captureControllerProvider);
+    expect(state.capsuleTaskEnabled, isTrue);
+    expect(state.capsuleTask, 'Ask for the recipe');
+    expect(state.caption, 'For the next gathering');
+  });
+
+  test('leaving Capsule clears its task configuration', () {
+    final container = captureContainer();
+    addTearDown(container.dispose);
+    final controller = container.read(captureControllerProvider.notifier);
+    controller.setPrivacy(PrivacyTier.capsule);
+    controller.setCapsuleTaskEnabled(true);
+    controller.updateCapsuleTask('Bring the photo album');
+
+    controller.setPrivacy(PrivacyTier.reveal);
+    controller.setPrivacy(PrivacyTier.capsule);
+
+    final state = container.read(captureControllerProvider);
+    expect(state.capsuleTaskEnabled, isFalse);
+    expect(state.capsuleTask, isEmpty);
+  });
+
+  test('disabling a Capsule task clears its text', () {
+    final container = captureContainer();
+    addTearDown(container.dispose);
+    final controller = container.read(captureControllerProvider.notifier);
+    controller.setPrivacy(PrivacyTier.capsule);
+    controller.setCapsuleTaskEnabled(true);
+    controller.updateCapsuleTask('Make tea together');
+
+    controller.setCapsuleTaskEnabled(false);
+
+    final state = container.read(captureControllerProvider);
+    expect(state.capsuleTaskEnabled, isFalse);
+    expect(state.capsuleTask, isEmpty);
+  });
+
+  test('dismissal resets Capsule task draft state', () async {
+    final container = captureContainer();
+    addTearDown(container.dispose);
+    final controller = container.read(captureControllerProvider.notifier);
+    controller.setPrivacy(PrivacyTier.capsule);
+    controller.setCapsuleTaskEnabled(true);
+    controller.updateCapsuleTask('Visit the old neighborhood');
+
+    await controller.finalizeDismissal();
+
+    final state = container.read(captureControllerProvider);
+    expect(state.capsuleTaskEnabled, isFalse);
+    expect(state.capsuleTask, isEmpty);
+  });
+
+  test('completion reset clears Capsule task draft state', () async {
+    final container = captureContainer();
+    addTearDown(container.dispose);
+    final controller = container.read(captureControllerProvider.notifier);
+    await controller.selectFormat(MemoryFormat.text);
+    controller.updateText('A memory for the family');
+    controller.setPrivacy(PrivacyTier.capsule);
+    controller.setCapsuleTaskEnabled(true);
+    controller.updateCapsuleTask('Share your version of this story');
+
+    await controller.save();
+    controller.resetAfterCompletion();
+
+    final state = container.read(captureControllerProvider);
+    expect(state.capsuleTaskEnabled, isFalse);
+    expect(state.capsuleTask, isEmpty);
+  });
+
+  test('Capsule save forwards one normalized task configuration', () async {
+    final requests = <EntrySaveRequest>[];
+    final container = captureContainer(
+      save: (request) async {
+        requests.add(request);
+        return request.metadata.copyWith(
+          blobRef: 'entries/blobs/entry-1.keeper',
+        );
+      },
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(captureControllerProvider.notifier);
+    await controller.selectFormat(MemoryFormat.text);
+    controller.updateText('A memory for the family');
+    controller.setPrivacy(PrivacyTier.capsule);
+    controller.setCapsuleTaskEnabled(true);
+    controller.updateCapsuleTask('  Tell your favorite family story  ');
+
+    await controller.save();
+    await controller.save();
+
+    expect(requests, hasLength(1));
+    expect(
+      requests.single.capsuleOptions,
+      CapsuleSaveOptions(unlockTask: 'Tell your favorite family story'),
+    );
+  });
+
+  test('taskless Capsule save still forwards assignment options', () async {
+    EntrySaveRequest? captured;
+    final container = captureContainer(
+      save: (request) async {
+        captured = request;
+        return request.metadata.copyWith(
+          blobRef: 'entries/blobs/entry-1.keeper',
+        );
+      },
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(captureControllerProvider.notifier);
+    await controller.selectFormat(MemoryFormat.text);
+    controller.updateText('Ready for everyone');
+    controller.setPrivacy(PrivacyTier.capsule);
+
+    await controller.save();
+
+    expect(captured!.capsuleOptions, CapsuleSaveOptions());
+  });
+
   test('voice uses tap start then tap stop', () async {
     final recorder = FakeVoiceCaptureAdapter();
     final container = captureContainer(recorder: recorder);
@@ -625,7 +796,7 @@ void main() {
       controller.selectFormat(MemoryFormat.voice);
       await controller.toggleRecording();
       controller.updateCaption('While speaking');
-      controller.setPrivacy(PrivacyTier.legacy);
+      controller.setPrivacy(PrivacyTier.capsule);
       await controller.toggleRecording();
       expect(recorder.starts, 1);
       expect(recorder.stops, 1);

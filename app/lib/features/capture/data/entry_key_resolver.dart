@@ -19,13 +19,11 @@ class EntryKeyResolver {
     PrivacyTier privacy,
     LocalIdentity identity,
   ) async {
-    final memberScoped = privacy == PrivacyTier.journal;
-    final reference = memberScoped
-        ? identity.memberKeyRef
-        : identity.familyKeyRef;
-    return ResolvedEntryKey(
-      memberScoped ? EntryKeyScope.member : EntryKeyScope.family,
-      await identityKeys.resolve(reference),
-    );
+    final (scope, reference) = switch (privacy) {
+      PrivacyTier.journal => (EntryKeyScope.member, identity.memberKeyRef),
+      PrivacyTier.reveal ||
+      PrivacyTier.capsule => (EntryKeyScope.family, identity.familyKeyRef),
+    };
+    return ResolvedEntryKey(scope, await identityKeys.resolve(reference));
   }
 }

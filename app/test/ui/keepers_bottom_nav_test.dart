@@ -5,6 +5,13 @@ import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/keepers_bottom_nav.dart';
 
 void main() {
+  test('navigation domain has no separate Locks destination', () {
+    expect(
+      KeepersNavDestination.values.map((destination) => destination.name),
+      isNot(contains('locks')),
+    );
+  });
+
   testWidgets('navigation is a full-width five-action app bar', (tester) async {
     KeepersNavDestination? selected;
     var captures = 0;

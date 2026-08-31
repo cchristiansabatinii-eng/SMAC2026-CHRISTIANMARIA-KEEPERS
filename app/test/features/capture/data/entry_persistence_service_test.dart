@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:keepers/features/capsule/data/capsule_repository.dart';
+import 'package:keepers/features/capsule/domain/capsule_models.dart';
 import 'package:keepers/features/capture/data/encrypted_blob_store.dart';
 import 'package:keepers/features/capture/data/entry_cipher.dart';
 import 'package:keepers/features/capture/data/entry_key_resolver.dart';
@@ -14,6 +16,7 @@ import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/onboarding/data/identity_key_service.dart';
 import 'package:keepers/features/onboarding/domain/local_identity.dart';
 import 'package:keepers/storage/database_key_store.dart';
+import 'package:keepers/storage/schema.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -765,6 +768,55 @@ void main() {
   });
 
   group('real persistence boundaries', () {
+    test(
+      'Capsule assignment failure rolls back entry rows and finalized blob',
+      () async {
+        final roots = await _TestRoots.create('keepers-capsule-rollback-');
+        addTearDown(roots.close);
+        final database = await _openCapsuleDatabase();
+        addTearDown(database.close);
+        await _seedCapsuleFamily(database);
+        final blobStore = testEncryptedBlobStore(roots.support, roots.capture);
+        final keys = _MemorySecureValueStore()
+          ..values['member-key'] = base64UrlEncode(List<int>.filled(32, 9))
+          ..values['family-key'] = base64UrlEncode(List<int>.filled(32, 7));
+        final service = EntryPersistenceService(
+          codec: const EntryPayloadCodec(),
+          keyResolver: EntryKeyResolver(IdentityKeyService(keys)),
+          cipher: EntryCipher(
+            nonceFactory: () =>
+                Uint8List.fromList(List<int>.generate(12, (index) => index)),
+          ),
+          blobStore: blobStore,
+          repository: EntryRepository(),
+          capsuleRepository: const _WriteThenThrowCapsuleRepository(),
+          database: () async => database,
+        );
+        final metadata = _metadata.copyWith(privacy: PrivacyTier.capsule);
+
+        await expectLater(
+          service.save(
+            _saveRequest(
+              metadata: metadata,
+              capsuleOptions: CapsuleSaveOptions(unlockTask: 'Tell a story'),
+              plaintextRefs: const [],
+            ),
+          ),
+          throwsA(
+            isA<EntrySaveFailure>().having(
+              (failure) => failure.primary.phase,
+              'primary phase',
+              EntrySavePhase.metadataInsert,
+            ),
+          ),
+        );
+
+        expect(await database.query('entries'), isEmpty);
+        expect(await database.query('capsules'), isEmpty);
+        expect(await blobStore.exists('entries/blobs/entry-1.keeper'), isFalse);
+      },
+    );
+
     test(
       'pre-rollback replacement survives and moved publication is unknown',
       () async {
@@ -1602,13 +1654,63 @@ final _metadata = EntryMetadata(
 
 EntrySaveRequest _saveRequest({
   EntryMetadata? metadata,
+  CapsuleSaveOptions? capsuleOptions,
   required Iterable<CapturePlaintextRef> plaintextRefs,
 }) => EntrySaveRequest(
   metadata: metadata ?? _metadata,
   payload: _textPayload,
   identity: _identity,
+  capsuleOptions: capsuleOptions,
   plaintextRefs: plaintextRefs,
 );
+
+final class _WriteThenThrowCapsuleRepository extends CapsuleRepository {
+  const _WriteThenThrowCapsuleRepository();
+
+  @override
+  Future<List<CapsuleAssignment>> insertAssignments(
+    DatabaseExecutor db, {
+    required EntryMetadata entry,
+    required CapsuleSaveOptions options,
+  }) async {
+    await super.insertAssignments(db, entry: entry, options: options);
+    throw StateError('assignment insert failed after writing');
+  }
+}
+
+Future<Database> _openCapsuleDatabase() async {
+  final database = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+  await database.execute('PRAGMA foreign_keys = ON');
+  for (final statement in KeepersSchema.statementsForUpgrade(
+    0,
+    KeepersSchema.version,
+  )) {
+    await database.execute(statement);
+  }
+  return database;
+}
+
+Future<void> _seedCapsuleFamily(Database database) async {
+  await database.insert('families', {
+    'id': 'family-1',
+    'name': 'Keepers',
+    'family_key_ref': 'family-key',
+    'quorum': 1,
+    'created_at': 1,
+  });
+  for (final memberId in ['member-1', 'member-2']) {
+    await database.insert('members', {
+      'id': memberId,
+      'family_id': 'family-1',
+      'name': memberId,
+      'role': 'adult',
+      'member_key_ref': '$memberId-key',
+      'color_token': 'ochre',
+      'avatar_config_json': '{}',
+      'created_at': memberId == 'member-1' ? 1 : 2,
+    });
+  }
+}
 
 const _textPayload = EntryPayload(
   format: MemoryFormat.text,

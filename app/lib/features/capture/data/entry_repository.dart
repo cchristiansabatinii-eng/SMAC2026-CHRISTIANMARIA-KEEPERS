@@ -24,7 +24,7 @@ class EntryRepository implements EntryMetadataRepository {
       'author_id': metadata.authorId,
       'created_at': metadata.createdAt.millisecondsSinceEpoch,
       'entry_type': metadata.format.name,
-      'privacy_tier': metadata.privacy.name,
+      'privacy_tier': metadata.privacy.storageValue,
       'blob_ref': blobRef,
       'transcript': null,
       'embedding': null,

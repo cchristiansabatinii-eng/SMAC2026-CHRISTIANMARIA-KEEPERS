@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:keepers/features/capsule/data/capsule_repository.dart';
 import 'package:keepers/features/capture/data/audio_playback_adapter.dart';
 import 'package:keepers/features/capture/data/encrypted_blob_store.dart';
 import 'package:keepers/features/capture/data/entry_cipher.dart';
@@ -372,6 +373,10 @@ final entryBlobStoreProvider = FutureProvider<EncryptedBlobStore>((ref) async {
   return EncryptedBlobStore(support, captureTemporaryDirectory: temporary);
 });
 
+final capsuleRepositoryProvider = Provider<CapsuleRepository>(
+  (ref) => const CapsuleRepository(),
+);
+
 final entryPersistenceServiceProvider = FutureProvider<EntryPersistenceService>(
   (ref) async {
     final identityKeys = ref.watch(identityKeyServiceProvider);
@@ -383,6 +388,7 @@ final entryPersistenceServiceProvider = FutureProvider<EntryPersistenceService>(
       cipher: EntryCipher(),
       blobStore: await blobStore,
       repository: EntryRepository(),
+      capsuleRepository: ref.watch(capsuleRepositoryProvider),
       database: () => database,
     );
   },

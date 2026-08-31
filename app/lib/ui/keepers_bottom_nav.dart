@@ -5,7 +5,6 @@ enum KeepersNavDestination {
   wheel('Wheel', Icons.bubble_chart_outlined),
   ceremony('Memory Key', Icons.key_rounded),
   archive('Archive', Icons.filter_none_rounded),
-  locks('Locks', Icons.lock_outline_rounded),
   settings('Settings', Icons.person_outline_rounded);
 
   const KeepersNavDestination(this.label, this.icon);

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/archive/presentation/archive_screen.dart';
+import 'package:keepers/features/capsule/application/capsule_providers.dart';
+import 'package:keepers/features/capsule/domain/capsule_models.dart';
 import 'package:keepers/features/capture/application/capture_providers.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/capture/presentation/capture_sheet.dart';
@@ -22,7 +24,6 @@ import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/family/presentation/family_invite_sheet.dart';
 import 'package:keepers/features/family/presentation/family_join_request_sheet.dart';
-import 'package:keepers/features/locks/presentation/locks_screen.dart';
 import 'package:keepers/features/members/presentation/member_page_screen.dart';
 import 'package:keepers/features/members/presentation/your_memories_screen.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
@@ -280,6 +281,7 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
       final saved = await (widget.showCapture ?? CaptureSheet.show)(context);
       if (saved == null || !mounted) return;
       ref.invalidate(vaultEntriesProvider);
+      ref.invalidate(capsuleAssignmentsProvider);
       final entries = await ref.read(vaultEntriesProvider.future);
       if (!mounted || !entries.any((entry) => entry.id == saved.id)) return;
       await HapticFeedback.selectionClick();
@@ -751,6 +753,38 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     );
   }
 
+  Future<bool> _completeCapsuleTask(CapsuleAssignment assignment) async {
+    try {
+      final service = await ref.read(capsuleServiceProvider.future);
+      final completed = await service.completeTask(assignment.id);
+      if (completed && mounted) ref.invalidate(capsuleAssignmentsProvider);
+      return completed;
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<void> _openCapsule(CapsuleAssignment assignment) async {
+    final memory = ref
+        .read(capsuleServiceProvider.future)
+        .then((service) => service.openForCurrentMember(assignment.id));
+    unawaited(
+      memory.then((result) {
+        if (result is OpenedMemory && mounted) {
+          ref.invalidate(capsuleAssignmentsProvider);
+        }
+      }, onError: (_) {}),
+    );
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => MemoryViewer(
+          memory: memory,
+          playback: ref.read(audioPlaybackAdapterProvider),
+        ),
+      ),
+    );
+  }
+
   void _openYourMemories(List<VaultEntryMetadata> entries) {
     final memories =
         entries
@@ -771,26 +805,6 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
               );
               _openMemory(metadata);
             },
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _openMemorialPreview(List<VaultEntryMetadata> entries) {
-    final memories = entries
-        .where((entry) => entry.state == 'kept')
-        .map(_memberSummary)
-        .toList();
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => Theme(
-          data: KeepersTheme.daylight(),
-          child: MemorialPageScreen(
-            memberName: widget.identity.memberName,
-            dateRange: 'Life dates supplied by family',
-            memories: memories,
-            preview: true,
           ),
         ),
       ),
@@ -828,6 +842,13 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     }
     final entriesState = ref.watch(vaultEntriesProvider);
     final entries = entriesState.asData?.value ?? const [];
+    final capsulesState = ref.watch(capsuleAssignmentsProvider);
+    final capsuleAssignments =
+        capsulesState.asData?.value ?? const <CapsuleAssignment>[];
+    final capsuleEntries = <String, VaultEntryMetadata>{
+      for (final entry in entries)
+        if (entry.privacy == PrivacyTier.capsule) entry.id: entry,
+    };
     final now = ref.watch(utcNowProvider)().toUtc();
     final weeklyEntries = entriesState.isLoading || entriesState.hasError
         ? const <VaultEntryMetadata>[]
@@ -927,8 +948,19 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
         navigationDestination: _weeklyExperienceMode != null
             ? KeepersNavDestination.wheel
             : KeepersNavDestination.ceremony,
-        lockedMemories: const [],
-        timeCapsule: null,
+        capsuleAssignments: capsuleAssignments,
+        capsuleEntries: capsuleEntries,
+        capsuleAuthorNames: authorNames,
+        capsuleLoading: capsulesState.isLoading || entriesState.isLoading,
+        capsuleErrorMessage: capsulesState.hasError || entriesState.hasError
+            ? 'Capsule memories could not be loaded.'
+            : null,
+        onRetryCapsules: () {
+          ref.invalidate(capsuleAssignmentsProvider);
+          ref.invalidate(vaultEntriesProvider);
+        },
+        onCompleteCapsuleTask: _completeCapsuleTask,
+        onOpenCapsule: (assignment) => unawaited(_openCapsule(assignment)),
         onCapture: _captureInFlight ? () {} : () => unawaited(_capture()),
         onDestinationSelected: _selectDestination,
       ),
@@ -953,15 +985,6 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
             );
             _openMemory(metadata);
           },
-        ),
-      ),
-      KeepersNavDestination.locks => Theme(
-        data: KeepersTheme.daylight(),
-        child: LocksScreen(
-          familyName: widget.identity.familyName,
-          onCapture: _captureInFlight ? () {} : () => unawaited(_capture()),
-          onDestinationSelected: _selectDestination,
-          onOpenMemorialPreview: () => _openMemorialPreview(entries),
         ),
       ),
       KeepersNavDestination.settings => SettingsScreen(
@@ -1174,7 +1197,7 @@ YourMemorySummary _yourMemorySummary(VaultEntryMetadata entry) =>
         (_, 'kept') => 'Available now',
         (PrivacyTier.journal, _) => 'Private to you',
         (PrivacyTier.reveal, _) => 'Waiting for reveal',
-        (PrivacyTier.legacy, _) => 'Waiting for milestone',
+        (PrivacyTier.capsule, _) => 'Shared as Capsule',
       },
       createdAt: entry.createdAt,
     );

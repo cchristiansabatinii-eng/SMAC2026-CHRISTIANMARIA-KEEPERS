@@ -41,7 +41,7 @@ void main() {
     for (final option in <(String, Key, PrivacyTier)>[
       ('Private Journal', const Key('privacy-journal'), PrivacyTier.journal),
       ('Weekly Reveal', const Key('privacy-reveal'), PrivacyTier.reveal),
-      ('Legacy Milestone', const Key('privacy-legacy'), PrivacyTier.legacy),
+      ('Capsule', const Key('privacy-capsule'), PrivacyTier.capsule),
     ]) {
       await Scrollable.ensureVisible(
         tester.element(find.byKey(option.$2)),
@@ -60,6 +60,24 @@ void main() {
         option.$3,
       );
     }
+    await tester.tap(find.text('Capsule'));
+    await tester.pumpAndSettle();
+    await Scrollable.ensureVisible(
+      tester.element(find.byKey(const Key('capsule-task-toggle'))),
+      alignment: .3,
+    );
+    await tester.tap(find.byKey(const Key('capsule-task-toggle')));
+    await tester.pumpAndSettle();
+    await Scrollable.ensureVisible(
+      tester.element(find.byKey(const Key('capsule-task-field'))),
+      alignment: .3,
+    );
+    await tester.enterText(
+      find.byKey(const Key('capsule-task-field')),
+      'Share one family story',
+    );
+    tester.testTextInput.hide();
+    await tester.pumpAndSettle();
     await Scrollable.ensureVisible(
       tester.element(find.text('Keep memory')),
       alignment: .3,

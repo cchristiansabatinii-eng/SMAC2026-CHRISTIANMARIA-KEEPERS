@@ -1,5 +1,6 @@
 // ignore_for_file: prefer_initializing_formals
 
+import 'package:keepers/features/capsule/data/capsule_repository.dart';
 import 'package:keepers/features/capture/data/encrypted_blob_store.dart';
 import 'package:keepers/features/capture/data/entry_cipher.dart';
 import 'package:keepers/features/capture/data/entry_key_resolver.dart';
@@ -19,12 +20,14 @@ final class EntryPersistenceService {
     required EntryCipher cipher,
     required EntryBlobStore blobStore,
     required EntryMetadataRepository repository,
+    CapsuleRepository capsuleRepository = const CapsuleRepository(),
     required EntryDatabaseFactory database,
   }) : _codec = codec,
        _keyResolver = keyResolver,
        _cipher = cipher,
        _blobStore = blobStore,
        _repository = repository,
+       _capsuleRepository = capsuleRepository,
        _database = database;
 
   final EntryPayloadCodec _codec;
@@ -32,6 +35,7 @@ final class EntryPersistenceService {
   final EntryCipher _cipher;
   final EntryBlobStore _blobStore;
   final EntryMetadataRepository _repository;
+  final CapsuleRepository _capsuleRepository;
   final EntryDatabaseFactory _database;
 
   Future<EntryMetadata> save(EntrySaveRequest request) async {
@@ -79,10 +83,17 @@ final class EntryPersistenceService {
       phase = EntrySavePhase.databaseOpen;
       final database = await _database();
       phase = EntrySavePhase.metadataInsert;
-      await database.transaction<void>(
-        (transaction) =>
-            _repository.insert(transaction, request.metadata, finalRef!),
-      );
+      await database.transaction<void>((transaction) async {
+        await _repository.insert(transaction, request.metadata, finalRef!);
+        final capsuleOptions = request.capsuleOptions;
+        if (capsuleOptions != null) {
+          await _capsuleRepository.insertAssignments(
+            transaction,
+            entry: request.metadata.copyWith(blobRef: finalRef),
+            options: capsuleOptions,
+          );
+        }
+      });
       metadataCommitted = true;
     } on Object catch (error, stackTrace) {
       if (error is EncryptedBlobStoreFailure) {
@@ -172,9 +183,13 @@ final class EntryPersistenceService {
   void _validateRequest(EntrySaveRequest request) {
     final metadata = request.metadata;
     final identity = request.identity;
+    final hasValidCapsuleOptions =
+        (metadata.privacy == PrivacyTier.capsule) ==
+        (request.capsuleOptions != null);
     if (metadata.familyId != identity.familyId ||
         metadata.authorId != identity.memberId ||
-        metadata.format != request.payload.format) {
+        metadata.format != request.payload.format ||
+        !hasValidCapsuleOptions) {
       throw ArgumentError.value(
         request,
         'request',

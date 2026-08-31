@@ -3,7 +3,22 @@ import 'package:keepers/features/onboarding/domain/local_identity.dart';
 
 enum MemoryFormat { photo, voice, text }
 
-enum PrivacyTier { journal, reveal, legacy }
+enum PrivacyTier {
+  journal('journal'),
+  reveal('reveal'),
+  capsule('legacy');
+
+  const PrivacyTier(this.storageValue);
+
+  final String storageValue;
+
+  static PrivacyTier fromStorage(String value) => switch (value) {
+    'journal' => PrivacyTier.journal,
+    'reveal' => PrivacyTier.reveal,
+    'legacy' => PrivacyTier.capsule,
+    _ => throw FormatException('Unsupported privacy tier: $value'),
+  };
+}
 
 enum PhotoSource { camera, library }
 
@@ -80,7 +95,7 @@ final class EntryMetadata {
     'entry_type': format.name,
     'family_id': familyId,
     'key_scope': scope.name,
-    'privacy_tier': privacy.name,
+    'privacy_tier': privacy.storageValue,
   };
 
   EntryMetadata copyWith({
@@ -160,13 +175,43 @@ final class EntrySaveRequest {
     required this.metadata,
     required this.payload,
     required this.identity,
+    this.capsuleOptions,
     required Iterable<CapturePlaintextRef> plaintextRefs,
   }) : plaintextRefs = List<CapturePlaintextRef>.unmodifiable(plaintextRefs);
 
   final EntryMetadata metadata;
   final EntryPayload payload;
   final LocalIdentity identity;
+  final CapsuleSaveOptions? capsuleOptions;
   final List<CapturePlaintextRef> plaintextRefs;
+}
+
+final class CapsuleSaveOptions {
+  factory CapsuleSaveOptions({String? unlockTask}) {
+    if (unlockTask == null) return const CapsuleSaveOptions._(null);
+    final normalized = unlockTask.trim();
+    if (normalized.isEmpty || normalized.length > maxTaskCharacters) {
+      throw ArgumentError.value(
+        unlockTask,
+        'unlockTask',
+        'A configured Capsule task must be 1–$maxTaskCharacters characters',
+      );
+    }
+    return CapsuleSaveOptions._(normalized);
+  }
+
+  const CapsuleSaveOptions._(this.unlockTask);
+
+  static const int maxTaskCharacters = 180;
+
+  final String? unlockTask;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CapsuleSaveOptions && other.unlockTask == unlockTask;
+
+  @override
+  int get hashCode => unlockTask.hashCode;
 }
 
 final class CapturePlaintextRef {
@@ -185,6 +230,8 @@ final class CaptureDraft {
     this.voiceDuration = Duration.zero,
     this.recordingActive = false,
     this.text = '',
+    this.capsuleTaskEnabled = false,
+    this.capsuleTask = '',
     this.phase = CapturePhase.editing,
     this.errorMessage,
     this.retryIntent,
@@ -200,6 +247,8 @@ final class CaptureDraft {
   final Duration voiceDuration;
   final bool recordingActive;
   final String text;
+  final bool capsuleTaskEnabled;
+  final String capsuleTask;
   final CapturePhase phase;
   final String? errorMessage;
   final CaptureRetryIntent? retryIntent;
@@ -212,9 +261,17 @@ final class CaptureDraft {
     MemoryFormat.voice => voicePath != null && voiceDuration > Duration.zero,
     MemoryFormat.text => text.trim().isNotEmpty,
   };
+  bool get capsuleTaskValid {
+    if (!capsuleTaskEnabled) return true;
+    final normalized = capsuleTask.trim();
+    return normalized.isNotEmpty &&
+        normalized.length <= CapsuleSaveOptions.maxTaskCharacters;
+  }
+
   bool get canSave =>
       hasPrimary &&
       !isRecording &&
+      (privacy != PrivacyTier.capsule || capsuleTaskValid) &&
       (phase == CapturePhase.editing ||
           (phase == CapturePhase.failed &&
               retryIntent == CaptureRetryIntent.save));
@@ -227,7 +284,12 @@ final class CaptureDraft {
     CaptureRetryIntent.committedCleanup => true,
     _ => false,
   };
-  bool get hasDraft => hasPrimary || caption.trim().isNotEmpty || isRecording;
+  bool get hasDraft =>
+      hasPrimary ||
+      caption.trim().isNotEmpty ||
+      isRecording ||
+      capsuleTaskEnabled ||
+      capsuleTask.trim().isNotEmpty;
 
   CaptureDraft copyWith({
     MemoryFormat? format,
@@ -240,6 +302,8 @@ final class CaptureDraft {
     Duration? voiceDuration,
     bool? recordingActive,
     String? text,
+    bool? capsuleTaskEnabled,
+    String? capsuleTask,
     CapturePhase? phase,
     String? errorMessage,
     bool clearErrorMessage = false,
@@ -257,6 +321,8 @@ final class CaptureDraft {
     voiceDuration: voiceDuration ?? this.voiceDuration,
     recordingActive: recordingActive ?? this.recordingActive,
     text: text ?? this.text,
+    capsuleTaskEnabled: capsuleTaskEnabled ?? this.capsuleTaskEnabled,
+    capsuleTask: capsuleTask ?? this.capsuleTask,
     phase: phase ?? this.phase,
     errorMessage: clearErrorMessage ? null : errorMessage ?? this.errorMessage,
     retryIntent: clearRetryIntent ? null : retryIntent ?? this.retryIntent,

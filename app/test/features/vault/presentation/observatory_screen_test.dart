@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:humation_flutter/humation_flutter.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/archive/presentation/archive_screen.dart';
+import 'package:keepers/features/capsule/application/capsule_providers.dart';
+import 'package:keepers/features/capsule/domain/capsule_models.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/ceremony/presentation/ceremony_screen.dart';
 import 'package:keepers/features/ceremony/presentation/weekly_waiting_room_screen.dart';
@@ -22,7 +24,6 @@ import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/family/presentation/family_invite_sheet.dart';
 import 'package:keepers/features/family/presentation/family_join_request_sheet.dart';
-import 'package:keepers/features/locks/presentation/locks_screen.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
 import 'package:keepers/features/members/presentation/member_page_screen.dart';
 import 'package:keepers/features/members/presentation/your_memories_screen.dart';
@@ -393,7 +394,7 @@ void main() {
         2,
       ).copyWith(privacy: PrivacyTier.journal, state: 'kept'),
       _metadata(MemoryFormat.voice, 3),
-      _metadata(MemoryFormat.text, 4).copyWith(privacy: PrivacyTier.legacy),
+      _metadata(MemoryFormat.text, 4).copyWith(privacy: PrivacyTier.capsule),
       _metadata(MemoryFormat.text, 5).copyWith(authorId: 'member-2'),
     ];
     await tester.pumpWidget(_observatory(entries: entries));
@@ -411,7 +412,15 @@ void main() {
     expect(find.byKey(const Key('your-memory-entry-text-5')), findsNothing);
     expect(find.text('Private Journal'), findsOneWidget);
     expect(find.text('Weekly Reveal'), findsOneWidget);
-    expect(find.text('Legacy Milestone'), findsOneWidget);
+    expect(find.text('Capsule'), findsOneWidget);
+    expect(find.text('Shared as Capsule'), findsOneWidget);
+    expect(find.textContaining('milestone'), findsNothing);
+    expect(
+      find.text(
+        'Everything you have kept lives here, including Weekly Reveal and Capsule memories.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('capture success refreshes contribution before haptics', (
@@ -495,7 +504,7 @@ void main() {
     expect(haptics, isEmpty);
   });
 
-  testWidgets('canonical entries open every confirmed interface', (
+  testWidgets('canonical destinations expose one Capsule Memory Key', (
     tester,
   ) async {
     await tester.pumpWidget(_observatory(entries: const []));
@@ -508,12 +517,8 @@ void main() {
     await tester.tap(find.bySemanticsLabel('Memory Key'));
     await tester.pump();
     expect(find.byType(CeremonyScreen), findsOneWidget);
-    expect(find.text('LEGACY LOCK'), findsOneWidget);
-    expect(find.text('CAPSULE'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('memory-key-legacy-entry')));
-    await tester.pump();
-    expect(find.byType(LocksScreen), findsOneWidget);
+    expect(find.textContaining('Legacy'), findsNothing);
+    expect(find.text('Capsule'), findsOneWidget);
 
     await tester.tap(find.bySemanticsLabel('Archive'));
     await tester.pump();
@@ -529,6 +534,45 @@ void main() {
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Chris'), findsOneWidget);
     expect(find.text('Sabati'), findsOneWidget);
+  });
+
+  testWidgets('Memory Key receives persisted Capsule state and safe metadata', (
+    tester,
+  ) async {
+    final entry = _metadata(
+      MemoryFormat.photo,
+      9,
+    ).copyWith(privacy: PrivacyTier.capsule, authorId: 'noura');
+    final assignment = _capsuleAssignment(
+      id: 'capsule-1',
+      contentEntryId: entry.id,
+      authorId: 'noura',
+      unlockTask: 'Share one family story.',
+      state: CapsuleAssignmentState.locked,
+    );
+    await tester.pumpWidget(
+      _observatory(
+        entries: [entry],
+        capsuleAssignments: AsyncValue.data([assignment]),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.bySemanticsLabel('Memory Key'));
+    await tester.pump();
+
+    final ceremony = tester.widget<CeremonyScreen>(find.byType(CeremonyScreen));
+    expect(ceremony.capsuleAssignments, [assignment]);
+    expect(ceremony.capsuleEntries, {entry.id: entry});
+    expect(ceremony.capsuleAuthorNames['noura'], 'Noura');
+    expect(ceremony.capsuleLoading, isFalse);
+    expect(ceremony.capsuleErrorMessage, isNull);
+    expect(ceremony.onCompleteCapsuleTask, isNotNull);
+    expect(ceremony.onOpenCapsule, isNotNull);
+    expect(find.text('Share one family story.'), findsOneWidget);
+    expect(find.text('From Noura'), findsOneWidget);
+    expect(find.text('Photo memory · 09 Aug 2026'), findsOneWidget);
+    expect(find.textContaining('Legacy'), findsNothing);
   });
 
   testWidgets(
@@ -936,10 +980,8 @@ void main() {
 
     await tester.tap(find.bySemanticsLabel('Memory Key'));
     await tester.pump();
-    expect(
-      find.byKey(const ValueKey('memory-key-legacy-entry')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('memory-key-legacy-entry')), findsNothing);
+    expect(find.text('Capsule'), findsOneWidget);
     expect(find.bySemanticsLabel('Relative 17, away'), findsNothing);
   });
 
@@ -1318,6 +1360,8 @@ void main() {
 
 Widget _observatory({
   required List<VaultEntryMetadata> entries,
+  AsyncValue<List<CapsuleAssignment>> capsuleAssignments =
+      const AsyncValue.data(<CapsuleAssignment>[]),
   MediaQueryData? mediaQuery,
   FamilyRosterState? rosterState,
   _ObservatoryRosterStateController? rosterController,
@@ -1330,6 +1374,7 @@ Widget _observatory({
   DateTime? now,
 }) => _observatoryWithOverride(
   vaultEntriesProvider.overrideWithValue(AsyncValue.data(entries)),
+  capsuleAssignments: capsuleAssignments,
   mediaQuery: mediaQuery,
   rosterState: rosterState,
   rosterController: rosterController,
@@ -1343,6 +1388,8 @@ Widget _observatory({
 
 Widget _observatoryWithOverride(
   dynamic override, {
+  AsyncValue<List<CapsuleAssignment>> capsuleAssignments =
+      const AsyncValue.data(<CapsuleAssignment>[]),
   MediaQueryData? mediaQuery,
   Future<EntryMetadata?> Function(BuildContext)? showCapture,
   InviteShareService? shareService,
@@ -1367,6 +1414,7 @@ Widget _observatoryWithOverride(
   return ProviderScope(
     overrides: [
       override,
+      capsuleAssignmentsProvider.overrideWithValue(capsuleAssignments),
       _observatoryRosterStateProvider.overrideWith(
         () => effectiveRosterController,
       ),
@@ -1500,6 +1548,26 @@ VaultEntryMetadata _metadata(MemoryFormat format, int day) =>
       blobRef: 'entries/blobs/entry-${format.name}-$day.keeper',
       state: 'pending',
     );
+
+CapsuleAssignment _capsuleAssignment({
+  required String id,
+  required String contentEntryId,
+  required String authorId,
+  required CapsuleAssignmentState state,
+  String? unlockTask,
+}) => CapsuleAssignment(
+  id: id,
+  familyId: 'family-1',
+  authorId: authorId,
+  targetId: 'member-1',
+  contentEntryId: contentEntryId,
+  unlockTask: unlockTask,
+  state: state,
+  createdAt: DateTime.utc(2026, 8, 9),
+  openedAt: state == CapsuleAssignmentState.opened
+      ? DateTime.utc(2026, 8, 10)
+      : null,
+);
 
 EntryMetadata _entryMetadata(MemoryFormat format, int day) => EntryMetadata(
   id: 'entry-${format.name}-$day',

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:keepers/design_system/observatory/motion_policy.dart';
+import 'package:keepers/features/capsule/domain/capsule_models.dart';
 import 'package:keepers/features/capture/data/audio_playback_adapter.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/ceremony/presentation/pastel_flood.dart';
@@ -19,6 +20,10 @@ enum _RehearsalFormat { photo, voice, text }
 typedef WeeklyMemoryDecisionCallback = Future<void> Function(
   VaultEntryMetadata metadata,
   WeeklyMemoryDisposition disposition,
+);
+
+typedef CapsuleTaskCompletionCallback = Future<bool> Function(
+  CapsuleAssignment assignment,
 );
 
 @immutable
@@ -48,46 +53,6 @@ final class _RehearsalMemory {
   final bool preview;
 }
 
-enum LockedMemoryChallengeState { locked, submitted, approved }
-
-@immutable
-final class LockedMemoryChallenge {
-  const LockedMemoryChallenge({
-    required this.id,
-    required this.title,
-    required this.task,
-    required this.assignedBy,
-    required this.approvalBy,
-    required this.state,
-    this.preview = false,
-    this.memoryCount = 1,
-  });
-
-  final String id;
-  final String title;
-  final String task;
-  final String assignedBy;
-  final String approvalBy;
-  final LockedMemoryChallengeState state;
-  final bool preview;
-  final int memoryCount;
-}
-
-@immutable
-final class MemoryKeyCapsule {
-  const MemoryKeyCapsule({
-    required this.from,
-    required this.title,
-    required this.openingLabel,
-    required this.daysRemaining,
-  });
-
-  final String from;
-  final String title;
-  final String openingLabel;
-  final int daysRemaining;
-}
-
 final class CeremonyScreen extends StatefulWidget {
   const CeremonyScreen({
     required this.familyName,
@@ -102,9 +67,14 @@ final class CeremonyScreen extends StatefulWidget {
     this.weeklyPlayback,
     this.onWeeklyDecision,
     this.navigationDestination = KeepersNavDestination.ceremony,
-    this.lockedMemories = const [],
-    this.timeCapsule,
-    this.onOpenLockedMemory,
+    this.capsuleAssignments = const [],
+    this.capsuleEntries = const {},
+    this.capsuleAuthorNames = const {},
+    this.capsuleLoading = false,
+    this.capsuleErrorMessage,
+    this.onRetryCapsules,
+    this.onCompleteCapsuleTask,
+    this.onOpenCapsule,
     super.key,
   }) : assert(!(startInKeeping && startInWeekly)),
        assert(
@@ -125,9 +95,14 @@ final class CeremonyScreen extends StatefulWidget {
   final AudioPlaybackAdapter? weeklyPlayback;
   final WeeklyMemoryDecisionCallback? onWeeklyDecision;
   final KeepersNavDestination navigationDestination;
-  final List<LockedMemoryChallenge> lockedMemories;
-  final MemoryKeyCapsule? timeCapsule;
-  final ValueChanged<LockedMemoryChallenge>? onOpenLockedMemory;
+  final List<CapsuleAssignment> capsuleAssignments;
+  final Map<String, VaultEntryMetadata> capsuleEntries;
+  final Map<String, String> capsuleAuthorNames;
+  final bool capsuleLoading;
+  final String? capsuleErrorMessage;
+  final VoidCallback? onRetryCapsules;
+  final CapsuleTaskCompletionCallback? onCompleteCapsuleTask;
+  final ValueChanged<CapsuleAssignment>? onOpenCapsule;
 
   @override
   State<CeremonyScreen> createState() => _CeremonyScreenState();
@@ -262,16 +237,17 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
         key: const ValueKey('memory-key-landing'),
         alignment: Alignment.topCenter,
         child: _MemoryKeyLanding(
-          lockedMemories: widget.lockedMemories,
-          timeCapsule: widget.timeCapsule,
-          onOpenLocks: () =>
-              widget.onDestinationSelected(KeepersNavDestination.locks),
-          onOpenLockedMemory: widget.onOpenLockedMemory == null
+          assignments: widget.capsuleAssignments,
+          entries: widget.capsuleEntries,
+          authorNames: widget.capsuleAuthorNames,
+          loading: widget.capsuleLoading,
+          errorMessage: widget.capsuleErrorMessage,
+          onRetry: widget.onRetryCapsules,
+          onCompleteTask: widget.onCompleteCapsuleTask,
+          onOpen: widget.onOpenCapsule == null
               ? null
-              : (challenge) => unawaited(
-                  _openWithPastelFlood(
-                    () => widget.onOpenLockedMemory!(challenge),
-                  ),
+              : (assignment) => unawaited(
+                  _openWithPastelFlood(() => widget.onOpenCapsule!(assignment)),
                 ),
         ),
       ),
@@ -498,224 +474,199 @@ final class _WeeklyExperienceShell extends StatelessWidget {
 
 final class _MemoryKeyLanding extends StatefulWidget {
   const _MemoryKeyLanding({
-    required this.lockedMemories,
-    required this.timeCapsule,
-    required this.onOpenLocks,
-    required this.onOpenLockedMemory,
+    required this.assignments,
+    required this.entries,
+    required this.authorNames,
+    required this.loading,
+    required this.errorMessage,
+    required this.onRetry,
+    required this.onCompleteTask,
+    required this.onOpen,
   });
 
-  final List<LockedMemoryChallenge> lockedMemories;
-  final MemoryKeyCapsule? timeCapsule;
-  final VoidCallback onOpenLocks;
-  final ValueChanged<LockedMemoryChallenge>? onOpenLockedMemory;
+  final List<CapsuleAssignment> assignments;
+  final Map<String, VaultEntryMetadata> entries;
+  final Map<String, String> authorNames;
+  final bool loading;
+  final String? errorMessage;
+  final VoidCallback? onRetry;
+  final CapsuleTaskCompletionCallback? onCompleteTask;
+  final ValueChanged<CapsuleAssignment>? onOpen;
 
   @override
   State<_MemoryKeyLanding> createState() => _MemoryKeyLandingState();
 }
 
 final class _MemoryKeyLandingState extends State<_MemoryKeyLanding> {
-  final GlobalKey _capsuleKey = GlobalKey();
+  final Set<String> _completing = {};
+  final Set<String> _completionFailures = {};
 
-  Future<void> _showCapsule() async {
-    final capsuleContext = _capsuleKey.currentContext;
-    if (capsuleContext == null) return;
-    await Scrollable.ensureVisible(
-      capsuleContext,
-      duration: keepersReduceMotion(context)
-          ? Duration.zero
-          : const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
-      alignment: .1,
+  @override
+  void didUpdateWidget(covariant _MemoryKeyLanding oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final stillLocked = widget.assignments
+        .where(
+          (assignment) => assignment.state == CapsuleAssignmentState.locked,
+        )
+        .map((assignment) => assignment.id)
+        .toSet();
+    _completing.removeWhere((id) => !stillLocked.contains(id));
+    _completionFailures.removeWhere((id) => !stillLocked.contains(id));
+  }
+
+  Future<void> _confirmCompletion(CapsuleAssignment assignment) async {
+    final complete = widget.onCompleteTask;
+    if (complete == null || _completing.contains(assignment.id)) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: KeepersColors.auraIvory,
+        title: const KeepersText('Complete this task?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            KeepersText(
+              assignment.unlockTask ?? '',
+              style: const TextStyle(
+                color: KeepersColors.ink,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const KeepersText(
+              'Confirm that you completed this task. The Capsule will unlock for you.',
+              style: TextStyle(color: KeepersColors.inkMuted, height: 1.4),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(
+              minimumSize: const Size(80, 48),
+              foregroundColor: KeepersColors.ink,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const KeepersText('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('capsule-complete-confirm'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(120, 48),
+              backgroundColor: KeepersColors.ink,
+              foregroundColor: KeepersColors.auraIvory,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const KeepersText('Complete task'),
+          ),
+        ],
+      ),
     );
+    if (!mounted || confirmed != true) return;
+    setState(() {
+      _completing.add(assignment.id);
+      _completionFailures.remove(assignment.id);
+    });
+    var completed = false;
+    try {
+      completed = await complete(assignment);
+    } catch (_) {
+      completed = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      _completing.remove(assignment.id);
+      if (!completed) _completionFailures.add(assignment.id);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final lockedMemories = widget.lockedMemories;
-    final timeCapsule = widget.timeCapsule;
+    final locked = widget.assignments
+        .where(
+          (assignment) => assignment.state == CapsuleAssignmentState.locked,
+        )
+        .toList(growable: false);
+    final available = widget.assignments
+        .where(
+          (assignment) => assignment.state != CapsuleAssignmentState.locked,
+        )
+        .toList(growable: false);
     return SingleChildScrollView(
       key: const ValueKey('memory-key-scroll'),
       padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _MemoryKeyEntries(
-            legacySubtitle: lockedMemories.isEmpty
-                ? 'No family condition yet'
-                : '${lockedMemories.length} ${lockedMemories.length == 1 ? 'family condition' : 'family conditions'}',
-            capsuleSubtitle:
-                timeCapsule?.openingLabel ?? 'No capsule scheduled',
-            onLegacyTap: widget.onOpenLocks,
-            onCapsuleTap: timeCapsule == null ? null : _showCapsule,
-          ),
-          const SizedBox(height: 20),
-          KeepersText(
-            'Locked by family',
-            style: KeepersType.heading.copyWith(color: KeepersColors.ink),
-          ),
-          const SizedBox(height: 4),
-          const KeepersText(
-            'Someone set a condition. Finish it, and they open it.',
-            style: TextStyle(color: KeepersColors.inkMuted, height: 1.4),
-          ),
-          const SizedBox(height: 10),
-          if (lockedMemories.isEmpty)
-            const _NoLockedMemories()
-          else
-            for (final challenge in lockedMemories) ...[
-              _LockedMemoryCard(
-                challenge: challenge,
-                onOpen: challenge.state == LockedMemoryChallengeState.approved
-                    ? widget.onOpenLockedMemory
-                    : null,
-                onManage: widget.onOpenLocks,
-              ),
-              const SizedBox(height: 10),
-            ],
-          if (timeCapsule case final capsule?) ...[
-            KeyedSubtree(
-              key: _capsuleKey,
-              child: _TimeCapsuleCard(capsule: capsule),
+          if (widget.loading)
+            const _CapsuleStatusCard(
+              key: ValueKey('capsule-loading'),
+              message: 'Loading Capsule memories…',
+              loading: true,
+            )
+          else if (widget.errorMessage case final message?)
+            _CapsuleStatusCard(
+              key: const ValueKey('capsule-error'),
+              message: message,
+              actionLabel: 'Retry',
+              onAction: widget.onRetry,
+            )
+          else ...[
+            const _CapsuleSectionHeader(
+              key: ValueKey('capsule-locked-section'),
+              title: 'Locked by family',
+              subtitle: 'Complete your family task to unlock the memory.',
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 10),
+            if (locked.isEmpty)
+              const _CapsuleSectionEmpty(
+                message: 'No family tasks are holding a Capsule right now.',
+              )
+            else
+              for (final assignment in locked) ...[
+                _CapsuleAssignmentCard(
+                  assignment: assignment,
+                  metadata: widget.entries[assignment.contentEntryId],
+                  authorName: widget.authorNames[assignment.authorId],
+                  completionFailed: _completionFailures.contains(assignment.id),
+                  completing: _completing.contains(assignment.id),
+                  onComplete: widget.onCompleteTask == null
+                      ? null
+                      : () => _confirmCompletion(assignment),
+                ),
+                const SizedBox(height: 10),
+              ],
+            const SizedBox(height: 24),
+            const _CapsuleSectionHeader(
+              title: 'Capsule',
+              subtitle: 'Memories ready for you to open.',
+            ),
+            const SizedBox(height: 10),
+            if (available.isEmpty)
+              _CapsuleSectionEmpty(
+                key: const ValueKey('capsule-empty'),
+                message: widget.assignments.isEmpty
+                    ? 'No Capsule memories for you yet.'
+                    : 'Complete a family task to open its Capsule.',
+              )
+            else
+              for (final assignment in available) ...[
+                _CapsuleAssignmentCard(
+                  assignment: assignment,
+                  metadata: widget.entries[assignment.contentEntryId],
+                  authorName: widget.authorNames[assignment.authorId],
+                  onOpen: widget.onOpen == null
+                      ? null
+                      : () => widget.onOpen!(assignment),
+                ),
+                const SizedBox(height: 10),
+              ],
           ],
         ],
       ),
     );
   }
-}
-
-final class _MemoryKeyEntries extends StatelessWidget {
-  const _MemoryKeyEntries({
-    required this.legacySubtitle,
-    required this.capsuleSubtitle,
-    required this.onLegacyTap,
-    required this.onCapsuleTap,
-  });
-
-  final String legacySubtitle;
-  final String capsuleSubtitle;
-  final VoidCallback onLegacyTap;
-  final VoidCallback? onCapsuleTap;
-
-  @override
-  Widget build(BuildContext context) => IntrinsicHeight(
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          child: _MemoryKeyShortcutCard(
-            key: const ValueKey('memory-key-legacy-entry'),
-            title: 'LEGACY LOCK',
-            subtitle: legacySubtitle,
-            icon: Icons.lock_outline_rounded,
-            accent: KeepersColors.legacyOlive,
-            labelAccent: KeepersColors.legacyOliveText,
-            onTap: onLegacyTap,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _MemoryKeyShortcutCard(
-            key: const ValueKey('memory-key-capsule-entry'),
-            title: 'CAPSULE',
-            subtitle: capsuleSubtitle,
-            icon: Icons.hourglass_empty_rounded,
-            accent: KeepersColors.homeGold,
-            labelAccent: KeepersColors.homeGoldText,
-            onTap: onCapsuleTap,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-final class _MemoryKeyShortcutCard extends StatelessWidget {
-  const _MemoryKeyShortcutCard({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.accent,
-    required this.labelAccent,
-    required this.onTap,
-    super.key,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final Color accent;
-  final Color labelAccent;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    enabled: onTap != null,
-    label: '$title. $subtitle',
-    onTap: onTap,
-    child: ExcludeSemantics(
-      child: Material(
-        color: KeepersColors.auraIvory.withValues(alpha: .92),
-        borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 74),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-              child: Row(
-                children: [
-                  Container(
-                    width: 30,
-                    height: 30,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: accent.withValues(alpha: .38)),
-                    ),
-                    child: Icon(icon, color: accent, size: 18),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        KeepersText(
-                          title,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: labelAccent,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1.8,
-                              ),
-                        ),
-                        const SizedBox(height: 3),
-                        KeepersText(
-                          subtitle,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: KeepersColors.homeInk,
-                                fontSize: 9.2,
-                                height: 1.15,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
 }
 
 final class _RoundLineIcon extends StatelessWidget {
@@ -753,287 +704,316 @@ final class _EditorialEyebrow extends StatelessWidget {
   );
 }
 
-final class _LockedMemoryCard extends StatelessWidget {
-  const _LockedMemoryCard({
-    required this.challenge,
-    required this.onOpen,
-    required this.onManage,
+final class _CapsuleAssignmentCard extends StatelessWidget {
+  const _CapsuleAssignmentCard({
+    required this.assignment,
+    required this.metadata,
+    required this.authorName,
+    this.completionFailed = false,
+    this.completing = false,
+    this.onComplete,
+    this.onOpen,
   });
 
-  final LockedMemoryChallenge challenge;
-  final ValueChanged<LockedMemoryChallenge>? onOpen;
-  final VoidCallback onManage;
+  final CapsuleAssignment assignment;
+  final VaultEntryMetadata? metadata;
+  final String? authorName;
+  final bool completionFailed;
+  final bool completing;
+  final VoidCallback? onComplete;
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
-    final (label, color) = switch (challenge.state) {
-      LockedMemoryChallengeState.locked => (
-        'LOCKED',
-        KeepersColors.legacyOlive,
-      ),
-      LockedMemoryChallengeState.submitted => (
-        'AWAITING APPROVAL',
-        KeepersColors.memberPalette[2],
-      ),
-      LockedMemoryChallengeState.approved => (
-        'READY TO OPEN',
-        KeepersColors.memberPalette[3],
-      ),
+    final isLocked = assignment.state == CapsuleAssignmentState.locked;
+    final stateLabel = switch (assignment.state) {
+      CapsuleAssignmentState.locked => 'LOCKED',
+      CapsuleAssignmentState.ready => 'READY',
+      CapsuleAssignmentState.opened => 'OPENED',
     };
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: KeepersColors.auraIvory.withValues(alpha: .86),
-        border: Border.all(color: KeepersColors.homeLine),
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: KeepersColors.homeInk.withValues(alpha: .05),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _RoundLineIcon(icon: Icons.lock_outline_rounded, color: color),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    KeepersText(
-                      challenge.assignedBy.toUpperCase(),
-                      style: const TextStyle(
-                        color: KeepersColors.homeGoldText,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    KeepersText(
-                      challenge.title,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: KeepersColors.ink,
-                        fontFamily: KeepersType.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    KeepersText(
-                      challenge.task,
-                      style: const TextStyle(
-                        color: KeepersColors.inkMuted,
-                        fontSize: 11,
-                        height: 1.25,
-                      ),
-                    ),
-                  ],
+    final safeAuthor = authorName?.trim();
+    final authorLabel = safeAuthor == null || safeAuthor.isEmpty
+        ? 'From a family member'
+        : 'From $safeAuthor';
+    final safeDate = _capsuleDate(metadata?.createdAt ?? assignment.createdAt);
+    final formatLabel = metadata?.format.vaultLabel ?? 'Memory';
+    final unlockTask = assignment.unlockTask;
+    final detailsAvailable = metadata != null;
+    final action = isLocked ? onComplete : onOpen;
+    return Semantics(
+      container: true,
+      label: '$stateLabel Capsule. $authorLabel. $formatLabel. $safeDate.',
+      child: Container(
+        key: ValueKey('capsule-assignment-${assignment.id}'),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: KeepersColors.auraIvory.withValues(alpha: .92),
+          border: Border.all(color: KeepersColors.homeLine),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: KeepersColors.homeInk.withValues(alpha: .05),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _RoundLineIcon(
+                  icon: isLocked
+                      ? Icons.lock_outline_rounded
+                      : Icons.hourglass_empty_rounded,
+                  color: KeepersColors.homeGold,
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Divider(height: 1, color: KeepersColors.homeLine),
-          const SizedBox(height: 7),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 7,
-                      runSpacing: 3,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        if (challenge.state !=
-                            LockedMemoryChallengeState.locked)
-                          KeepersText(
-                            label,
-                            style: TextStyle(
-                              color: color,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                        KeepersText(
-                          '${challenge.memoryCount} ${challenge.memoryCount == 1 ? 'MEMORY' : 'MEMORIES'} INSIDE',
-                          style: const TextStyle(
-                            color: KeepersColors.homeTaupe,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.1,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (!challenge.preview) ...[
-                      const SizedBox(height: 2),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       KeepersText(
-                        challenge.approvalBy,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        stateLabel,
+                        style: const TextStyle(
+                          color: KeepersColors.homeGoldText,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      KeepersText(
+                        authorLabel,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: KeepersColors.ink,
+                              fontFamily: KeepersType.primary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 3),
+                      KeepersText(
+                        '$formatLabel · $safeDate',
                         style: const TextStyle(
                           color: KeepersColors.inkMuted,
-                          fontSize: 9,
-                          height: 1.2,
+                          fontSize: 12,
+                          height: 1.3,
                         ),
                       ),
                     ],
+                  ),
+                ),
+              ],
+            ),
+            if (isLocked && unlockTask != null) ...[
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: KeepersColors.homeGold.withValues(alpha: .08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _EditorialEyebrow('Task to unlock'),
+                    const SizedBox(height: 5),
+                    KeepersText(
+                      unlockTask,
+                      style: const TextStyle(
+                        color: KeepersColors.ink,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        height: 1.4,
+                      ),
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              if (onOpen != null)
-                FilledButton(
-                  onPressed: () => onOpen!(challenge),
+            ],
+            if (completionFailed) ...[
+              const SizedBox(height: 10),
+              const KeepersText(
+                'Task could not be completed. Try again.',
+                style: TextStyle(
+                  color: KeepersColors.homeClay,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
+            if (!detailsAvailable)
+              const KeepersText(
+                'Capsule details are unavailable. Try again later.',
+                style: TextStyle(color: KeepersColors.inkMuted, height: 1.35),
+              )
+            else
+              SizedBox(
+                height: 48,
+                child: FilledButton(
+                  key: ValueKey(
+                    isLocked
+                        ? 'capsule-complete-${assignment.id}'
+                        : 'capsule-open-${assignment.id}',
+                  ),
+                  onPressed: completing ? null : action,
                   style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, 44),
+                    minimumSize: const Size.fromHeight(48),
                     backgroundColor: KeepersColors.ink,
                     foregroundColor: KeepersColors.auraIvory,
-                  ),
-                  child: const KeepersText('Open memory'),
-                )
-              else
-                OutlinedButton(
-                  onPressed:
-                      challenge.state == LockedMemoryChallengeState.locked
-                      ? onManage
-                      : null,
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 44),
-                    foregroundColor: KeepersColors.legacyOlive,
-                    side: BorderSide(color: color.withValues(alpha: .62)),
+                    disabledBackgroundColor: KeepersColors.ink.withValues(
+                      alpha: .45,
+                    ),
                   ),
                   child: KeepersText(
-                    challenge.state == LockedMemoryChallengeState.locked
-                        ? 'Submit proof'
-                        : 'Awaiting approval',
+                    completing
+                        ? 'Completing…'
+                        : isLocked
+                        ? 'Complete task'
+                        : 'Open memory',
                   ),
                 ),
-            ],
-          ),
-        ],
+              ),
+          ],
+        ),
       ),
     );
   }
 }
 
-final class _TimeCapsuleCard extends StatelessWidget {
-  const _TimeCapsuleCard({required this.capsule});
+final class _CapsuleSectionHeader extends StatelessWidget {
+  const _CapsuleSectionHeader({
+    required this.title,
+    required this.subtitle,
+    super.key,
+  });
 
-  final MemoryKeyCapsule capsule;
+  final String title;
+  final String subtitle;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    label: '${capsule.title}. ${capsule.openingLabel}',
-    child: ExcludeSemantics(
-      child: Container(
-        decoration: BoxDecoration(
-          color: KeepersColors.auraIvory.withValues(alpha: .84),
-          border: Border.all(color: KeepersColors.homeLine),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            children: [
-              const _RoundLineIcon(
-                icon: Icons.hourglass_empty_rounded,
-                color: KeepersColors.homeGold,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _EditorialEyebrow('Time capsule'),
-                    const SizedBox(height: 3),
-                    KeepersText(
-                      capsule.title,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: KeepersColors.ink,
-                        fontFamily: KeepersType.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Wrap(
-                      spacing: 4,
-                      runSpacing: 2,
-                      children: [
-                        KeepersText(
-                          '${capsule.from} ·',
-                          style: const TextStyle(
-                            color: KeepersColors.inkMuted,
-                            fontSize: 11,
-                          ),
-                        ),
-                        KeepersText(
-                          capsule.openingLabel,
-                          style: const TextStyle(
-                            color: KeepersColors.inkMuted,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  KeepersText(
-                    '${capsule.daysRemaining}',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: KeepersColors.ink,
-                      fontFamily: KeepersType.primary,
-                    ),
-                  ),
-                  const KeepersText(
-                    'DAYS',
-                    style: TextStyle(
-                      color: KeepersColors.homeTaupe,
-                      fontSize: 8,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.4,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      KeepersText(
+        title,
+        style: KeepersType.heading.copyWith(color: KeepersColors.ink),
       ),
+      const SizedBox(height: 4),
+      KeepersText(
+        subtitle,
+        style: const TextStyle(color: KeepersColors.inkMuted, height: 1.4),
+      ),
+    ],
+  );
+}
+
+final class _CapsuleSectionEmpty extends StatelessWidget {
+  const _CapsuleSectionEmpty({required this.message, super.key});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: const BoxConstraints(minHeight: 84),
+    padding: const EdgeInsets.all(18),
+    alignment: Alignment.centerLeft,
+    decoration: BoxDecoration(
+      color: KeepersColors.auraIvory.withValues(alpha: .7),
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: KeepersColors.homeLine),
+    ),
+    child: KeepersText(
+      message,
+      style: const TextStyle(color: KeepersColors.inkMuted, height: 1.4),
     ),
   );
 }
 
-final class _NoLockedMemories extends StatelessWidget {
-  const _NoLockedMemories();
+final class _CapsuleStatusCard extends StatelessWidget {
+  const _CapsuleStatusCard({
+    required this.message,
+    this.loading = false,
+    this.actionLabel,
+    this.onAction,
+    super.key,
+  });
+
+  final String message;
+  final bool loading;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(18),
+    constraints: const BoxConstraints(minHeight: 184),
+    padding: const EdgeInsets.all(24),
     decoration: BoxDecoration(
-      color: KeepersColors.auraIvory.withValues(alpha: .62),
-      borderRadius: BorderRadius.circular(20),
+      color: KeepersColors.auraIvory.withValues(alpha: .9),
+      borderRadius: BorderRadius.circular(18),
       border: Border.all(color: KeepersColors.homeLine),
     ),
-    child: const KeepersText(
-      'No family tasks are holding a memory right now.',
-      style: TextStyle(color: KeepersColors.inkMuted),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (loading) ...[
+          const Center(
+            child: SizedBox.square(
+              dimension: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+        KeepersText(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: KeepersColors.inkMuted, height: 1.4),
+        ),
+        if (actionLabel case final label?) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 48,
+            child: FilledButton(
+              onPressed: onAction,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+                backgroundColor: KeepersColors.ink,
+                foregroundColor: KeepersColors.auraIvory,
+              ),
+              child: KeepersText(label),
+            ),
+          ),
+        ],
+      ],
     ),
   );
+}
+
+String _capsuleDate(DateTime date) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final utc = date.toUtc();
+  return '${utc.day.toString().padLeft(2, '0')} '
+      '${months[utc.month - 1]} ${utc.year}';
 }
 
 final class _Reel extends StatelessWidget {

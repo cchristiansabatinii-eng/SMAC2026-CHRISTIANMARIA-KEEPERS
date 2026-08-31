@@ -24,9 +24,9 @@ const _privacyCopy = <PrivacyTier, ({String title, String consequence})>{
     title: 'Weekly Reveal',
     consequence: 'Kept for your family’s next reveal.',
   ),
-  PrivacyTier.legacy: (
-    title: 'Legacy Milestone',
-    consequence: 'Kept with the family key for a future milestone.',
+  PrivacyTier.capsule: (
+    title: 'Capsule',
+    consequence: 'Shared through Memory Key when each family member is ready.',
   ),
 };
 
@@ -60,6 +60,7 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
   final _captionFocus = FocusNode();
   final _captionController = TextEditingController();
   final _textController = TextEditingController();
+  final _capsuleTaskController = TextEditingController();
   Timer? _recordingClock;
   Duration _elapsedRecording = Duration.zero;
   int _stepIndex = 0;
@@ -73,6 +74,7 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
     _captionFocus.dispose();
     _captionController.dispose();
     _textController.dispose();
+    _capsuleTaskController.dispose();
     super.dispose();
   }
 
@@ -177,11 +179,18 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
   }
 
   void _continueToPrivacy(CaptureDraft draft) {
-    if (!draft.canSave) return;
+    if (!_canContinueToAccess(draft)) return;
     FocusScope.of(context).unfocus();
     setState(() => _stepIndex = 1);
     unawaited(_announce('Step 2 of 2. Choose who can open this memory.'));
   }
+
+  bool _canContinueToAccess(CaptureDraft draft) =>
+      draft.hasPrimary &&
+      !draft.isRecording &&
+      (draft.phase == CapturePhase.editing ||
+          (draft.phase == CapturePhase.failed &&
+              draft.retryIntent == CaptureRetryIntent.save));
 
   void _backToFormat() {
     if (_stepIndex == 0) return;
@@ -208,6 +217,12 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
       _textController.value = TextEditingValue(
         text: draft.text,
         selection: TextSelection.collapsed(offset: draft.text.length),
+      );
+    }
+    if (_capsuleTaskController.text != draft.capsuleTask) {
+      _capsuleTaskController.value = TextEditingValue(
+        text: draft.capsuleTask,
+        selection: TextSelection.collapsed(offset: draft.capsuleTask.length),
       );
     }
   }
@@ -528,7 +543,9 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
           backgroundColor: KeepersColors.ink,
           foregroundColor: KeepersColors.auraIvory,
         ),
-        onPressed: draft.canSave ? () => _continueToPrivacy(draft) : null,
+        onPressed: _canContinueToAccess(draft)
+            ? () => _continueToPrivacy(draft)
+            : null,
         icon: const Icon(Icons.arrow_forward_rounded),
         label: const KeepersText('Continue'),
       ),
@@ -586,6 +603,63 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
           ),
         );
       }),
+      if (draft.privacy == PrivacyTier.capsule) ...[
+        const SizedBox(height: 2),
+        Material(
+          color: KeepersColors.auraIvory.withValues(alpha: .78),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: KeepersColors.ink.withValues(alpha: .14)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SwitchListTile.adaptive(
+                key: const Key('capsule-task-toggle'),
+                value: draft.capsuleTaskEnabled,
+                onChanged: locked ? null : controller.setCapsuleTaskEnabled,
+                activeColor: KeepersColors.ink,
+                title: const KeepersText('Set specific task to unlock'),
+                subtitle: const KeepersText(
+                  'Optional · each family member confirms the task for themselves.',
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 4,
+                ),
+              ),
+              if (draft.capsuleTaskEnabled) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                  child: TextField(
+                    key: const Key('capsule-task-field'),
+                    controller: _capsuleTaskController,
+                    enabled: !locked,
+                    minLines: 2,
+                    maxLines: 4,
+                    maxLength: 180,
+                    textCapitalization: TextCapitalization.sentences,
+                    onChanged: controller.updateCapsuleTask,
+                    decoration: InputDecoration(
+                      border: const OutlineInputBorder(),
+                      label: const KeepersText('Task to unlock'),
+                      hint: const KeepersText(
+                        'For example, cook our family recipe together',
+                      ),
+                      helperText: draft.capsuleTask.trim().isEmpty
+                          ? 'Add a task. Each member confirms completion on '
+                                'their own device.'
+                          : 'Each family member confirms completion on their '
+                                'own device.',
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+      ],
       _errorPanel(draft: draft, locked: locked),
       const SizedBox(height: 12),
       Row(

@@ -74,7 +74,7 @@ final class _YourMemoriesScreenState extends State<YourMemoriesScreen> {
                   ),
                   const SizedBox(height: 8),
                   const KeepersText(
-                    'Everything you have kept lives here, including memories waiting for a reveal or milestone.',
+                    'Everything you have kept lives here, including Weekly Reveal and Capsule memories.',
                     style: TextStyle(
                       color: KeepersColors.inkMuted,
                       height: 1.45,

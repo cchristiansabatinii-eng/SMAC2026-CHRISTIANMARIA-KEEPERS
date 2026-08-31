@@ -7,7 +7,6 @@ const keepersEnabledDestinations = <KeepersNavDestination>{
   KeepersNavDestination.wheel,
   KeepersNavDestination.ceremony,
   KeepersNavDestination.archive,
-  KeepersNavDestination.locks,
   KeepersNavDestination.settings,
 };
 

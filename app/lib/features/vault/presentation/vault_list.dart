@@ -84,5 +84,5 @@ IconData _formatIcon(MemoryFormat format) => switch (format) {
 IconData _privacyIcon(PrivacyTier privacy) => switch (privacy) {
   PrivacyTier.journal => Icons.person_rounded,
   PrivacyTier.reveal => Icons.lock_clock_rounded,
-  PrivacyTier.legacy => Icons.verified_rounded,
+  PrivacyTier.capsule => Icons.lock_outline_rounded,
 };

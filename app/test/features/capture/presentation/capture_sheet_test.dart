@@ -25,6 +25,7 @@ void main() {
     expect(find.text('Private Journal'), findsNothing);
     expect(find.text('Weekly Reveal'), findsNothing);
     expect(find.text('Legacy Milestone'), findsNothing);
+    expect(find.text('Capsule'), findsNothing);
 
     final continueButton = tester.widget<FilledButton>(
       find.widgetWithText(FilledButton, 'Continue'),
@@ -105,7 +106,8 @@ void main() {
     expect(find.text('2 of 2 · Choose access'), findsOneWidget);
     expect(find.text('Private Journal'), findsOneWidget);
     expect(find.text('Weekly Reveal'), findsOneWidget);
-    expect(find.text('Legacy Milestone'), findsOneWidget);
+    expect(find.text('Capsule'), findsOneWidget);
+    expect(find.text('Legacy Milestone'), findsNothing);
     expect(find.text('Kept for your family’s next reveal.'), findsOneWidget);
     final reveal = tester.widget<RadioListTile<PrivacyTier>>(
       find.byKey(const Key('privacy-reveal')),
@@ -118,6 +120,117 @@ void main() {
     expect(
       harness.container.read(captureControllerProvider).caption,
       'Friday morning',
+    );
+  });
+
+  testWidgets('Capsule reveals an optional task and validates it inline', (
+    tester,
+  ) async {
+    final harness = CaptureTestHarness();
+    addTearDown(harness.dispose);
+    await tester.pumpWidget(harness.sheet());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Text'));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('memory-text')),
+      'A memory for the whole family',
+    );
+    tester.testTextInput.hide();
+    await tester.pump();
+    await _continueToAccess(tester);
+
+    expect(find.byKey(const Key('capsule-task-toggle')), findsNothing);
+    expect(find.byKey(const Key('capsule-task-field')), findsNothing);
+
+    await tester.tap(find.text('Capsule'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Set specific task to unlock'), findsOneWidget);
+    expect(find.byKey(const Key('capsule-task-toggle')), findsOneWidget);
+    expect(find.byKey(const Key('capsule-task-field')), findsNothing);
+    expect(find.text('Legacy Milestone'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('capsule-task-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('capsule-task-field')), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Keep memory'),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('capsule-task-field')),
+      'Call Grandma and ask about her first home',
+    );
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Keep memory'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(
+      harness.container.read(captureControllerProvider).capsuleTask,
+      'Call Grandma and ask about her first home',
+    );
+  });
+
+  testWidgets('Back never traps an unfinished Capsule task off-screen', (
+    tester,
+  ) async {
+    final harness = CaptureTestHarness();
+    addTearDown(harness.dispose);
+    await tester.pumpWidget(harness.sheet());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Text'));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('memory-text')),
+      'Keep the unfinished task reachable',
+    );
+    tester.testTextInput.hide();
+    await tester.pump();
+    await _continueToAccess(tester);
+    await tester.tap(find.text('Capsule'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('capsule-task-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Keep memory'),
+          )
+          .onPressed,
+      isNull,
+    );
+    final backButton = find.byKey(const Key('capture-back'));
+    await tester.ensureVisible(backButton);
+    await tester.tap(backButton);
+    await tester.pumpAndSettle();
+
+    final continueButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Continue'),
+    );
+    expect(continueButton.onPressed, isNotNull);
+    await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('capsule-task-field')), findsOneWidget);
+    expect(
+      harness.container.read(captureControllerProvider).capsuleTaskEnabled,
+      isTrue,
     );
   });
 

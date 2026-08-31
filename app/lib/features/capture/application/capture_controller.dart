@@ -122,6 +122,52 @@ final class CaptureController extends Notifier<CaptureDraft> {
     _emit(
       state.copyWith(
         privacy: value,
+        capsuleTaskEnabled: value == PrivacyTier.capsule
+            ? state.capsuleTaskEnabled
+            : false,
+        capsuleTask: value == PrivacyTier.capsule ? state.capsuleTask : '',
+        phase: state.phase == CapturePhase.failed
+            ? CapturePhase.editing
+            : state.phase,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
+    );
+  }
+
+  void setCapsuleTaskEnabled(bool value) {
+    if (_busy ||
+        _terminal ||
+        state.retryRequiresCleanup ||
+        state.privacy != PrivacyTier.capsule) {
+      return;
+    }
+    _generation++;
+    _emit(
+      state.copyWith(
+        capsuleTaskEnabled: value,
+        capsuleTask: value ? state.capsuleTask : '',
+        phase: state.phase == CapturePhase.failed
+            ? CapturePhase.editing
+            : state.phase,
+        clearErrorMessage: true,
+        clearRetryIntent: true,
+      ),
+    );
+  }
+
+  void updateCapsuleTask(String value) {
+    if (_busy ||
+        _terminal ||
+        state.retryRequiresCleanup ||
+        state.privacy != PrivacyTier.capsule ||
+        !state.capsuleTaskEnabled) {
+      return;
+    }
+    _generation++;
+    _emit(
+      state.copyWith(
+        capsuleTask: value,
         phase: state.phase == CapturePhase.failed
             ? CapturePhase.editing
             : state.phase,
@@ -151,6 +197,8 @@ final class CaptureController extends Notifier<CaptureDraft> {
           format: format,
           privacy: before.privacy,
           caption: before.caption,
+          capsuleTaskEnabled: before.capsuleTaskEnabled,
+          capsuleTask: before.capsuleTask,
         ),
       );
       return;
@@ -175,6 +223,8 @@ final class CaptureController extends Notifier<CaptureDraft> {
           format: format,
           privacy: before.privacy,
           caption: before.caption,
+          capsuleTaskEnabled: before.capsuleTaskEnabled,
+          capsuleTask: before.capsuleTask,
         ),
       );
     }
@@ -198,6 +248,8 @@ final class CaptureController extends Notifier<CaptureDraft> {
           privacy: before.privacy,
           caption: before.caption,
           photoPath: path,
+          capsuleTaskEnabled: before.capsuleTaskEnabled,
+          capsuleTask: before.capsuleTask,
         ),
       );
       return;
@@ -228,6 +280,8 @@ final class CaptureController extends Notifier<CaptureDraft> {
           privacy: before.privacy,
           caption: before.caption,
           photoPath: path,
+          capsuleTaskEnabled: before.capsuleTaskEnabled,
+          capsuleTask: before.capsuleTask,
         ),
       );
     }
@@ -539,6 +593,8 @@ final class CaptureController extends Notifier<CaptureDraft> {
           format: before.format,
           privacy: before.privacy,
           caption: before.caption,
+          capsuleTaskEnabled: before.capsuleTaskEnabled,
+          capsuleTask: before.capsuleTask,
         ),
       );
     }
@@ -650,6 +706,13 @@ final class CaptureController extends Notifier<CaptureDraft> {
         EntrySaveRequest(
           metadata: metadata,
           identity: identity,
+          capsuleOptions: frozen.privacy == PrivacyTier.capsule
+              ? CapsuleSaveOptions(
+                  unlockTask: frozen.capsuleTaskEnabled
+                      ? frozen.capsuleTask
+                      : null,
+                )
+              : null,
           payload: EntryPayload(
             format: frozen.format,
             primaryBytes: snapshot?.bytes,
