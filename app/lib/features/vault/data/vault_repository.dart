@@ -5,6 +5,31 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 final class VaultRepository {
   static const releaseRetention = Duration(days: 30);
 
+  Future<VaultEntryMetadata?> findByIdForFamily(
+    DatabaseExecutor db, {
+    required String entryId,
+    required String familyId,
+  }) async {
+    final rows = await db.query(
+      'entries',
+      columns: const [
+        'id',
+        'family_id',
+        'author_id',
+        'created_at',
+        'entry_type',
+        'privacy_tier',
+        'blob_ref',
+        'state',
+        'expires_at',
+      ],
+      where: 'id = ? AND family_id = ?',
+      whereArgs: [entryId, familyId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : VaultEntryMetadata.fromRow(rows.single);
+  }
+
   Future<List<VaultEntryMetadata>> listForFamily(
     DatabaseExecutor db,
     String familyId, {

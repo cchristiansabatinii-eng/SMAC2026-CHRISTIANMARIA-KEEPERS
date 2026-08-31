@@ -8,29 +8,18 @@ final class WeeklyPhotoProgress extends StatelessWidget {
   const WeeklyPhotoProgress({
     required this.weeklyPhotoCount,
     required this.requiredWeeklyPhotos,
-    required this.presentMemberCount,
-    required this.requiredPresentMembers,
     super.key,
   });
 
   final int weeklyPhotoCount;
   final int requiredWeeklyPhotos;
-  final int presentMemberCount;
-  final int requiredPresentMembers;
 
   @override
   Widget build(BuildContext context) {
     final photoGoal = math.max(1, requiredWeeklyPhotos);
     final displayedPhotoCount = weeklyPhotoCount.clamp(0, photoGoal);
     final missingPhotos = math.max(0, photoGoal - weeklyPhotoCount);
-    final missingMembers = math.max(
-      0,
-      requiredPresentMembers - presentMemberCount,
-    );
-    final status = _statusCopy(
-      missingPhotos: missingPhotos,
-      missingMembers: missingMembers,
-    );
+    final status = _statusCopy(missingPhotos: missingPhotos);
 
     return Semantics(
       key: const ValueKey('weekly-photo-progress'),
@@ -58,6 +47,11 @@ final class WeeklyPhotoProgress extends StatelessWidget {
                           : KeepersColors.homeLine,
                     ),
                     borderRadius: BorderRadius.circular(999),
+                    boxShadow: index < displayedPhotoCount
+                        ? KeepersEffects.progressGlow(
+                            _progressColors[index % _progressColors.length],
+                          )
+                        : null,
                   ),
                 ),
               ),
@@ -72,37 +66,29 @@ final class WeeklyPhotoProgress extends StatelessWidget {
 
 final class WeeklyExperienceCard extends StatelessWidget {
   const WeeklyExperienceCard({
-    required this.presentMemberCount,
-    required this.requiredPresentMembers,
     required this.weeklyPhotoCount,
     required this.requiredWeeklyPhotos,
-    required this.onOpen,
-    this.onPreview,
+    required this.onEnterWaitingRoom,
     super.key,
   });
 
-  final int presentMemberCount;
-  final int requiredPresentMembers;
   final int weeklyPhotoCount;
   final int requiredWeeklyPhotos;
-  final VoidCallback? onOpen;
-  final VoidCallback? onPreview;
+  final VoidCallback? onEnterWaitingRoom;
 
-  bool get _ready =>
-      weeklyPhotoCount >= requiredWeeklyPhotos &&
-      presentMemberCount >= requiredPresentMembers;
+  bool get _ready => weeklyPhotoCount >= requiredWeeklyPhotos;
 
   @override
   Widget build(BuildContext context) {
     final ready = _ready;
-    final canOpen = ready && onOpen != null;
-    final panelLabel = canOpen
-        ? 'Open weekly experience'
+    final canEnter = ready && onEnterWaitingRoom != null;
+    final panelLabel = canEnter
+        ? 'Enter weekly waiting room'
         : ready
-        ? 'Weekly experience unavailable'
+        ? 'Weekly waiting room unavailable'
         : 'Weekly experience locked';
-    final borderColor = canOpen
-        ? KeepersColors.homeGold.withValues(alpha: .82)
+    final borderColor = canEnter
+        ? KeepersColors.homeGold
         : KeepersColors.homeActionLine;
 
     return Column(
@@ -111,65 +97,73 @@ final class WeeklyExperienceCard extends StatelessWidget {
       children: [
         Semantics(
           label: panelLabel,
-          child: SizedBox(
-            height: 104,
-            child: OutlinedButton(
-              key: const ValueKey('weekly-recap-open'),
-              onPressed: canOpen ? onOpen : null,
-              style: ButtonStyle(
-                padding: const WidgetStatePropertyAll(EdgeInsets.all(4)),
-                backgroundColor: const WidgetStatePropertyAll(
-                  KeepersColors.auraIvory,
-                ),
-                foregroundColor: WidgetStatePropertyAll(borderColor),
-                overlayColor: WidgetStatePropertyAll(
-                  KeepersColors.homeGold.withValues(alpha: .08),
-                ),
-                side: WidgetStateProperty.resolveWith(
-                  (states) => BorderSide(
-                    color: states.contains(WidgetState.focused)
-                        ? KeepersColors.homeInk
-                        : borderColor,
-                    width: states.contains(WidgetState.focused) ? 1.75 : 1.25,
+          child: AnimatedContainer(
+            key: const ValueKey('weekly-recap-glow'),
+            duration: keepersReduceMotion(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 280),
+            curve: Curves.easeInOut,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(30),
+              boxShadow: canEnter
+                  ? [
+                      BoxShadow(
+                        color: KeepersColors.homeGold.withValues(alpha: .22),
+                        blurRadius: 26,
+                        spreadRadius: 3,
+                      ),
+                    ]
+                  : const [],
+            ),
+            child: SizedBox(
+              height: 104,
+              child: OutlinedButton(
+                key: const ValueKey('weekly-recap-open'),
+                onPressed: canEnter ? onEnterWaitingRoom : null,
+                style: ButtonStyle(
+                  padding: const WidgetStatePropertyAll(EdgeInsets.all(4)),
+                  backgroundColor: const WidgetStatePropertyAll(
+                    KeepersColors.auraIvory,
                   ),
-                ),
-                shape: const WidgetStatePropertyAll(
-                  RoundedRectangleBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(30)),
+                  foregroundColor: WidgetStatePropertyAll(borderColor),
+                  overlayColor: WidgetStatePropertyAll(
+                    KeepersColors.homeGold.withValues(alpha: .08),
                   ),
-                ),
-              ),
-              child: ExcludeSemantics(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: canOpen
-                          ? KeepersColors.homeGold.withValues(alpha: .34)
-                          : KeepersColors.homeActionLine.withValues(alpha: .82),
+                  side: WidgetStateProperty.resolveWith(
+                    (states) => BorderSide(
+                      color: states.contains(WidgetState.focused)
+                          ? KeepersColors.homeInk
+                          : borderColor,
+                      width: states.contains(WidgetState.focused) ? 1.75 : 1.25,
                     ),
-                    borderRadius: BorderRadius.circular(25),
                   ),
-                  child: SizedBox.expand(
-                    child: Center(child: _KeyMedallion(ready: canOpen)),
+                  shape: const WidgetStatePropertyAll(
+                    RoundedRectangleBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(30)),
+                    ),
+                  ),
+                ),
+                child: ExcludeSemantics(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: canEnter
+                            ? KeepersColors.homeGold.withValues(alpha: .72)
+                            : KeepersColors.homeActionLine.withValues(
+                                alpha: .82,
+                              ),
+                      ),
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                    child: SizedBox.expand(
+                      child: Center(child: WeeklyKeyMedallion(ready: canEnter)),
+                    ),
                   ),
                 ),
               ),
             ),
           ),
         ),
-        if (onPreview case final preview?) ...[
-          const SizedBox(height: 2),
-          TextButton.icon(
-            key: const ValueKey('weekly-recap-preview'),
-            onPressed: preview,
-            icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
-            label: const KeepersText('Preview weekly experience'),
-            style: TextButton.styleFrom(
-              minimumSize: const Size.fromHeight(44),
-              foregroundColor: KeepersColors.homeInk,
-            ),
-          ),
-        ],
       ],
     );
   }
@@ -188,45 +182,35 @@ int requiredWeeklyFamilyPresence(int familySize) {
   return (normalizedFamilySize * 3 + 3) ~/ 4;
 }
 
-String _statusCopy({required int missingPhotos, required int missingMembers}) {
-  final photoCopy = switch (missingPhotos) {
-    0 => null,
-    1 => '1 photo',
-    _ => '$missingPhotos photos',
-  };
-  final presenceCopy = switch (missingMembers) {
-    0 => null,
-    1 => '1 more family member needs to be present',
-    _ => '$missingMembers more family members need to be present',
-  };
-  return switch ((photoCopy, presenceCopy)) {
-    (null, null) => 'Ready to open together',
-    (final photos?, null) => '$photos needed',
-    (null, final presence?) => presence,
-    (final photos?, final presence?) => '$photos needed. $presence',
-  };
-}
+String _statusCopy({required int missingPhotos}) => switch (missingPhotos) {
+  0 => 'Ready to gather',
+  1 => '1 photo needed',
+  _ => '$missingPhotos photos needed',
+};
 
-final class _KeyMedallion extends StatelessWidget {
-  const _KeyMedallion({required this.ready});
+final class WeeklyKeyMedallion extends StatelessWidget {
+  const WeeklyKeyMedallion({required this.ready, this.size = 64, super.key});
 
   final bool ready;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     final frameColor = ready
         ? KeepersColors.homeGold
         : KeepersColors.homeActionLine;
-    final iconColor = ready ? KeepersColors.homeGold : KeepersColors.homeTaupe;
+    final iconColor = ready
+        ? KeepersColors.homeGoldText
+        : KeepersColors.homeTaupe;
     final reduceMotion = keepersReduceMotion(context);
     return AnimatedContainer(
-      width: 64,
-      height: 64,
+      width: size,
+      height: size,
       duration: reduceMotion
           ? Duration.zero
           : const Duration(milliseconds: 280),
       curve: Curves.easeInOut,
-      padding: const EdgeInsets.all(6),
+      padding: EdgeInsets.all(size * 6 / 64),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(color: frameColor, width: 1.75),
@@ -251,7 +235,7 @@ final class _KeyMedallion extends StatelessWidget {
           child: Icon(
             ready ? Icons.key_rounded : Icons.lock_outline_rounded,
             color: iconColor,
-            size: 25,
+            size: size * 25 / 64,
           ),
         ),
       ),

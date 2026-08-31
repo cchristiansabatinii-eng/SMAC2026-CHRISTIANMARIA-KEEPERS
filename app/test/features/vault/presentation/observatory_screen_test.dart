@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +9,7 @@ import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/archive/presentation/archive_screen.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/ceremony/presentation/ceremony_screen.dart';
+import 'package:keepers/features/ceremony/presentation/weekly_waiting_room_screen.dart';
 import 'package:keepers/features/family/application/family_code_controller.dart';
 import 'package:keepers/features/family/application/family_join_controller.dart';
 import 'package:keepers/features/family/application/family_join_requests_controller.dart';
@@ -1180,37 +1180,50 @@ void main() {
           index + 1,
         ).copyWith(createdAt: now.subtract(Duration(hours: index + 1)).toUtc()),
       );
+      var loadCalls = 0;
 
-      await tester.pumpWidget(_observatory(entries: entries, now: now));
+      await tester.pumpWidget(
+        _observatory(
+          entries: entries,
+          now: now,
+          weeklyMemoryLoader: (requested) async {
+            loadCalls += 1;
+            return requested
+                .map(
+                  (entry) => _openedPhoto(
+                    entry,
+                    Uint8List.fromList([entry.id.length]),
+                  ),
+                )
+                .toList(growable: false);
+          },
+        ),
+      );
       await tester.pump();
 
-      final wheel = tester.widget<FamilyWheelScreen>(
-        find.byType(FamilyWheelScreen),
-      );
-      expect(
-        wheel.weeklyPresencePolicy,
-        WeeklyPresencePolicy.temporaryAllowUntilProximityProxy,
-      );
-
-      final open = find.byKey(const ValueKey('weekly-recap-open'));
-      await tester.ensureVisible(open);
+      tester
+          .widget<FamilyWheelScreen>(find.byType(FamilyWheelScreen))
+          .onEnterWeeklyWaitingRoom!
+          .call();
       await tester.pump();
+
+      expect(find.byKey(const ValueKey('weekly-waiting-room')), findsOneWidget);
+      expect(find.byType(WeeklyWaitingRoomScreen), findsOneWidget);
+      expect(find.text('1 of 5 family members are here'), findsOneWidget);
       expect(
-        tester
-            .getSemantics(open)
-            .getSemanticsData()
-            .hasAction(SemanticsAction.tap),
-        isTrue,
+        find.byKey(const ValueKey('weekly-waiting-room-start')),
+        findsNothing,
       );
-      expect(
-        find.text('Ask Noura, Mariam, Youssef & Layla to come'),
-        findsOneWidget,
-      );
+      expect(loadCalls, 0);
+
+      await tester.tap(find.byTooltip('Close waiting room'));
+      await tester.pump();
+      expect(find.byType(FamilyWheelScreen), findsOneWidget);
+      expect(loadCalls, 0);
     },
-    semanticsEnabled: true,
   );
 
-  testWidgets('real Weekly callback never opens the rehearsal fixture', (
+  testWidgets('quorum start loads the real Weekly payload exactly once', (
     tester,
   ) async {
     final now = DateTime(2026, 9, 9, 12);
@@ -1221,25 +1234,56 @@ void main() {
         index + 1,
       ).copyWith(createdAt: now.subtract(Duration(hours: index + 1)).toUtc()),
     );
-    await tester.pumpWidget(_observatory(entries: entries, now: now));
+    var loadCalls = 0;
+
+    await tester.pumpWidget(
+      _observatory(
+        entries: entries,
+        now: now,
+        rosterState: FamilyRosterState(
+          members: [_currentMember],
+          hasLoadedLocal: true,
+        ),
+        weeklyMemoryLoader: (requested) async {
+          loadCalls += 1;
+          return requested
+              .map(
+                (entry) =>
+                    _openedPhoto(entry, Uint8List.fromList([entry.id.length])),
+              )
+              .toList(growable: false);
+        },
+      ),
+    );
     await tester.pump();
 
     tester
         .widget<FamilyWheelScreen>(find.byType(FamilyWheelScreen))
-        .onOpenWeeklyExperience!
+        .onEnterWeeklyWaitingRoom!
         .call();
     await tester.pump();
 
+    expect(find.byType(WeeklyWaitingRoomScreen), findsOneWidget);
+    expect(loadCalls, 0);
+    final start = find.byKey(const ValueKey('weekly-waiting-room-start'));
+    expect(start, findsOneWidget);
+    expect(find.text('Start weekly experience'), findsOneWidget);
+
+    await tester.ensureVisible(start);
+    await tester.pump();
+    final room = tester.widget<WeeklyWaitingRoomScreen>(
+      find.byType(WeeklyWaitingRoomScreen),
+    );
+    await tester.tap(start);
+    room.onStart();
+    await tester.pump();
+
+    expect(loadCalls, 1);
     final ceremony = tester.widget<CeremonyScreen>(find.byType(CeremonyScreen));
     expect(ceremony.weeklyPreview, isFalse);
     expect(ceremony.weeklyMemories, isNotNull);
     expect(ceremony.onWeeklyDecision, isNotNull);
-    expect(
-      find.byKey(const ValueKey('weekly-experience-loading')),
-      findsOneWidget,
-    );
     expect(find.text('REHEARSAL MODE'), findsNothing);
-    expect(find.text('A small moment'), findsNothing);
   });
 
   testWidgets('destination shell stays stable at phone width and 1.4x text', (
@@ -1281,6 +1325,8 @@ Widget _observatory({
   _ObservatoryFamilyCodeController? codeController,
   _ObservatoryJoinRequestsController? requestsController,
   FamilyJoinCompletionRecovery? recoverJoin,
+  Future<List<OpenedMemory>> Function(List<VaultEntryMetadata>)?
+  weeklyMemoryLoader,
   DateTime? now,
 }) => _observatoryWithOverride(
   vaultEntriesProvider.overrideWithValue(AsyncValue.data(entries)),
@@ -1291,6 +1337,7 @@ Widget _observatory({
   codeController: codeController,
   requestsController: requestsController,
   recoverJoin: recoverJoin,
+  weeklyMemoryLoader: weeklyMemoryLoader,
   now: now,
 );
 
@@ -1305,6 +1352,8 @@ Widget _observatoryWithOverride(
   _ObservatoryFamilyCodeController? codeController,
   _ObservatoryJoinRequestsController? requestsController,
   FamilyJoinCompletionRecovery? recoverJoin,
+  Future<List<OpenedMemory>> Function(List<VaultEntryMetadata>)?
+  weeklyMemoryLoader,
   DateTime? now,
 }) {
   final effectiveRoster =
@@ -1345,6 +1394,7 @@ Widget _observatoryWithOverride(
           identity: _identity,
           onUseAnotherAccount: () async {},
           showCapture: showCapture,
+          weeklyMemoryLoader: weeklyMemoryLoader,
         ),
       ),
     ),

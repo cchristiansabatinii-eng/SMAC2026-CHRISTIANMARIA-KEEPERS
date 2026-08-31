@@ -879,11 +879,11 @@ void main() {
     expect(chevron.color, const Color(0xFFD4BBAC));
   });
 
-  testWidgets('weekly reveal blocks underlying actions until it completes', (
+  testWidgets('completed weekly key enters the waiting room without a flood', (
     tester,
   ) async {
     var captures = 0;
-    var weeklyOpens = 0;
+    var waitingRoomEntries = 0;
     await tester.pumpWidget(
       _testWheel(
         disableAnimations: false,
@@ -899,7 +899,7 @@ void main() {
           ),
         ],
         onCapture: () => captures += 1,
-        onOpenWeeklyExperience: () => weeklyOpens += 1,
+        onEnterWeeklyWaitingRoom: () => waitingRoomEntries += 1,
       ),
     );
 
@@ -909,23 +909,17 @@ void main() {
     await tester.tap(open);
     await tester.pump();
 
-    expect(find.byKey(const ValueKey('weekly-pastel-flood')), findsOneWidget);
-    expect(find.semantics.byLabel('Keep a memory'), findsNothing);
-    await tester.tap(
-      find.byKey(const ValueKey('keepers-nav-capture')),
-      warnIfMissed: false,
-    );
-    expect(captures, 0);
+    expect(find.byKey(const ValueKey('weekly-pastel-flood')), findsNothing);
+    expect(waitingRoomEntries, 1);
 
-    await tester.pump(const Duration(milliseconds: 600));
-    await tester.pump();
-    expect(weeklyOpens, 1);
+    await tester.tap(find.byKey(const ValueKey('keepers-nav-capture')));
+    expect(captures, 1);
   });
 
-  testWidgets('weekly reveal requires three quarters of the family present', (
+  testWidgets('completed weekly key does not require family presence', (
     tester,
   ) async {
-    var opens = 0;
+    var waitingRoomEntries = 0;
     final twoOfFourPresent = [
       FamilyWheelMember(
         id: 'near',
@@ -957,7 +951,7 @@ void main() {
       _testWheel(
         members: twoOfFourPresent,
         weeklyPhotoCount: 5,
-        onOpenWeeklyExperience: () => opens += 1,
+        onEnterWeeklyWaitingRoom: () => waitingRoomEntries += 1,
       ),
     );
 
@@ -969,30 +963,34 @@ void main() {
           .getSemantics(panel)
           .getSemanticsData()
           .hasAction(SemanticsAction.tap),
-      isFalse,
+      isTrue,
     );
+    await tester.tap(panel);
+    expect(waitingRoomEntries, 1);
+  }, semanticsEnabled: true);
 
-    final threeOfFourPresent = [
-      twoOfFourPresent.first,
-      FamilyWheelMember(
-        id: 'near-two',
-        name: 'Near two',
-        color: KeepersColors.homeBlue,
-        avatar: AvatarConfig.defaults(seed: 'near-two'),
-        contribution: .2,
-        presence: FamilyPresence.near,
-      ),
-      twoOfFourPresent.last,
-    ];
+  testWidgets('family presence cannot unlock incomplete weekly progress', (
+    tester,
+  ) async {
+    var waitingRoomEntries = 0;
     await tester.pumpWidget(
       _testWheel(
-        members: threeOfFourPresent,
-        weeklyPhotoCount: 5,
-        onOpenWeeklyExperience: () => opens += 1,
+        members: [
+          FamilyWheelMember(
+            id: 'near',
+            name: 'Near',
+            color: KeepersColors.homeGreen,
+            avatar: AvatarConfig.defaults(seed: 'near'),
+            contribution: .4,
+            presence: FamilyPresence.near,
+          ),
+        ],
+        weeklyPhotoCount: 4,
+        onEnterWeeklyWaitingRoom: () => waitingRoomEntries += 1,
       ),
     );
 
-    panel = find.byKey(const ValueKey('weekly-recap-open'));
+    final panel = find.byKey(const ValueKey('weekly-recap-open'));
     await tester.ensureVisible(panel);
     await tester.pump();
     expect(
@@ -1000,63 +998,10 @@ void main() {
           .getSemantics(panel)
           .getSemanticsData()
           .hasAction(SemanticsAction.tap),
-      isTrue,
+      isFalse,
     );
+    expect(waitingRoomEntries, 0);
   }, semanticsEnabled: true);
-
-  testWidgets(
-    'temporary proximity policy unlocks at the same three-quarter threshold',
-    (tester) async {
-      var opens = 0;
-      final awayMembers = [
-        for (final (id, name) in const [
-          ('noura', 'Noura'),
-          ('mariam', 'Mariam'),
-          ('layla', 'Layla'),
-        ])
-          FamilyWheelMember(
-            id: id,
-            name: name,
-            color: KeepersColors.homeBlue,
-            avatar: AvatarConfig.defaults(seed: id),
-            contribution: null,
-            presence: FamilyPresence.away,
-          ),
-      ];
-
-      await tester.pumpWidget(
-        _testWheel(
-          members: awayMembers,
-          weeklyPhotoCount: 5,
-          weeklyPresencePolicy:
-              WeeklyPresencePolicy.temporaryAllowUntilProximityProxy,
-          onOpenWeeklyExperience: () => opens += 1,
-        ),
-      );
-
-      final panel = find.byKey(const ValueKey('weekly-recap-open'));
-      await tester.ensureVisible(panel);
-      await tester.pump();
-
-      expect(
-        tester
-            .getSemantics(panel)
-            .getSemanticsData()
-            .hasAction(SemanticsAction.tap),
-        isTrue,
-      );
-      expect(
-        find.text('Ask Noura, Mariam & Layla to come'),
-        findsOneWidget,
-        reason: 'The temporary gate must not pretend away members are nearby.',
-      );
-
-      await tester.tap(panel);
-      await tester.pump();
-      expect(opens, 1);
-    },
-    semanticsEnabled: true,
-  );
 
   test('member centers form a deterministic sparse constellation', () {
     final size = FamilyWheelGeometry.fieldSizeFor(3);
@@ -1340,154 +1285,66 @@ void main() {
     expect(background, findsOneWidget);
   });
 
-  testWidgets('family field has bounded pan and zoom', (tester) async {
+  testWidgets('family field does not accept pan or zoom gestures', (
+    tester,
+  ) async {
     await tester.pumpWidget(_testWheel());
 
-    final viewerFinder = find.byKey(
-      const ValueKey('family-field-interactive-viewer'),
+    expect(find.byType(InteractiveViewer), findsNothing);
+    expect(
+      find.byKey(const ValueKey('family-field-static-viewport')),
+      findsOneWidget,
     );
-    expect(viewerFinder, findsOneWidget);
-    final viewer = tester.widget<InteractiveViewer>(viewerFinder);
-    expect(viewer.minScale, .85);
-    expect(viewer.maxScale, 1.45);
-    expect(viewer.boundaryMargin, const EdgeInsets.all(72));
     expect(find.bySemanticsLabel('Reset family view'), findsNothing);
   });
 
-  testWidgets('every home exit recenters the family field for return', (
-    tester,
-  ) async {
-    var openedCurrentMember = false;
-    var openedCapture = false;
-    FamilyWheelMember? openedMember;
-    await tester.pumpWidget(
-      _testWheel(
-        members: _members,
-        onCapture: () => openedCapture = true,
-        onCurrentMemberSelected: () => openedCurrentMember = true,
-        onMemberSelected: (member) => openedMember = member,
-      ),
-    );
-    await tester.pump();
-
-    final viewer = tester.widget<InteractiveViewer>(
-      find.byKey(const ValueKey('family-field-interactive-viewer')),
-    );
-    var controller = viewer.transformationController!;
-    final identity = Matrix4.identity().storage;
-
-    void moveFamilyField() {
-      controller.value = Matrix4.translationValues(28, -16, 0);
-    }
-
-    void expectCenteredFamilyField() {
-      controller = tester
-          .widget<InteractiveViewer>(
-            find.byKey(const ValueKey('family-field-interactive-viewer')),
-          )
-          .transformationController!;
-      expect(controller.value.storage, orderedEquals(identity));
-    }
-
-    moveFamilyField();
-    await tester.tap(find.bySemanticsLabel('You, Chris, 60% sealed'));
-    await tester.pump();
-    expect(openedCurrentMember, isTrue);
-    expectCenteredFamilyField();
-
-    moveFamilyField();
-    await tester.tap(find.bySemanticsLabel('Noura, near, 80% sealed'));
-    await tester.pump();
-    expect(openedMember?.id, 'noura');
-    expectCenteredFamilyField();
-
-    moveFamilyField();
-    await tester.tap(find.bySemanticsLabel('Keep a memory'));
-    await tester.pump();
-    expect(openedCapture, isTrue);
-    expectCenteredFamilyField();
-  });
-
   testWidgets(
-    'home exit replaces the transformed view to cancel stale motion',
+    'family wheel keeps incomplete weekly recap locked without preview',
     (tester) async {
-      await tester.pumpWidget(_testWheel(onCapture: () {}));
-      await tester.pump();
-
-      final viewerFinder = find.byKey(
-        const ValueKey('family-field-interactive-viewer'),
-      );
-      final viewer = tester.widget<InteractiveViewer>(viewerFinder);
-      final originalController = viewer.transformationController!;
-      final identity = Matrix4.identity().storage;
-
-      originalController.value = Matrix4.translationValues(28, -16, 0);
-      tester
-          .widget<KeepersBottomNav>(find.byType(KeepersBottomNav))
-          .onCapture!
-          .call();
-      await tester.pump();
-
-      final returnedViewer = tester.widget<InteractiveViewer>(viewerFinder);
-      expect(
-        returnedViewer.transformationController,
-        isNot(same(originalController)),
-      );
-      expect(
-        returnedViewer.transformationController!.value.storage,
-        orderedEquals(identity),
-      );
-    },
-  );
-
-  testWidgets('family wheel owns weekly recap instead of legacy or capsule', (
-    tester,
-  ) async {
-    var openedWeekly = false;
-    var openedPreview = false;
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: KeepersTheme.dark(),
-        home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: FamilyWheelScreen(
-            familyName: 'Sabati',
-            currentMemberName: 'Chris',
-            yourContribution: .6,
-            members: _members,
-            onCapture: () {},
-            onMemberSelected: (_) {},
-            weeklyPhotoCount: 4,
-            weeklyPreviewEnabled: true,
-            onOpenWeeklyExperience: () => openedWeekly = true,
-            onPreviewWeeklyExperience: () => openedPreview = true,
-            enabledDestinations: KeepersNavDestination.values.toSet(),
-            onDestinationSelected: (_) {},
+      var openedWeekly = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: KeepersTheme.dark(),
+          home: MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: FamilyWheelScreen(
+              familyName: 'Sabati',
+              currentMemberName: 'Chris',
+              yourContribution: .6,
+              members: _members,
+              onCapture: () {},
+              onMemberSelected: (_) {},
+              weeklyPhotoCount: 4,
+              onEnterWeeklyWaitingRoom: () => openedWeekly = true,
+              enabledDestinations: KeepersNavDestination.values.toSet(),
+              onDestinationSelected: (_) {},
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    final weekly = find.byKey(const ValueKey('weekly-recap-mode'));
-    expect(weekly, findsOneWidget);
-    final progress = find.bySemanticsLabel('Weekly photo progress');
-    expect(
-      tester.getSemantics(progress).getSemanticsData().value,
-      '4 of 5 photos. 1 photo needed. 1 more family member needs to be present',
-    );
-    expect(find.text('4 of 5 photos'), findsNothing);
-    expect(find.text('LEGACY LOCK'), findsNothing);
-    expect(find.text('CAPSULE'), findsNothing);
+      final weekly = find.byKey(const ValueKey('weekly-recap-mode'));
+      expect(weekly, findsOneWidget);
+      final progress = find.bySemanticsLabel('Weekly photo progress');
+      expect(
+        tester.getSemantics(progress).getSemanticsData().value,
+        '4 of 5 photos. 1 photo needed',
+      );
+      expect(find.text('4 of 5 photos'), findsNothing);
+      expect(find.text('LEGACY LOCK'), findsNothing);
+      expect(find.text('CAPSULE'), findsNothing);
+      expect(find.byKey(const ValueKey('weekly-recap-preview')), findsNothing);
+      expect(find.text('Preview weekly experience'), findsNothing);
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('weekly-recap-preview')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('weekly-recap-preview')));
-    expect(openedPreview, isTrue);
-    expect(openedWeekly, isFalse);
-  });
+      final panel = find.byKey(const ValueKey('weekly-recap-open'));
+      await tester.ensureVisible(panel);
+      await tester.pump();
+      await tester.tap(panel, warnIfMissed: false);
+      await tester.pump();
+      expect(openedWeekly, isFalse);
+    },
+  );
 
   testWidgets('family field paints no orbit or connector geometry', (
     tester,
@@ -1839,11 +1696,7 @@ Widget _testWheel({
   String? pendingJoinRequestName,
   VoidCallback? onPendingJoinRequestTap,
   int weeklyPhotoCount = 0,
-  WeeklyPresencePolicy weeklyPresencePolicy =
-      WeeklyPresencePolicy.enforceNearby,
-  bool weeklyPreviewEnabled = false,
-  VoidCallback? onOpenWeeklyExperience,
-  VoidCallback? onPreviewWeeklyExperience,
+  VoidCallback? onEnterWeeklyWaitingRoom,
 }) => MaterialApp(
   theme: KeepersTheme.dark(),
   home: MediaQuery(
@@ -1865,10 +1718,7 @@ Widget _testWheel({
       pendingJoinRequestName: pendingJoinRequestName,
       onPendingJoinRequestTap: onPendingJoinRequestTap,
       weeklyPhotoCount: weeklyPhotoCount,
-      weeklyPresencePolicy: weeklyPresencePolicy,
-      weeklyPreviewEnabled: weeklyPreviewEnabled,
-      onOpenWeeklyExperience: onOpenWeeklyExperience,
-      onPreviewWeeklyExperience: onPreviewWeeklyExperience,
+      onEnterWeeklyWaitingRoom: onEnterWeeklyWaitingRoom,
     ),
   ),
 );

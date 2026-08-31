@@ -26,6 +26,24 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Bluetooth Low Energy packages
+
+Keepers uses [`flutter_ble_peripheral` 3.1.0](https://pub.dev/packages/flutter_ble_peripheral)
+under the BSD 3-Clause License to advertise an ephemeral waiting-room service
+UUID. The upstream 3.1.0 runtime is vendored in
+`packages/flutter_ble_peripheral` with local Android and Darwin lifecycle,
+failure-handling, and privacy hardening. Its original `LICENSE` is retained in
+that directory, and upstream source is available from the
+[`flutter_ble_peripheral` repository](https://github.com/juliansteenbakker/flutter_ble_peripheral).
+
+Keepers uses [`flutter_blue_plus` 2.3.12](https://pub.dev/packages/flutter_blue_plus)
+to scan for those UUIDs. Version 2.x is distributed under the
+[FlutterBluePlus License 1.5](https://pub.dev/packages/flutter_blue_plus/license),
+which requires a paid commercial license for development or use by or for a
+for-profit organization. Commercial builds must not be distributed until the
+appropriate license has been purchased and recorded. Its source is available
+from the [`flutter_blue_plus` repository](https://github.com/chipweinberger/flutter_blue_plus).
+
 ## humation_flutter community Flutter port
 
 Keepers uses `humation_flutter` 0.1.0, the community Flutter port by Hark

@@ -24,13 +24,6 @@ enum FamilyPresence {
   };
 }
 
-/// Controls how Weekly applies the nearby-family requirement.
-///
-/// [temporaryAllowUntilProximityProxy] still computes the normal three-quarter
-/// threshold, but treats that threshold as met until a real proximity signal
-/// is available. Other presence UI continues to show only observed presence.
-enum WeeklyPresencePolicy { enforceNearby, temporaryAllowUntilProximityProxy }
-
 const _presenceToFamilyFieldGap = 16.0;
 
 @immutable
@@ -70,10 +63,7 @@ final class FamilyWheelScreen extends StatefulWidget {
     this.onPendingJoinRequestTap,
     this.weeklyPhotoCount = 0,
     this.requiredWeeklyPhotos = 5,
-    this.weeklyPresencePolicy = WeeklyPresencePolicy.enforceNearby,
-    this.weeklyPreviewEnabled = false,
-    this.onOpenWeeklyExperience,
-    this.onPreviewWeeklyExperience,
+    this.onEnterWeeklyWaitingRoom,
     this.selectedDestination = KeepersNavDestination.wheel,
     this.enabledDestinations = const {KeepersNavDestination.wheel},
     this.onDestinationSelected,
@@ -95,10 +85,7 @@ final class FamilyWheelScreen extends StatefulWidget {
   final VoidCallback? onPendingJoinRequestTap;
   final int weeklyPhotoCount;
   final int requiredWeeklyPhotos;
-  final WeeklyPresencePolicy weeklyPresencePolicy;
-  final bool weeklyPreviewEnabled;
-  final VoidCallback? onOpenWeeklyExperience;
-  final VoidCallback? onPreviewWeeklyExperience;
+  final VoidCallback? onEnterWeeklyWaitingRoom;
   final ValueChanged<FamilyWheelMember> onMemberSelected;
   final KeepersNavDestination selectedDestination;
   final Set<KeepersNavDestination> enabledDestinations;
@@ -249,17 +236,6 @@ final class _FamilyWheelScreenState extends State<FamilyWheelScreen>
         .toList(growable: false);
     final totalMembers = widget.members.length + 1;
     final nearbyCount = nearMembers.length + 1;
-    final requiredPresentMembers = requiredWeeklyFamilyPresence(totalMembers);
-    final weeklyPresentMemberCount = switch (widget.weeklyPresencePolicy) {
-      WeeklyPresencePolicy.enforceNearby => nearbyCount,
-      WeeklyPresencePolicy.temporaryAllowUntilProximityProxy => math.max(
-        nearbyCount,
-        requiredPresentMembers,
-      ),
-    };
-    final weeklyReady =
-        widget.weeklyPhotoCount >= widget.requiredWeeklyPhotos &&
-        weeklyPresentMemberCount >= requiredPresentMembers;
     final needsAnotherMember = widget.members.isEmpty;
     final gatheringLabel = waitingMembers.isNotEmpty
         ? 'Ask ${_formatNames(waitingMembers.map((member) => member.name))} to come'
@@ -411,10 +387,6 @@ final class _FamilyWheelScreenState extends State<FamilyWheelScreen>
                                             widget.weeklyPhotoCount,
                                         requiredWeeklyPhotos:
                                             widget.requiredWeeklyPhotos,
-                                        presentMemberCount:
-                                            weeklyPresentMemberCount,
-                                        requiredPresentMembers:
-                                            requiredPresentMembers,
                                       ),
                                     ),
                                     const SizedBox(height: 12),
@@ -430,35 +402,20 @@ final class _FamilyWheelScreenState extends State<FamilyWheelScreen>
                                         horizontal: 16,
                                       ),
                                       child: WeeklyExperienceCard(
-                                        presentMemberCount:
-                                            weeklyPresentMemberCount,
-                                        requiredPresentMembers:
-                                            requiredPresentMembers,
                                         weeklyPhotoCount:
                                             widget.weeklyPhotoCount,
                                         requiredWeeklyPhotos:
                                             widget.requiredWeeklyPhotos,
-                                        onOpen:
-                                            widget.onOpenWeeklyExperience ==
+                                        onEnterWaitingRoom:
+                                            widget.onEnterWeeklyWaitingRoom ==
                                                 null
                                             ? null
                                             : () => unawaited(
                                                 _openWeeklyExperience(
-                                                  widget.onOpenWeeklyExperience,
+                                                  widget
+                                                      .onEnterWeeklyWaitingRoom,
                                                 ),
                                               ),
-                                        onPreview:
-                                            widget.weeklyPreviewEnabled &&
-                                                !weeklyReady &&
-                                                widget.onPreviewWeeklyExperience !=
-                                                    null
-                                            ? () => unawaited(
-                                                _openWeeklyExperience(
-                                                  widget
-                                                      .onPreviewWeeklyExperience,
-                                                ),
-                                              )
-                                            : null,
                                       ),
                                     ),
                                   ],

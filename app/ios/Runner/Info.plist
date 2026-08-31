@@ -41,6 +41,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Keepers uses the camera when you choose to capture a photo memory.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Keepers uses Bluetooth while the weekly waiting room is open to confirm which family members are nearby.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Keepers uses the microphone when you choose to record a voice memory.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

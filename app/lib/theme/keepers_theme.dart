@@ -40,6 +40,22 @@ class KeepersColors {
   ];
 }
 
+class KeepersEffects {
+  static const progressGlowOpacity = .26;
+  static const progressGlowBlurRadius = 8.0;
+  static const progressGlowSpreadRadius = .25;
+  static const progressRingGlowSigma = 3.5;
+  static const progressRingGlowStrokeExpansion = 1.2;
+
+  static List<BoxShadow> progressGlow(Color color) => [
+    BoxShadow(
+      color: color.withValues(alpha: progressGlowOpacity),
+      blurRadius: progressGlowBlurRadius,
+      spreadRadius: progressGlowSpreadRadius,
+    ),
+  ];
+}
+
 class KeepersType {
   // Modern Society is the sole application typeface. Role-specific scale,
   // weight, tracking, and casing provide hierarchy without introducing a

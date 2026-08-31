@@ -3,6 +3,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/features/ceremony/presentation/weekly_experience_card.dart';
+import 'package:keepers/theme/keepers_theme.dart';
 
 void main() {
   test('weekly presence threshold rounds three quarters up', () {
@@ -16,19 +17,17 @@ void main() {
   });
 
   testWidgets(
-    'weekly reveal opens only after five photos and enough family are present',
+    'five photos unlock the waiting room without a presence requirement',
     (tester) async {
       for (final scenario in const [
-        (photoCount: 4, presentMemberCount: 3, shouldOpen: false),
-        (photoCount: 5, presentMemberCount: 2, shouldOpen: false),
-        (photoCount: 5, presentMemberCount: 3, shouldOpen: true),
+        (photoCount: 4, shouldEnter: false),
+        (photoCount: 5, shouldEnter: true),
       ]) {
-        var openCount = 0;
+        var waitingRoomEntryCount = 0;
         await _pumpCard(
           tester,
           photoCount: scenario.photoCount,
-          presentMemberCount: scenario.presentMemberCount,
-          onOpen: () => openCount += 1,
+          onEnterWaitingRoom: () => waitingRoomEntryCount += 1,
         );
 
         final panel = find.byKey(const ValueKey('weekly-recap-open'));
@@ -38,29 +37,23 @@ void main() {
               .getSemantics(panel)
               .getSemanticsData()
               .hasAction(SemanticsAction.tap),
-          scenario.shouldOpen,
-          reason:
-              '${scenario.photoCount} photos, '
-              '${scenario.presentMemberCount} family members present',
+          scenario.shouldEnter,
+          reason: '${scenario.photoCount} photos',
         );
 
         await tester.tap(panel, warnIfMissed: false);
         await tester.pump();
-        expect(openCount, scenario.shouldOpen ? 1 : 0);
+        expect(waitingRoomEntryCount, scenario.shouldEnter ? 1 : 0);
       }
     },
     semanticsEnabled: true,
   );
 
   testWidgets('ready panel exposes one accessible tap action', (tester) async {
-    await _pumpCard(
-      tester,
-      photoCount: 5,
-      presentMemberCount: 3,
-      onOpen: () {},
-    );
+    await _pumpCard(tester, photoCount: 5, onEnterWaitingRoom: () {});
 
     expect(find.bySemanticsLabel('Weekly photo progress'), findsNothing);
+    expect(find.bySemanticsLabel('Enter weekly waiting room'), findsOneWidget);
     final tapActions = tester.semantics
         .simulatedAccessibilityTraversal()
         .where((node) => node.getSemanticsData().hasAction(SemanticsAction.tap))
@@ -69,21 +62,17 @@ void main() {
     expect(tapActions, hasLength(1));
   }, semanticsEnabled: true);
 
-  testWidgets('preview stays separately labeled without unlocking the panel', (
+  testWidgets('incomplete panel exposes no preview or entry action', (
     tester,
   ) async {
-    var openCount = 0;
-    var previewCount = 0;
+    var waitingRoomEntryCount = 0;
     await _pumpCard(
       tester,
       photoCount: 4,
-      presentMemberCount: 3,
-      onOpen: () => openCount += 1,
-      onPreview: () => previewCount += 1,
+      onEnterWaitingRoom: () => waitingRoomEntryCount += 1,
     );
 
     final panel = find.byKey(const ValueKey('weekly-recap-open'));
-    final preview = find.bySemanticsLabel('Preview weekly experience');
     expect(
       tester
           .getSemantics(panel)
@@ -91,34 +80,55 @@ void main() {
           .hasAction(SemanticsAction.tap),
       isFalse,
     );
-    expect(preview, findsOneWidget);
+    expect(find.byKey(const ValueKey('weekly-recap-preview')), findsNothing);
+    expect(find.bySemanticsLabel('Preview weekly experience'), findsNothing);
+    expect(find.text('Preview weekly experience'), findsNothing);
 
     await tester.tap(panel, warnIfMissed: false);
-    await tester.tap(preview);
     await tester.pump();
 
-    expect(openCount, 0);
-    expect(previewCount, 1);
+    expect(waitingRoomEntryCount, 0);
   }, semanticsEnabled: true);
 
   testWidgets(
-    'panel without an open callback does not announce an open action',
+    'panel without an entry callback does not announce an entry action',
     (tester) async {
-      await _pumpCard(tester, photoCount: 5, presentMemberCount: 3);
+      await _pumpCard(tester, photoCount: 5);
 
       final panel = find.byKey(const ValueKey('weekly-recap-open'));
       final semantics = tester.getSemantics(panel).getSemanticsData();
-      final openAnnouncements = tester.semantics
+      final entryAnnouncements = tester.semantics
           .simulatedAccessibilityTraversal()
           .where((node) {
             final data = node.getSemanticsData();
-            return data.label.toLowerCase().contains('open') ||
-                data.value.toLowerCase().contains('open');
+            return data.label.toLowerCase().contains('enter') ||
+                data.value.toLowerCase().contains('enter');
           })
           .toList(growable: false);
 
       expect(semantics.hasAction(SemanticsAction.tap), isFalse);
-      expect(openAnnouncements, isEmpty);
+      expect(entryAnnouncements, isEmpty);
+      expect(
+        find.descendant(
+          of: panel,
+          matching: find.byIcon(Icons.lock_outline_rounded),
+        ),
+        findsOneWidget,
+      );
+      final medallion = tester.widget<AnimatedContainer>(
+        find.descendant(
+          of: find.descendant(
+            of: panel,
+            matching: find.byType(WeeklyKeyMedallion),
+          ),
+          matching: find.byType(AnimatedContainer),
+        ),
+      );
+      expect((medallion.decoration! as BoxDecoration).boxShadow, isEmpty);
+      final panelGlow = tester.widget<AnimatedContainer>(
+        find.byKey(const ValueKey('weekly-recap-glow')),
+      );
+      expect((panelGlow.decoration! as BoxDecoration).boxShadow, isEmpty);
     },
     semanticsEnabled: true,
   );
@@ -126,12 +136,7 @@ void main() {
   testWidgets('locked panel uses warm neutral framing without a glow', (
     tester,
   ) async {
-    await _pumpCard(
-      tester,
-      photoCount: 4,
-      presentMemberCount: 3,
-      onOpen: () {},
-    );
+    await _pumpCard(tester, photoCount: 4, onEnterWaitingRoom: () {});
 
     final panel = find.byKey(const ValueKey('weekly-recap-open'));
     final button = tester.widget<OutlinedButton>(panel);
@@ -145,7 +150,13 @@ void main() {
           return decoration.borderRadius == BorderRadius.circular(25);
         });
     final medallion = tester.widget<AnimatedContainer>(
-      find.descendant(of: panel, matching: find.byType(AnimatedContainer)),
+      find.descendant(
+        of: find.descendant(
+          of: panel,
+          matching: find.byType(WeeklyKeyMedallion),
+        ),
+        matching: find.byType(AnimatedContainer),
+      ),
     );
     final innerDecoration = innerFrame.decoration as BoxDecoration;
     final medallionDecoration = medallion.decoration! as BoxDecoration;
@@ -164,18 +175,17 @@ void main() {
     );
     expect(medallionDecoration.border!.top.color, const Color(0xFFD4BBAC));
     expect(medallionDecoration.boxShadow, isEmpty);
+    final panelGlow = tester.widget<AnimatedContainer>(
+      find.byKey(const ValueKey('weekly-recap-glow')),
+    );
+    expect((panelGlow.decoration! as BoxDecoration).boxShadow, isEmpty);
     expect(lock.color, const Color(0xFF8B7E70));
   });
 
   testWidgets('locked panel shows a lock and ready panel shows a glowing key', (
     tester,
   ) async {
-    await _pumpCard(
-      tester,
-      photoCount: 4,
-      presentMemberCount: 3,
-      onOpen: () {},
-    );
+    await _pumpCard(tester, photoCount: 4, onEnterWaitingRoom: () {});
 
     final lockedPanel = find.byKey(const ValueKey('weekly-recap-open'));
     expect(
@@ -193,12 +203,7 @@ void main() {
       findsNothing,
     );
 
-    await _pumpCard(
-      tester,
-      photoCount: 5,
-      presentMemberCount: 3,
-      onOpen: () {},
-    );
+    await _pumpCard(tester, photoCount: 5, onEnterWaitingRoom: () {});
 
     final readyPanel = find.byKey(const ValueKey('weekly-recap-open'));
     expect(
@@ -213,18 +218,102 @@ void main() {
       findsNothing,
     );
     final glow = tester.widget<AnimatedContainer>(
-      find.descendant(of: readyPanel, matching: find.byType(AnimatedContainer)),
+      find.descendant(
+        of: find.descendant(
+          of: readyPanel,
+          matching: find.byType(WeeklyKeyMedallion),
+        ),
+        matching: find.byType(AnimatedContainer),
+      ),
     );
     expect((glow.decoration! as BoxDecoration).boxShadow, isNotEmpty);
+    final panelGlow = tester.widget<AnimatedContainer>(
+      find.byKey(const ValueKey('weekly-recap-glow')),
+    );
+    expect((panelGlow.decoration! as BoxDecoration).boxShadow, isNotEmpty);
+    final button = tester.widget<OutlinedButton>(readyPanel);
+    expect(
+      button.style!.side!.resolve(<WidgetState>{})!.color,
+      KeepersColors.homeGold,
+    );
+    final innerFrame = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(of: readyPanel, matching: find.byType(DecoratedBox)),
+        )
+        .firstWhere((widget) {
+          final decoration = widget.decoration as BoxDecoration;
+          return decoration.borderRadius == BorderRadius.circular(25);
+        });
+    expect(
+      (innerFrame.decoration as BoxDecoration).border!.top.color,
+      KeepersColors.homeGold.withValues(alpha: .72),
+    );
+    final keyIcon = tester.widget<Icon>(
+      find.descendant(of: readyPanel, matching: find.byIcon(Icons.key_rounded)),
+    );
+    expect(keyIcon.color, KeepersColors.homeGoldText);
+  });
+
+  testWidgets('shared key medallion exposes locked and ready visuals', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: KeepersTheme.dark(),
+        home: const Row(
+          children: [
+            WeeklyKeyMedallion(
+              key: ValueKey('locked-key-medallion'),
+              ready: false,
+            ),
+            WeeklyKeyMedallion(
+              key: ValueKey('ready-key-medallion'),
+              ready: true,
+              size: 96,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('locked-key-medallion')),
+        matching: find.byIcon(Icons.lock_outline_rounded),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('ready-key-medallion')),
+        matching: find.byIcon(Icons.key_rounded),
+      ),
+      findsOneWidget,
+    );
+    final readyMedallion = tester.widget<AnimatedContainer>(
+      find.descendant(
+        of: find.byKey(const ValueKey('ready-key-medallion')),
+        matching: find.byType(AnimatedContainer),
+      ),
+    );
+    expect(
+      readyMedallion.constraints,
+      const BoxConstraints.tightFor(width: 96, height: 96),
+    );
+    final readyKey = tester.widget<Icon>(
+      find.descendant(
+        of: find.byKey(const ValueKey('ready-key-medallion')),
+        matching: find.byIcon(Icons.key_rounded),
+      ),
+    );
+    expect(readyKey.size, 37.5);
   });
 }
 
 Future<void> _pumpCard(
   WidgetTester tester, {
   required int photoCount,
-  required int presentMemberCount,
-  VoidCallback? onOpen,
-  VoidCallback? onPreview,
+  VoidCallback? onEnterWaitingRoom,
 }) => tester.pumpWidget(
   MaterialApp(
     theme: KeepersTheme.dark(),
@@ -233,12 +322,9 @@ Future<void> _pumpCard(
         child: SizedBox(
           width: 360,
           child: WeeklyExperienceCard(
-            presentMemberCount: presentMemberCount,
-            requiredPresentMembers: 3,
             weeklyPhotoCount: photoCount,
             requiredWeeklyPhotos: 5,
-            onOpen: onOpen,
-            onPreview: onPreview,
+            onEnterWaitingRoom: onEnterWaitingRoom,
           ),
         ),
       ),

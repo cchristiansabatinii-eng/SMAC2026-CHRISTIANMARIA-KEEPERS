@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +10,7 @@ import 'package:keepers/features/capture/application/capture_providers.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/capture/presentation/capture_sheet.dart';
 import 'package:keepers/features/ceremony/presentation/ceremony_screen.dart';
+import 'package:keepers/features/ceremony/presentation/weekly_waiting_room_screen.dart';
 import 'package:keepers/features/family/application/cloud_family_providers.dart';
 import 'package:keepers/features/family/application/family_code_controller.dart';
 import 'package:keepers/features/family/application/family_join_controller.dart';
@@ -33,6 +33,7 @@ import 'package:keepers/features/vault/application/vault_providers.dart';
 import 'package:keepers/features/vault/domain/vault_models.dart';
 import 'package:keepers/features/vault/presentation/memory_viewer.dart';
 import 'package:keepers/storage/database_providers.dart';
+import 'package:keepers/sync/weekly_family_presence_provider.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/family_wheel_screen.dart';
 import 'package:keepers/ui/keepers_bottom_nav.dart';
@@ -42,28 +43,64 @@ typedef CaptureSheetLauncher = Future<EntryMetadata?> Function(
   BuildContext context,
 );
 
-enum _WeeklyExperienceMode { preview, live }
+enum _WeeklyExperienceMode { waiting, live }
+
+typedef WeeklyMemoryLoader = Future<List<OpenedMemory>> Function(
+  List<VaultEntryMetadata> entries,
+);
 
 final class WeeklyMemoryLoadFailure implements Exception {
-  const WeeklyMemoryLoadFailure();
+  const WeeklyMemoryLoadFailure({
+    this.attemptedCount = 0,
+    this.openedCount = 0,
+    this.openedPhotoCount = 0,
+    this.unavailableCount = 0,
+  });
+
+  final int attemptedCount;
+  final int openedCount;
+  final int openedPhotoCount;
+  final int unavailableCount;
 
   @override
-  String toString() => 'WeeklyMemoryLoadFailure';
+  String toString() =>
+      'WeeklyMemoryLoadFailure('
+      'attempted: $attemptedCount, opened: $openedCount, '
+      'photos: $openedPhotoCount, unavailable: $unavailableCount)';
 }
 
 @visibleForTesting
 Future<List<OpenedMemory>> loadWeeklyMemoriesSequentially(
   Iterable<VaultEntryMetadata> entries,
-  Future<MemoryOpenResult> Function(VaultEntryMetadata metadata) open,
-) async {
+  Future<MemoryOpenResult> Function(VaultEntryMetadata metadata) open, {
+  int minimumOpenedPhotos = 0,
+}) async {
   final opened = <OpenedMemory>[];
+  var attemptedCount = 0;
+  var unavailableCount = 0;
   try {
     for (final entry in entries) {
+      attemptedCount += 1;
       final result = await open(entry);
-      if (result is! OpenedMemory) {
-        throw const WeeklyMemoryLoadFailure();
+      switch (result) {
+        case OpenedMemory():
+          opened.add(result);
+        case UnavailableMemory():
+          unavailableCount += 1;
+          continue;
       }
-      opened.add(result);
+    }
+    final openedPhotoCount = opened
+        .where((memory) => memory.metadata.format == MemoryFormat.photo)
+        .length;
+    if ((attemptedCount > 0 && opened.isEmpty) ||
+        openedPhotoCount < minimumOpenedPhotos) {
+      throw WeeklyMemoryLoadFailure(
+        attemptedCount: attemptedCount,
+        openedCount: opened.length,
+        openedPhotoCount: openedPhotoCount,
+        unavailableCount: unavailableCount,
+      );
     }
     return List<OpenedMemory>.unmodifiable(opened);
   } on WeeklyMemoryLoadFailure {
@@ -71,7 +108,14 @@ Future<List<OpenedMemory>> loadWeeklyMemoriesSequentially(
     rethrow;
   } on Object {
     _clearOpenedPrimaryBytes(opened);
-    throw const WeeklyMemoryLoadFailure();
+    throw WeeklyMemoryLoadFailure(
+      attemptedCount: attemptedCount,
+      openedCount: opened.length,
+      openedPhotoCount: opened
+          .where((memory) => memory.metadata.format == MemoryFormat.photo)
+          .length,
+      unavailableCount: unavailableCount,
+    );
   }
 }
 
@@ -115,12 +159,14 @@ final class ObservatoryScreen extends ConsumerStatefulWidget {
     required this.identity,
     required this.onUseAnotherAccount,
     this.showCapture,
+    this.weeklyMemoryLoader,
     super.key,
   });
 
   final LocalIdentity identity;
   final Future<void> Function() onUseAnotherAccount;
   final CaptureSheetLauncher? showCapture;
+  final WeeklyMemoryLoader? weeklyMemoryLoader;
 
   @override
   ConsumerState<ObservatoryScreen> createState() => _ObservatoryScreenState();
@@ -136,7 +182,13 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
   _WeeklyExperienceMode? _weeklyExperienceMode;
   Future<List<OpenedMemory>>? _weeklyMemories;
   WeeklyMemoryPayloadLease? _weeklyPayloadLease;
-  final Set<String> _awaitingActivationMemberIds = {};
+  Timer? _weeklyPresenceExpiryTimer;
+  DateTime? _weeklyPresenceExpiryAt;
+  bool _weeklyPresenceSessionActive = false;
+  bool _weeklyRosterRefreshInFlight = false;
+  bool _appIsForeground = true;
+  WeeklyFamilyPresenceSessionActions? _activeWeeklyPresenceActions;
+  var _weeklyRosterRefreshEpoch = 0;  final Set<String> _awaitingActivationMemberIds = {};
   Timer? _activationRefreshTimer;
   String? _activationFamilyId;
   String? _activationAccountId;
@@ -146,13 +198,19 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
   @override
   void initState() {
     super.initState();
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    _appIsForeground =
+        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    _invalidateWeeklyRosterRefresh();
     _stopActivationReconciliation();
+    _stopWeeklyPresence();
     _releaseWeeklyPayloads();
+    _cancelWeeklyPresenceExpiry();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -164,12 +222,21 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
         oldWidget.identity.accountId != widget.identity.accountId ||
         oldWidget.identity.memberId != widget.identity.memberId) {
       _stopActivationReconciliation();
+      _invalidateWeeklyRosterRefresh();
+      _stopWeeklyPresence();
+      _cancelWeeklyPresenceExpiry();
+      _releaseWeeklyPayloads();
+      _weeklyExperienceMode = null;
+      _weeklyMemories = null;
+      _selectedDestination = KeepersNavDestination.wheel;
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _setAppForeground(true);
+      _startWeeklyPresenceIfNeeded();
       ref.invalidate(vaultEntriesProvider);
       unawaited(_refreshRoster());
       unawaited(
@@ -188,7 +255,19 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
             )
             .refresh(),
       );
+    } else {
+      _setAppForeground(false);
+      _stopWeeklyPresence();
     }
+  }
+
+  void _setAppForeground(bool isForeground) {
+    if (_appIsForeground == isForeground) return;
+    if (!mounted) {
+      _appIsForeground = isForeground;
+      return;
+    }
+    setState(() => _appIsForeground = isForeground);
   }
 
   Future<void> _refreshRoster() =>
@@ -219,6 +298,8 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
           _weeklyExperienceMode == null) {
         return;
       }
+      _invalidateWeeklyRosterRefresh();
+      _stopWeeklyPresence();
       _releaseWeeklyPayloads();
       setState(() {
         _weeklyExperienceMode = null;
@@ -226,6 +307,8 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
       });
       return;
     }
+    _invalidateWeeklyRosterRefresh();
+    _stopWeeklyPresence();
     _releaseWeeklyPayloads();
     setState(() {
       _selectedDestination = destination;
@@ -234,16 +317,49 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     });
   }
 
-  void _previewWeeklyExperience() {
+  void _enterWeeklyWaitingRoom() {
     _releaseWeeklyPayloads();
+    final refreshEpoch = ++_weeklyRosterRefreshEpoch;
     setState(() {
-      _weeklyExperienceMode = _WeeklyExperienceMode.preview;
+      _weeklyExperienceMode = _WeeklyExperienceMode.waiting;
       _weeklyMemories = null;
+      _weeklyRosterRefreshInFlight = true;
       _selectedDestination = KeepersNavDestination.ceremony;
     });
+    _startWeeklyPresenceIfNeeded();
+    unawaited(_refreshWaitingRoomRoster(refreshEpoch));
+  }
+
+  Future<void> _refreshWaitingRoomRoster(int refreshEpoch) async {
+    try {
+      await _refreshRoster();
+    } on Object {
+      // The roster controller maps ordinary cloud and persistence failures to
+      // its cached-roster state. An injected boundary may still throw; cached
+      // membership remains the honest offline fallback in that case too.
+    } finally {
+      final isCurrentWaitingRoom =
+          mounted &&
+          refreshEpoch == _weeklyRosterRefreshEpoch &&
+          _weeklyExperienceMode == _WeeklyExperienceMode.waiting;
+      if (isCurrentWaitingRoom) {
+        setState(() => _weeklyRosterRefreshInFlight = false);
+      }
+    }
+  }
+
+  void _invalidateWeeklyRosterRefresh() {
+    _weeklyRosterRefreshEpoch += 1;
+    _weeklyRosterRefreshInFlight = false;
   }
 
   void _openWeeklyExperience(List<VaultEntryMetadata> entries) {
+    if (_weeklyExperienceMode != _WeeklyExperienceMode.waiting ||
+        _weeklyPayloadLease != null) {
+      return;
+    }
+    _invalidateWeeklyRosterRefresh();
+    _stopWeeklyPresence();
     _releaseWeeklyPayloads();
     final lease = WeeklyMemoryPayloadLease();
     _weeklyPayloadLease = lease;
@@ -255,16 +371,144 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     });
   }
 
+  bool _startWeeklyExperience() {
+    if (_weeklyExperienceMode != _WeeklyExperienceMode.waiting ||
+        _weeklyPayloadLease != null ||
+        _weeklyRosterRefreshInFlight) {
+      return false;
+    }
+
+    final currentEntriesState = ref.read(vaultEntriesProvider);
+    final currentEntries =
+        currentEntriesState.isLoading || currentEntriesState.hasError
+        ? null
+        : currentEntriesState.asData?.value;
+    final freshNow = ref.read(utcNowProvider)().toUtc();
+    final freshWeeklyEntries = currentEntries == null
+        ? const <VaultEntryMetadata>[]
+        : _weeklyEntriesAt(currentEntries, freshNow);
+    final freshPhotoCount = freshWeeklyEntries
+        .where((entry) => entry.format == MemoryFormat.photo)
+        .length;
+
+    if (freshPhotoCount < 5) {
+      // Rebuild with the fresh clock so a room left open across the weekly
+      // boundary fails closed and explains that progress changed.
+      setState(() {});
+      return false;
+    }
+
+    final rosterState = ref.read(
+      familyRosterProvider(widget.identity.familyId),
+    );
+    if (!rosterState.hasLoadedLocal || rosterState.isRefreshing) {
+      setState(() {});
+      return false;
+    }
+    final trustedNearbyMemberIds = ref
+        .read(weeklyFamilyPresenceProvider(widget.identity.familyId))
+        .trustedNearbyMemberIds(at: freshNow);
+    final attendance = WeeklyWaitingRoomAttendance.fromMemberIds(
+      rosterMemberIds: rosterState.hasLoadedLocal
+          ? rosterState.members.map((member) => member.id)
+          : const <String>[],
+      presentMemberIds: trustedNearbyMemberIds,
+      currentMemberId: widget.identity.memberId,
+    );
+    if (!attendance.canStart) {
+      // Rebuild so an observation that expired while this room was open is
+      // immediately reflected in the member cards and attendance copy.
+      setState(() {});
+      return false;
+    }
+
+    _openWeeklyExperience(freshWeeklyEntries);
+    return true;
+  }
+
   void _releaseWeeklyPayloads() {
     _weeklyPayloadLease?.release();
     _weeklyPayloadLease = null;
   }
 
+  void _scheduleWeeklyPresenceExpiry(
+    WeeklyFamilyPresenceSnapshot snapshot,
+    DateTime now,
+  ) {
+    final expiryAt = snapshot.nextExpiryAt(at: now);
+    if (expiryAt == null) {
+      _cancelWeeklyPresenceExpiry();
+      return;
+    }
+    final delay = expiryAt.difference(now.toUtc());
+    if (delay <= Duration.zero) {
+      _cancelWeeklyPresenceExpiry();
+      return;
+    }
+    if (_weeklyPresenceExpiryTimer?.isActive == true &&
+        _weeklyPresenceExpiryAt == expiryAt) {
+      return;
+    }
+
+    _cancelWeeklyPresenceExpiry();
+    _weeklyPresenceExpiryAt = expiryAt;
+    _weeklyPresenceExpiryTimer = Timer(delay, () {
+      _weeklyPresenceExpiryTimer = null;
+      _weeklyPresenceExpiryAt = null;
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _cancelWeeklyPresenceExpiry() {
+    _weeklyPresenceExpiryTimer?.cancel();
+    _weeklyPresenceExpiryTimer = null;
+    _weeklyPresenceExpiryAt = null;
+  }
+
+  void _startWeeklyPresenceIfNeeded() {
+    if (!_appIsForeground ||
+        _weeklyExperienceMode != _WeeklyExperienceMode.waiting ||
+        _weeklyPresenceSessionActive) {
+      return;
+    }
+    final rosterState = ref.read(
+      familyRosterProvider(widget.identity.familyId),
+    );
+    if (!rosterState.hasLoadedLocal) return;
+    final actions = ref.read(
+      weeklyFamilyPresenceSessionActionsProvider(widget.identity.familyId),
+    );
+    _weeklyPresenceSessionActive = true;
+    _activeWeeklyPresenceActions = actions;
+    unawaited(
+      actions.start(
+        identity: widget.identity,
+        rosterMemberIds: rosterState.members
+            .where((member) => member.familyId == widget.identity.familyId)
+            .map((member) => member.id),
+      ),
+    );
+  }
+
+  void _stopWeeklyPresence() {
+    if (!_weeklyPresenceSessionActive) return;
+    _weeklyPresenceSessionActive = false;
+    final actions = _activeWeeklyPresenceActions;
+    _activeWeeklyPresenceActions = null;
+    if (actions != null) unawaited(actions.stop());
+  }
+
   Future<List<OpenedMemory>> _loadWeeklyMemories(
     List<VaultEntryMetadata> entries,
   ) async {
+    final injectedLoader = widget.weeklyMemoryLoader;
+    if (injectedLoader != null) return injectedLoader(entries);
     final controller = await ref.read(vaultControllerProvider.future);
-    return loadWeeklyMemoriesSequentially(entries, controller.open);
+    return loadWeeklyMemoriesSequentially(
+      entries,
+      controller.open,
+      minimumOpenedPhotos: 5,
+    );
   }
 
   Future<void> _resolveWeeklyMemory(
@@ -409,6 +653,20 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     FamilyRosterState? previous,
     FamilyRosterState next,
   ) {
+    if (_weeklyPresenceSessionActive &&
+        _weeklyExperienceMode == _WeeklyExperienceMode.waiting &&
+        next.hasLoadedLocal) {
+      final actions = _activeWeeklyPresenceActions;
+      if (actions != null) {
+        unawaited(
+          actions.updateRoster(
+            next.members
+                .where((member) => member.familyId == widget.identity.familyId)
+                .map((member) => member.id),
+          ),
+        );
+      }
+    }
     if (_awaitingActivationMemberIds.isNotEmpty) {
       _pruneActivatedMembers(next.members);
     }
@@ -571,29 +829,38 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     final entriesState = ref.watch(vaultEntriesProvider);
     final entries = entriesState.asData?.value ?? const [];
     final now = ref.watch(utcNowProvider)().toUtc();
-    final startOfWeek = _startOfLocalWeek(now).toUtc();
-    final weeklyEntries =
-        entries
-            .where(
-              (entry) =>
-                  entry.privacy == PrivacyTier.reveal &&
-                  entry.state == 'pending' &&
-                  !entry.createdAt.toUtc().isBefore(startOfWeek) &&
-                  !entry.createdAt.toUtc().isAfter(now),
-            )
-            .toList(growable: false)
-          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    final weeklyPhotoCount = weeklyEntries
+    final weeklyEntries = entriesState.isLoading || entriesState.hasError
+        ? const <VaultEntryMetadata>[]
+        : _weeklyEntriesAt(entries, now);
+    final weeklyPhotos = weeklyEntries
         .where((entry) => entry.format == MemoryFormat.photo)
-        .length;
+        .toList(growable: false);
+    final weeklyPhotoCount = weeklyPhotos.length;
+    final weeklyPhotoCountsByAuthor = <String, int>{};
+    for (final entry in weeklyPhotos) {
+      weeklyPhotoCountsByAuthor.update(
+        entry.authorId,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
     final contribution = math.min(
       1.0,
-      entries
-              .where((entry) => entry.authorId == widget.identity.memberId)
-              .length /
-          5,
+      (weeklyPhotoCountsByAuthor[widget.identity.memberId] ?? 0) / 5,
     );
-    final members = _presentationMembers(context, rosterState.members);
+    final weeklyPresence = ref.watch(
+      weeklyFamilyPresenceProvider(widget.identity.familyId),
+    );
+    _scheduleWeeklyPresenceExpiry(weeklyPresence, now);
+    final trustedNearbyMemberIds = weeklyPresence.trustedNearbyMemberIds(
+      at: now,
+    );
+    final members = _presentationMembers(
+      context,
+      rosterState.members,
+      trustedNearbyMemberIds,
+      weeklyPhotoCountsByAuthor,
+    );
     final pendingJoinRequest = joinRequests.requests.isEmpty
         ? null
         : joinRequests.requests.first;
@@ -623,18 +890,28 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
             ? null
             : () => unawaited(_nudgeMissingMembers()),
         weeklyPhotoCount: weeklyPhotoCount,
-        // TODO(keepers-proximity): Enforce nearby presence in debug builds as
-        // soon as the real device-proximity source replaces roster-only data.
-        weeklyPresencePolicy: kDebugMode
-            ? WeeklyPresencePolicy.temporaryAllowUntilProximityProxy
-            : WeeklyPresencePolicy.enforceNearby,
-        weeklyPreviewEnabled: true,
-        onOpenWeeklyExperience: () => _openWeeklyExperience(weeklyEntries),
-        onPreviewWeeklyExperience: _previewWeeklyExperience,
+        onEnterWeeklyWaitingRoom: _enterWeeklyWaitingRoom,
         selectedDestination: _selectedDestination,
         enabledDestinations: keepersEnabledDestinations,
         onDestinationSelected: _selectDestination,
       ),
+      KeepersNavDestination.ceremony
+          when _weeklyExperienceMode == _WeeklyExperienceMode.waiting =>
+        WeeklyWaitingRoomScreen(
+          familyName: widget.identity.familyName,
+          weeklyProgressComplete: weeklyPhotoCount >= 5,
+          members: _weeklyWaitingRoomMembers(
+            context,
+            rosterState.members,
+            members,
+          ),
+          onClose: () => _selectDestination(KeepersNavDestination.wheel),
+          onStart: _startWeeklyExperience,
+          rosterRefreshInProgress:
+              _weeklyRosterRefreshInFlight || rosterState.isRefreshing,
+          onNudgeMissingMembers: () => unawaited(_nudgeMissingMembers()),
+          nudgeInProgress: _nudgeInFlight,
+        ),
       KeepersNavDestination.ceremony => CeremonyScreen(
         key: ValueKey(
           _weeklyExperienceMode != null ? 'weekly-experience' : 'memory-key',
@@ -642,7 +919,7 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
         familyName: widget.identity.familyName,
         currentMemberName: widget.identity.memberName,
         startInWeekly: _weeklyExperienceMode != null,
-        weeklyPreview: _weeklyExperienceMode == _WeeklyExperienceMode.preview,
+        weeklyPreview: false,
         weeklyMemories: _weeklyMemories,
         weeklyAuthorNames: authorNames,
         weeklyPlayback: ref.read(audioPlaybackAdapterProvider),
@@ -706,6 +983,8 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
   List<FamilyWheelMember> _presentationMembers(
     BuildContext context,
     List<FamilyMember> roster,
+    Set<String> trustedNearbyMemberIds,
+    Map<String, int> weeklyPhotoCountsByAuthor,
   ) {
     final tokens = Theme.of(context).extension<ObservatoryTokens>();
     return List<FamilyWheelMember>.unmodifiable(
@@ -719,10 +998,50 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
                   tokens?.memberColor(member.colorToken) ??
                   KeepersColors.homeGold,
               avatar: member.avatar,
-              contribution: null,
-              presence: FamilyPresence.away,
+              contribution: math.min(
+                1.0,
+                (weeklyPhotoCountsByAuthor[member.id] ?? 0) / 5,
+              ),
+              presence: trustedNearbyMemberIds.contains(member.id)
+                  ? FamilyPresence.near
+                  : FamilyPresence.away,
             ),
           ),
+    );
+  }
+
+  List<WeeklyWaitingRoomMember> _weeklyWaitingRoomMembers(
+    BuildContext context,
+    List<FamilyMember> roster,
+    List<FamilyWheelMember> presentationMembers,
+  ) {
+    final tokens = Theme.of(context).extension<ObservatoryTokens>();
+    final presentMemberIds = <String>{
+      for (final member in presentationMembers)
+        if (member.presence == FamilyPresence.near) member.id,
+    };
+    final membersById = <String, FamilyMember>{};
+    for (final member in roster) {
+      if (member.id.trim().isNotEmpty) {
+        membersById.putIfAbsent(member.id, () => member);
+      }
+    }
+    final currentMember = membersById.remove(widget.identity.memberId);
+    final orderedMembers = membersById.values.toList(growable: true);
+    if (currentMember != null) orderedMembers.insert(0, currentMember);
+    return List<WeeklyWaitingRoomMember>.unmodifiable(
+      orderedMembers.map((member) {
+        final isCurrentMember = member.id == widget.identity.memberId;
+        return WeeklyWaitingRoomMember(
+          id: member.id,
+          name: member.name,
+          color:
+              tokens?.memberColor(member.colorToken) ?? KeepersColors.homeGold,
+          avatar: member.avatar,
+          isPresent: isCurrentMember || presentMemberIds.contains(member.id),
+          isCurrentMember: isCurrentMember,
+        );
+      }),
     );
   }
 }
@@ -867,4 +1186,22 @@ DateTime _startOfLocalWeek(DateTime value) {
   final local = value.toLocal();
   final day = DateTime(local.year, local.month, local.day);
   return day.subtract(Duration(days: local.weekday - DateTime.monday));
+}
+
+List<VaultEntryMetadata> _weeklyEntriesAt(
+  Iterable<VaultEntryMetadata> entries,
+  DateTime now,
+) {
+  final utcNow = now.toUtc();
+  final startOfWeek = _startOfLocalWeek(utcNow).toUtc();
+  return entries
+      .where(
+        (entry) =>
+            entry.privacy == PrivacyTier.reveal &&
+            entry.state == 'pending' &&
+            !entry.createdAt.toUtc().isBefore(startOfWeek) &&
+            !entry.createdAt.toUtc().isAfter(utcNow),
+      )
+      .toList(growable: false)
+    ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 }

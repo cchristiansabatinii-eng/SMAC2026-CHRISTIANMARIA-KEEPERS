@@ -1,0 +1,191 @@
+package dev.steenbakker.flutter_ble_peripheral.callbacks
+
+import android.bluetooth.le.AdvertisingSet
+import android.bluetooth.le.AdvertisingSetCallback
+import android.bluetooth.le.BluetoothLeAdvertiser
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import androidx.annotation.RequiresApi
+import dev.steenbakker.flutter_ble_peripheral.handlers.PeripheralStateChangedHandler
+import dev.steenbakker.flutter_ble_peripheral.models.PeripheralBluetoothState
+import dev.steenbakker.flutter_ble_peripheral.models.PeripheralState
+import io.flutter.Log
+import io.flutter.plugin.common.MethodChannel
+
+@RequiresApi(Build.VERSION_CODES.O)
+class PeripheralAdvertisingSetCallback(private val result: MethodChannel.Result, private val peripheralStateChangedHandler: PeripheralStateChangedHandler): AdvertisingSetCallback() {
+    /**
+     * Callback triggered in response to {@link BluetoothLeAdvertiser#startAdvertisingSet}
+     * indicating result of the operation. If status is ADVERTISE_SUCCESS, then advertisingSet
+     * contains the started set and it is advertising. If error occurred, advertisingSet is
+     * null, and status will be set to proper error code.
+     *
+     * @param advertisingSet The advertising set that was started or null if error.
+     * @param txPower tx power that will be used for this set.
+     * @param status Status of the operation.
+     */
+
+    override fun onAdvertisingSetStarted(
+            advertisingSet: AdvertisingSet?,
+            txPower: Int,
+            status: Int
+    ) {
+        Log.i("FlutterBlePeripheral", "onAdvertisingSetStarted() status: $advertisingSet, txPOWER $txPower, status $status")
+        super.onAdvertisingSetStarted(advertisingSet, txPower, status)
+        var statusText = ""
+        when (status) {
+            ADVERTISE_SUCCESS -> {
+                peripheralStateChangedHandler.publish(PeripheralState.advertising)
+            }
+            ADVERTISE_FAILED_ALREADY_STARTED -> {
+                statusText = "ADVERTISE_FAILED_ALREADY_STARTED"
+                peripheralStateChangedHandler.publish(PeripheralState.advertising)
+            }
+            ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> {
+                statusText = "ADVERTISE_FAILED_FEATURE_UNSUPPORTED"
+                peripheralStateChangedHandler.publish(PeripheralState.unsupported)
+            }
+            ADVERTISE_FAILED_INTERNAL_ERROR -> {
+                statusText = "ADVERTISE_FAILED_INTERNAL_ERROR"
+                peripheralStateChangedHandler.publish(PeripheralState.idle)
+            }
+            ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> {
+                statusText = "ADVERTISE_FAILED_TOO_MANY_ADVERTISERS"
+                peripheralStateChangedHandler.publish(PeripheralState.idle)
+            }
+            ADVERTISE_FAILED_DATA_TOO_LARGE -> {
+                statusText = "ADVERTISE_FAILED_DATA_TOO_LARGE"
+                peripheralStateChangedHandler.publish(PeripheralState.idle)
+            }
+            else -> {
+                statusText = "UNDOCUMENTED"
+                peripheralStateChangedHandler.publish(PeripheralState.unknown)
+            }
+
+        }
+        // The thread this callback arrives on is not part of the contract, and a
+        // result may only be sent from the main thread.
+        val message = statusText
+        Handler(Looper.getMainLooper()).post {
+            if (status != ADVERTISE_SUCCESS) {
+                result.error(status.toString(), message, "startAdvertisingSet")
+            } else {
+                result.success(PeripheralBluetoothState.Ready.ordinal)
+            }
+        }
+    }
+
+    /**
+     * Callback triggered in response to [BluetoothLeAdvertiser.stopAdvertisingSet]
+     * indicating advertising set is stopped.
+     *
+     * @param advertisingSet The advertising set.
+     */
+    override fun onAdvertisingSetStopped(advertisingSet: AdvertisingSet?) {
+        Log.i("FlutterBlePeripheral", "onAdvertisingSetStopped() status: $advertisingSet")
+        super.onAdvertisingSetStopped(advertisingSet)
+        peripheralStateChangedHandler.publish(PeripheralState.idle)
+    }
+
+    /**
+     * Callback triggered in response to [BluetoothLeAdvertiser.startAdvertisingSet]
+     * indicating result of the operation. If status is ADVERTISE_SUCCESS, then advertising set is
+     * advertising.
+     *
+     * @param advertisingSet The advertising set.
+     * @param status Status of the operation.
+     */
+    override fun onAdvertisingEnabled(
+            advertisingSet: AdvertisingSet?,
+            enable: Boolean,
+            status: Int
+    ) {
+        Log.i("FlutterBlePeripheral", "onAdvertisingEnabled() status: $advertisingSet, enable $enable, status $status")
+        super.onAdvertisingEnabled(advertisingSet, enable, status)
+        peripheralStateChangedHandler.publish(PeripheralState.advertising)
+    }
+
+    /**
+     * Callback triggered in response to [AdvertisingSet.setAdvertisingData] indicating
+     * result of the operation. If status is ADVERTISE_SUCCESS, then data was changed.
+     *
+     * @param advertisingSet The advertising set.
+     * @param status Status of the operation.
+     */
+    override fun onAdvertisingDataSet(advertisingSet: AdvertisingSet?, status: Int) {
+        Log.i("FlutterBlePeripheral", "onAdvertisingDataSet() status: $advertisingSet, status $status")
+        super.onAdvertisingDataSet(advertisingSet, status)
+        peripheralStateChangedHandler.publish(PeripheralState.advertising)
+    }
+
+    /**
+     * Callback triggered in response to [AdvertisingSet.setAdvertisingData] indicating
+     * result of the operation.
+     *
+     * @param advertisingSet The advertising set.
+     * @param status Status of the operation.
+     */
+    override fun onScanResponseDataSet(advertisingSet: AdvertisingSet?, status: Int) {
+        Log.i("FlutterBlePeripheral", "onScanResponseDataSet() status: $advertisingSet, status $status")
+        super.onAdvertisingDataSet(advertisingSet, status)
+        peripheralStateChangedHandler.publish(PeripheralState.advertising)
+    }
+
+    /**
+     * Callback triggered in response to [AdvertisingSet.setAdvertisingParameters]
+     * indicating result of the operation.
+     *
+     * @param advertisingSet The advertising set.
+     * @param txPower tx power that will be used for this set.
+     * @param status Status of the operation.
+     */
+    override fun onAdvertisingParametersUpdated(
+            advertisingSet: AdvertisingSet?,
+            txPower: Int, status: Int
+    ) {
+        Log.i("FlutterBlePeripheral", "onAdvertisingParametersUpdated() status: $advertisingSet, txPOWER $txPower, status $status")
+    }
+
+    /**
+     * Callback triggered in response to [AdvertisingSet.setPeriodicAdvertisingParameters]
+     * indicating result of the operation.
+     *
+     * @param advertisingSet The advertising set.
+     * @param status Status of the operation.
+     */
+    override fun onPeriodicAdvertisingParametersUpdated(
+            advertisingSet: AdvertisingSet?,
+            status: Int
+    ) {
+        Log.i("FlutterBlePeripheral", "onPeriodicAdvertisingParametersUpdated() status: $advertisingSet, status $status")
+    }
+
+    /**
+     * Callback triggered in response to [AdvertisingSet.setPeriodicAdvertisingData]
+     * indicating result of the operation.
+     *
+     * @param advertisingSet The advertising set.
+     * @param status Status of the operation.
+     */
+    override fun onPeriodicAdvertisingDataSet(
+            advertisingSet: AdvertisingSet?,
+            status: Int
+    ) {
+        Log.i("FlutterBlePeripheral", "onPeriodicAdvertisingDataSet() status: $advertisingSet, status $status")
+    }
+
+    /**
+     * Callback triggered in response to [AdvertisingSet.setPeriodicAdvertisingEnabled]
+     * indicating result of the operation.
+     *
+     * @param advertisingSet The advertising set.
+     * @param status Status of the operation.
+     */
+    override fun onPeriodicAdvertisingEnabled(
+            advertisingSet: AdvertisingSet?, enable: Boolean,
+            status: Int
+    ) {
+        Log.i("FlutterBlePeripheral", "onPeriodicAdvertisingEnabled() status: $advertisingSet, enable $enable, status $status")
+    }
+}

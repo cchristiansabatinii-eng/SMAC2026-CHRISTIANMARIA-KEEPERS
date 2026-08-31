@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart';
+import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/family/data/cloud_family_gateway.dart';
 import 'package:keepers/features/family/data/secure_supabase_auth_storage.dart';
 import 'package:keepers/features/family/domain/cloud_family_models.dart';
@@ -11,11 +14,14 @@ import 'package:keepers/features/family/domain/family_join_request.dart';
 import 'package:keepers/features/family/domain/family_member.dart';
 import 'package:keepers/features/members/domain/avatar_catalog.dart';
 import 'package:keepers/features/members/domain/avatar_config.dart';
+import 'package:keepers/features/vault/data/weekly_reveal_cloud_gateway.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 const supabaseAuthCallbackUrl = 'keepers://auth-callback';
 const supabaseAuthAttemptParameter = 'attempt';
+const _weeklyRevealBucket = 'keepers-weekly-reveal';
+const _maximumWeeklyRevealBlobBytes = 25 * 1024 * 1024;
 
 /// The narrow external boundary used by [SupabaseCloudFamilyGateway].
 ///
@@ -73,6 +79,20 @@ abstract interface class SupabaseCloudRealtimeClient {
   Stream<void> watchPendingJoinRequests(String familyId);
 }
 
+/// Optional encrypted-object capability kept separate from the core client so
+/// existing authentication and family fakes do not gain media responsibilities.
+abstract interface class SupabaseWeeklyRevealClient {
+  Future<void> uploadWeeklyRevealBlob({
+    required String path,
+    required Uint8List bytes,
+    required String sha256,
+  });
+
+  Future<Uint8List> downloadWeeklyRevealBlob(String path);
+
+  Stream<void> watchWeeklyRevealEntries(String familyId);
+}
+
 final class SupabaseCloudClientAdapter
     implements
         SupabaseCloudClient,
@@ -80,7 +100,8 @@ final class SupabaseCloudClientAdapter
         SupabaseCloudAccountSessionClient,
         SupabaseCloudAuthAttemptClient,
         SupabaseCloudSocialAuthClient,
-        SupabaseCloudRealtimeClient {
+        SupabaseCloudRealtimeClient,
+        SupabaseWeeklyRevealClient {
   const SupabaseCloudClientAdapter(this._client, this._pkceStorage);
 
   final SupabaseClient _client;
@@ -180,6 +201,38 @@ final class SupabaseCloudClientAdapter
       .stream(primaryKey: const ['id'])
       .eq('family_id', familyId)
       .map<void>((_) {});
+
+  @override
+  Future<void> uploadWeeklyRevealBlob({
+    required String path,
+    required Uint8List bytes,
+    required String sha256,
+  }) async {
+    await _client.storage
+        .from(_weeklyRevealBucket)
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+            upsert: true,
+            contentType: 'application/octet-stream',
+            metadata: {'sha256': sha256},
+          ),
+        );
+  }
+
+  @override
+  Future<Uint8List> downloadWeeklyRevealBlob(String path) =>
+      _client.storage.from(_weeklyRevealBucket).download(path);
+
+  @override
+  Stream<void> watchWeeklyRevealEntries(String familyId) => _client
+      .schema('public')
+      .from('weekly_reveal_entries')
+      .stream(primaryKey: const ['id'])
+      .eq('family_id', familyId)
+      .skip(1)
+      .map<void>((_) {});
 }
 
 final class SupabaseCloudFamilyGateway
@@ -189,7 +242,8 @@ final class SupabaseCloudFamilyGateway
         CloudFamilyAccountSessionEvents,
         CloudFamilyAccountSession,
         CloudFamilySocialAuth,
-        FamilyCodeJoinGateway {
+        FamilyCodeJoinGateway,
+        WeeklyRevealCloudGateway {
   SupabaseCloudFamilyGateway(
     this._client, {
     required this._emailRedirectTo,
@@ -208,6 +262,94 @@ final class SupabaseCloudFamilyGateway
 
   @override
   String? get authenticatedEmail => _client.authenticatedEmail;
+
+  @override
+  Future<void> publish(EntryMetadata metadata, Uint8List encryptedBlob) async {
+    _validateWeeklyRevealMetadata(metadata);
+    if (encryptedBlob.isEmpty ||
+        encryptedBlob.lengthInBytes > _maximumWeeklyRevealBlobBytes) {
+      throw ArgumentError.value(
+        encryptedBlob.lengthInBytes,
+        'encryptedBlob',
+        'Weekly Reveal ciphertext must be between 1 byte and 25 MiB.',
+      );
+    }
+    final client = _weeklyRevealClient();
+    final digest = await _weeklyRevealDigest(encryptedBlob);
+    final storagePath = _weeklyRevealStoragePath(metadata);
+    final response = await _guard(() async {
+      await client.uploadWeeklyRevealBlob(
+        path: storagePath,
+        bytes: encryptedBlob,
+        sha256: digest,
+      );
+      return _client.rpc(
+        'publish_weekly_reveal_entry',
+        params: {
+          'p_entry_id': metadata.id,
+          'p_family_id': metadata.familyId,
+          'p_author_member_id': metadata.authorId,
+          'p_created_at': metadata.createdAt.toUtc().toIso8601String(),
+          'p_format': metadata.format.name,
+          'p_storage_path': storagePath,
+          'p_blob_sha256': digest,
+          'p_blob_bytes': encryptedBlob.lengthInBytes,
+        },
+      );
+    });
+    final published = _decodeWeeklyRevealEntry(response);
+    if (!_sameWeeklyReveal(
+      published,
+      metadata: metadata,
+      storagePath: storagePath,
+      digest: digest,
+      blobBytes: encryptedBlob.lengthInBytes,
+    )) {
+      throw const FormatException(
+        'Weekly Reveal publish acknowledgement differs',
+      );
+    }
+  }
+
+  @override
+  Future<List<RemoteWeeklyRevealEntry>> list(String familyId) async {
+    _requireFamilyUuid(familyId);
+    return _guard(() async {
+      final response = await _client.rpc(
+        'list_weekly_reveal_entries',
+        params: {'p_family_id': familyId},
+      );
+      if (response is! List<Object?>) {
+        throw const FormatException('Weekly Reveal list must be an array');
+      }
+      final entries = response.map(_decodeWeeklyRevealEntry).toList();
+      if (entries.any((entry) => entry.metadata.familyId != familyId)) {
+        throw const FormatException('Weekly Reveal list family differs');
+      }
+      return List<RemoteWeeklyRevealEntry>.unmodifiable(entries);
+    });
+  }
+
+  @override
+  Future<Uint8List> download(RemoteWeeklyRevealEntry entry) async {
+    _validateRemoteWeeklyRevealEntry(entry);
+    return _guard(
+      () => _weeklyRevealClient().downloadWeeklyRevealBlob(entry.storagePath),
+    );
+  }
+
+  @override
+  Stream<void> watch(String familyId) {
+    _requireFamilyUuid(familyId);
+    return _weeklyRevealClient().watchWeeklyRevealEntries(familyId);
+  }
+
+  SupabaseWeeklyRevealClient _weeklyRevealClient() => switch (_client) {
+    SupabaseWeeklyRevealClient capability => capability,
+    _ => throw UnsupportedError(
+      'Weekly Reveal synchronization is unavailable.',
+    ),
+  };
 
   @override
   Stream<void> get signedInEvents => switch (_client) {
@@ -1128,6 +1270,91 @@ FamilyJoinRequestState _familyJoinRequestState(Object? value) =>
       'expired' => FamilyJoinRequestState.expired,
       _ => throw const FormatException('Invalid family join request state'),
     };
+
+void _validateWeeklyRevealMetadata(EntryMetadata metadata) {
+  _requireFamilyUuid(metadata.id);
+  _requireFamilyUuid(metadata.familyId);
+  _requireFamilyUuid(metadata.authorId);
+  if (metadata.privacy != PrivacyTier.reveal) {
+    throw ArgumentError.value(
+      metadata.privacy,
+      'metadata',
+      'Only Weekly Reveal entries may be synchronized.',
+    );
+  }
+}
+
+void _validateRemoteWeeklyRevealEntry(RemoteWeeklyRevealEntry entry) {
+  _validateWeeklyRevealMetadata(entry.metadata);
+  if (entry.storagePath != _weeklyRevealStoragePath(entry.metadata) ||
+      !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(entry.blobSha256) ||
+      entry.blobBytes <= 0 ||
+      entry.blobBytes > _maximumWeeklyRevealBlobBytes ||
+      entry.state != 'pending') {
+    throw const FormatException('Invalid Weekly Reveal cloud entry');
+  }
+}
+
+RemoteWeeklyRevealEntry _decodeWeeklyRevealEntry(Object? value) {
+  final object = _strictObject(value, const {
+    'entryId',
+    'familyId',
+    'authorId',
+    'createdAt',
+    'format',
+    'storagePath',
+    'blobSha256',
+    'blobBytes',
+    'state',
+  });
+  final formatName = _stringField(object, 'format');
+  final format = switch (formatName) {
+    'photo' => MemoryFormat.photo,
+    'voice' => MemoryFormat.voice,
+    'text' => MemoryFormat.text,
+    _ => throw const FormatException('Invalid Weekly Reveal format'),
+  };
+  final entry = RemoteWeeklyRevealEntry(
+    metadata: EntryMetadata(
+      id: _uuidField(object, 'entryId'),
+      familyId: _uuidField(object, 'familyId'),
+      authorId: _uuidField(object, 'authorId'),
+      createdAt: _timestampField(object, 'createdAt'),
+      format: format,
+      privacy: PrivacyTier.reveal,
+    ),
+    storagePath: _stringField(object, 'storagePath'),
+    blobSha256: _stringField(object, 'blobSha256'),
+    blobBytes: _positiveIntField(object, 'blobBytes'),
+    state: _stringField(object, 'state'),
+  );
+  _validateRemoteWeeklyRevealEntry(entry);
+  return entry;
+}
+
+String _weeklyRevealStoragePath(EntryMetadata metadata) =>
+    '${metadata.familyId}/${metadata.authorId}/${metadata.id}.keeper';
+
+Future<String> _weeklyRevealDigest(Uint8List bytes) async =>
+    base64UrlEncode((await Sha256().hash(bytes)).bytes).replaceAll('=', '');
+
+bool _sameWeeklyReveal(
+  RemoteWeeklyRevealEntry remote, {
+  required EntryMetadata metadata,
+  required String storagePath,
+  required String digest,
+  required int blobBytes,
+}) =>
+    remote.metadata.id == metadata.id &&
+    remote.metadata.familyId == metadata.familyId &&
+    remote.metadata.authorId == metadata.authorId &&
+    remote.metadata.createdAt.toUtc() == metadata.createdAt.toUtc() &&
+    remote.metadata.format == metadata.format &&
+    remote.metadata.privacy == PrivacyTier.reveal &&
+    remote.storagePath == storagePath &&
+    remote.blobSha256 == digest &&
+    remote.blobBytes == blobBytes &&
+    remote.state == 'pending';
 
 FamilyJoinRequestCancelReason? _familyJoinRequestCancelReason(Object? value) =>
     switch (value) {

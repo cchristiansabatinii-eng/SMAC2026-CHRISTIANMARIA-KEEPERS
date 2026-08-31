@@ -14,6 +14,8 @@ dependencies:
   ffi: ^2.2.0
   flutter:
     sdk: flutter
+  flutter_ble_peripheral: 3.1.0
+  flutter_blue_plus: 2.3.12
   flutter_riverpod: ^3.4.2
   humation_flutter: 0.1.0
   flutter_secure_storage: ^11.0.0
@@ -34,6 +36,11 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   sqflite_common: ^2.5.11
   sqflite_common_ffi: ^2.4.2+1
+
+# Keep the audited 3.1.0 API pin while using the in-repo native lifecycle fixes.
+dependency_overrides:
+  flutter_ble_peripheral:
+    path: packages/flutter_ble_peripheral
 
 flutter:
   uses-material-design: true
