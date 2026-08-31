@@ -212,10 +212,7 @@ CREATE TABLE draw_logs (
         newVersion > version ||
         oldVersion >= newVersion) {
       throw ArgumentError(
-        'Unsupported schema upgrade from ' +
-            oldVersion.toString() +
-            ' to ' +
-            newVersion.toString(),
+        'Unsupported schema upgrade from $oldVersion to $newVersion',
       );
     }
 
