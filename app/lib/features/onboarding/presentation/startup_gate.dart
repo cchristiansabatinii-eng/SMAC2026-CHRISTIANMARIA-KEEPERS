@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/features/onboarding/presentation/setup_screen.dart';
-import 'package:keepers/ui/home_screen.dart';
+import 'package:keepers/features/vault/presentation/observatory_screen.dart';
 
 final class StartupGate extends ConsumerWidget {
   const StartupGate({super.key});
@@ -18,8 +18,9 @@ final class StartupGate extends ConsumerWidget {
             message: 'Keepers could not open local storage.',
             onRetry: () => ref.invalidate(localIdentityProvider),
           ),
-          data: (identity) =>
-              identity == null ? const SetupScreen() : const HomeScreen(),
+          data: (identity) => identity == null
+              ? const SetupScreen()
+              : ObservatoryScreen(identity: identity),
         );
   }
 }

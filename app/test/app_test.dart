@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:keepers/app.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
 import 'package:keepers/features/onboarding/domain/local_identity.dart';
+import 'package:keepers/features/vault/application/vault_providers.dart';
 
 void main() {
   testWidgets('routes a first run to the family setup', (tester) async {
@@ -20,7 +21,7 @@ void main() {
     expect(find.text('Enter the Observatory'), findsOneWidget);
   });
 
-  testWidgets('routes an established identity to the Observatory placeholder', (
+  testWidgets('routes an established identity to the solo Observatory', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -39,12 +40,15 @@ void main() {
               ),
             ),
           ),
+          vaultEntriesProvider.overrideWithValue(const AsyncValue.data([])),
         ],
         child: const KeepersApp(),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('Every family has a keeper.'), findsOneWidget);
+    expect(find.text('The Observatory'), findsOneWidget);
+    expect(find.text('No memories yet.'), findsOneWidget);
   });
 }
