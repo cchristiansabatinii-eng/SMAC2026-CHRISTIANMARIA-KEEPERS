@@ -137,7 +137,7 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
       color: Color(0xFFE4626F),
       conversationPrompts: ConversationPromptSet(
         everyday: 'What was happening just outside this frame?',
-        reflective: 'What does this moment say about your family?',
+        reflective: 'Why might this small moment matter years from now?',
       ),
     ),
     const _RehearsalMemory(
@@ -150,7 +150,7 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
       color: Color(0xFF3EB8A5),
       conversationPrompts: ConversationPromptSet(
         everyday: 'Which detail in this story made everyone smile?',
-        reflective: 'Why is this voice worth carrying forward?',
+        reflective: 'What family value lives inside this story?',
       ),
     ),
     _RehearsalMemory(
@@ -326,6 +326,7 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
                 key: const ValueKey('ceremony-keeping'),
                 memories: memories,
                 preview: preview,
+                playback: widget.weeklyPlayback,
                 onDecision: preview ? null : widget.onWeeklyDecision,
                 onComplete: () =>
                     widget.onDestinationSelected(KeepersNavDestination.wheel),
@@ -1070,151 +1071,170 @@ final class _Reel extends StatelessWidget {
           contentWidth / .72,
           math.max(330.0, constraints.maxHeight * .61),
         );
-        return SingleChildScrollView(
-          key: const ValueKey('weekly-gallery-scroll'),
-          padding: const EdgeInsets.fromLTRB(20, 6, 20, 28),
-          child: Center(
-            child: SizedBox(
-              width: contentWidth,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _GallerySwipeRegion(
-                    key: const ValueKey('weekly-gallery-hero'),
-                    label:
-                        '${_memoryFormatLabel(memory.format)}. ${memory.title}.',
-                    value: '${currentIndex + 1} of ${memories.length}',
-                    increasedValue: currentIndex < memories.length - 1
-                        ? '${currentIndex + 2} of ${memories.length}'
-                        : null,
-                    decreasedValue: currentIndex > 0
-                        ? '$currentIndex of ${memories.length}'
-                        : null,
-                    onNext: currentIndex < memories.length - 1 ? onNext : null,
-                    onBack: currentIndex > 0 ? onBack : null,
-                    child: SizedBox(
-                      height: heroHeight,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: KeepersColors.auraIvory,
-                            border: Border.all(color: KeepersColors.homeLine),
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: AnimatedSwitcher(
-                            duration: reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 170),
-                            switchInCurve: Curves.easeOut,
-                            switchOutCurve: Curves.easeIn,
-                            transitionBuilder: (child, animation) =>
-                                FadeTransition(
-                                  opacity: animation,
-                                  child: child,
+        final isFinalMemory = currentIndex == memories.length - 1;
+        return Column(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                key: const ValueKey('weekly-gallery-scroll'),
+                padding: const EdgeInsets.fromLTRB(20, 6, 20, 16),
+                child: Center(
+                  child: SizedBox(
+                    width: contentWidth,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _GallerySwipeRegion(
+                          key: const ValueKey('weekly-gallery-hero'),
+                          label:
+                              '${_memoryFormatLabel(memory.format)}. ${memory.title}.',
+                          value: '${currentIndex + 1} of ${memories.length}',
+                          increasedValue: currentIndex < memories.length - 1
+                              ? '${currentIndex + 2} of ${memories.length}'
+                              : null,
+                          decreasedValue: currentIndex > 0
+                              ? '$currentIndex of ${memories.length}'
+                              : null,
+                          onNext: currentIndex < memories.length - 1
+                              ? onNext
+                              : null,
+                          onBack: currentIndex > 0 ? onBack : null,
+                          child: SizedBox(
+                            height: heroHeight,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(18),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: KeepersColors.auraIvory,
+                                  border: Border.all(
+                                    color: KeepersColors.homeLine,
+                                  ),
+                                  borderRadius: BorderRadius.circular(18),
                                 ),
-                            layoutBuilder: (currentChild, previousChildren) =>
-                                Stack(
-                                  fit: StackFit.expand,
-                                  children: [
-                                    ...previousChildren,
-                                    ?currentChild,
-                                  ],
+                                child: AnimatedSwitcher(
+                                  duration: reduceMotion
+                                      ? Duration.zero
+                                      : const Duration(milliseconds: 170),
+                                  switchInCurve: Curves.easeOut,
+                                  switchOutCurve: Curves.easeIn,
+                                  transitionBuilder: (child, animation) =>
+                                      FadeTransition(
+                                        opacity: animation,
+                                        child: child,
+                                      ),
+                                  layoutBuilder:
+                                      (currentChild, previousChildren) => Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          ...previousChildren,
+                                          ?currentChild,
+                                        ],
+                                      ),
+                                  child: _GalleryMemory(
+                                    key: ValueKey(
+                                      'weekly-memory-$currentIndex',
+                                    ),
+                                    memory: memory,
+                                    playback: playback,
+                                  ),
                                 ),
-                            child: _GalleryMemory(
-                              key: ValueKey('weekly-memory-$currentIndex'),
-                              memory: memory,
-                              playback: playback,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 13),
-                  KeepersText(
-                    memory.dateLabel,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: KeepersColors.ink,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: .15,
-                    ),
-                  ),
-                  const SizedBox(height: 7),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      KeepersText(
-                        _memoryFormatLabel(memory.format),
-                        style: const TextStyle(
-                          color: KeepersColors.inkMuted,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: .5,
-                        ),
-                      ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 8),
-                        child: SizedBox(
-                          width: 18,
-                          child: Divider(
-                            height: 1,
-                            color: KeepersColors.homeLine,
+                        const SizedBox(height: 13),
+                        KeepersText(
+                          memory.dateLabel,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: KeepersColors.ink,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: .15,
                           ),
                         ),
-                      ),
-                      KeepersText(
-                        '${currentIndex + 1} of ${memories.length}',
-                        style: const TextStyle(
-                          color: KeepersColors.inkMuted,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: .35,
+                        const SizedBox(height: 7),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            KeepersText(
+                              _memoryFormatLabel(memory.format),
+                              style: const TextStyle(
+                                color: KeepersColors.inkMuted,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: .5,
+                              ),
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 8),
+                              child: SizedBox(
+                                width: 18,
+                                child: Divider(
+                                  height: 1,
+                                  color: KeepersColors.homeLine,
+                                ),
+                              ),
+                            ),
+                            KeepersText(
+                              '${currentIndex + 1} of ${memories.length}',
+                              style: const TextStyle(
+                                color: KeepersColors.inkMuted,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: .35,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  _GalleryFilmstrip(
-                    memories: memories,
-                    currentIndex: currentIndex,
-                    onSelect: onSelect,
-                  ),
-                  if (memory.conversationPrompts case final prompts?) ...[
-                    const SizedBox(height: 18),
-                    _ConversationSpark(
-                      key: ValueKey(
-                        'conversation-spark-'
-                        '${memory.metadata?.id ?? currentIndex}',
-                      ),
-                      prompts: prompts,
-                    ),
-                  ],
-                  if (preview && currentIndex == memories.length - 1) ...[
-                    const SizedBox(height: 22),
-                    _GalleryEcho(open: echoOpen, onOpen: onEcho),
-                  ],
-                  if (currentIndex == memories.length - 1) ...[
-                    const SizedBox(height: 14),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(50),
-                        backgroundColor: KeepersColors.ink,
-                        foregroundColor: KeepersColors.auraIvory,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                        const SizedBox(height: 18),
+                        _GalleryFilmstrip(
+                          memories: memories,
+                          currentIndex: currentIndex,
+                          onSelect: onSelect,
                         ),
-                      ),
-                      onPressed: onKeeping,
-                      child: const KeepersText('Begin keeping'),
+                        if (memory.conversationPrompts case final prompts?) ...[
+                          const SizedBox(height: 18),
+                          _ConversationSpark(
+                            key: ValueKey(
+                              'conversation-spark-'
+                              '${memory.metadata?.id ?? currentIndex}',
+                            ),
+                            prompts: prompts,
+                          ),
+                        ],
+                        if (preview && isFinalMemory) ...[
+                          const SizedBox(height: 22),
+                          _GalleryEcho(open: echoOpen, onOpen: onEcho),
+                        ],
+                      ],
                     ),
-                  ],
-                ],
+                  ),
+                ),
               ),
             ),
-          ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              child: SizedBox(
+                width: contentWidth,
+                child: FilledButton(
+                  key: const ValueKey('weekly-gallery-primary-action'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(50),
+                    backgroundColor: KeepersColors.ink,
+                    foregroundColor: KeepersColors.auraIvory,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: isFinalMemory ? onKeeping : onNext,
+                  child: KeepersText(
+                    isFinalMemory ? 'Choose what to keep' : 'Next memory',
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -1985,12 +2005,14 @@ final class _KeepingView extends StatefulWidget {
   const _KeepingView({
     required this.memories,
     required this.preview,
+    required this.playback,
     required this.onDecision,
     required this.onComplete,
     super.key,
   });
   final List<_RehearsalMemory> memories;
   final bool preview;
+  final AudioPlaybackAdapter? playback;
   final WeeklyMemoryDecisionCallback? onDecision;
   final VoidCallback onComplete;
 
@@ -2085,6 +2107,7 @@ final class _KeepingViewState extends State<_KeepingView> {
   @override
   Widget build(BuildContext context) {
     final memory = widget.memories[_memoryIndex];
+    final cardSwipeEnabled = memory.format != _RehearsalFormat.text;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
       child: Column(
@@ -2092,18 +2115,22 @@ final class _KeepingViewState extends State<_KeepingView> {
           _VoteDots(preview: widget.preview),
           const SizedBox(height: 18),
           Semantics(
-            label: 'Memory decision card. Swipe up to keep or down to release.',
+            container: true,
+            explicitChildNodes: true,
+            label: _keepingMemorySemantics(memory),
             child: GestureDetector(
-              onVerticalDragEnd: (details) {
-                if (_saving) return;
-                final velocity = details.primaryVelocity ?? 0;
-                if (velocity < -350) {
-                  unawaited(_decide(_KeepingDecision.keep));
-                }
-                if (velocity > 350) {
-                  unawaited(_decide(_KeepingDecision.release));
-                }
-              },
+              onVerticalDragEnd: cardSwipeEnabled
+                  ? (details) {
+                      if (_saving) return;
+                      final velocity = details.primaryVelocity ?? 0;
+                      if (velocity < -350) {
+                        unawaited(_decide(_KeepingDecision.keep));
+                      }
+                      if (velocity > 350) {
+                        unawaited(_decide(_KeepingDecision.release));
+                      }
+                    }
+                  : null,
               child: SizedBox(
                 height: 300,
                 child: Stack(
@@ -2135,7 +2162,10 @@ final class _KeepingViewState extends State<_KeepingView> {
                           : const Duration(milliseconds: 300),
                       width: 270,
                       height: 270,
-                      padding: const EdgeInsets.all(24),
+                      padding: _decision == null
+                          ? const EdgeInsets.all(1.5)
+                          : const EdgeInsets.all(24),
+                      clipBehavior: Clip.antiAlias,
                       decoration: BoxDecoration(
                         color: _decision == _KeepingDecision.release
                             ? const Color(0xFF393735)
@@ -2149,24 +2179,12 @@ final class _KeepingViewState extends State<_KeepingView> {
                         ),
                       ),
                       child: _decision == null
-                          ? Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.landscape_rounded,
-                                  color: memory.color,
-                                  size: 58,
-                                ),
-                                const SizedBox(height: 18),
-                                KeepersText(
-                                  memory.caption,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: KeepersColors.cream,
-                                    height: 1.4,
-                                  ),
-                                ),
-                              ],
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(28.5),
+                              child: _KeepingMemoryContent(
+                                memory: memory,
+                                playback: widget.playback,
+                              ),
                             )
                           : _DecisionResult(decision: _decision!),
                     ),
@@ -2238,6 +2256,56 @@ final class _KeepingViewState extends State<_KeepingView> {
       ),
     );
   }
+}
+
+String _keepingMemorySemantics(_RehearsalMemory memory) {
+  final format = _memoryFormatLabel(memory.format);
+  if (memory.format == _RehearsalFormat.text) {
+    return '$format decision card. Scroll to read, then use Keep this memory '
+        'or Release this memory.';
+  }
+  return '$format decision card. Swipe up to keep or down to release.';
+}
+
+final class _KeepingMemoryContent extends StatelessWidget {
+  const _KeepingMemoryContent({required this.memory, required this.playback});
+
+  final _RehearsalMemory memory;
+  final AudioPlaybackAdapter? playback;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    children: [
+      _GalleryMemory(memory: memory, playback: playback),
+      if (memory.format == _RehearsalFormat.photo)
+        Positioned(
+          left: 14,
+          right: 14,
+          bottom: 14,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: KeepersColors.auraIvory.withValues(alpha: .96),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              child: KeepersText(
+                memory.caption,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: KeepersColors.ink,
+                  fontSize: 12,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          ),
+        ),
+    ],
+  );
 }
 
 final class _DecisionCard extends StatelessWidget {

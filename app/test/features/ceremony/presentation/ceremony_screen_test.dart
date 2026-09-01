@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -288,7 +289,7 @@ void main() {
     expect(find.text('A small moment'), findsNothing);
     expect(find.text('16 May, 2025'), findsNothing);
 
-    final keeping = find.widgetWithText(FilledButton, 'Begin keeping');
+    final keeping = find.widgetWithText(FilledButton, 'Choose what to keep');
     await tester.ensureVisible(keeping);
     await tester.tap(keeping);
     await tester.pumpAndSettle();
@@ -350,11 +351,222 @@ void main() {
         find.byKey(const ValueKey('weekly-conversation-spark')),
         findsNothing,
       );
-      final keeping = find.widgetWithText(FilledButton, 'Begin keeping');
-      await tester.ensureVisible(keeping);
-      expect(keeping.hitTestable(), findsOneWidget);
+      expect(
+        find.widgetWithText(FilledButton, 'Choose what to keep').hitTestable(),
+        findsOneWidget,
+      );
     },
   );
+
+  testWidgets(
+    'weekly keeping handoff stays reachable on a phone without scrolling',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 560);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final memory = OpenedMemory(
+        metadata: _weeklyMetadata(
+          id: 'phone-handoff-text',
+          format: MemoryFormat.text,
+        ),
+        payload: const EntryPayload(
+          format: MemoryFormat.text,
+          primaryBytes: null,
+          text: 'A current-week note ready for a family decision.',
+          caption: null,
+          mediaExtension: null,
+          mediaDurationMs: null,
+        ),
+      );
+
+      await tester.pumpWidget(_liveMemoryCeremony(memory: memory));
+      await tester.pumpAndSettle();
+
+      final scrollable = find.descendant(
+        of: find.byKey(const ValueKey('weekly-gallery-scroll')),
+        matching: find.byType(Scrollable),
+      );
+      final scrollState = tester.state<ScrollableState>(scrollable.first);
+      expect(scrollState.position.pixels, 0);
+
+      final handoff = find.widgetWithText(FilledButton, 'Choose what to keep');
+      expect(handoff.hitTestable(), findsOneWidget);
+      await tester.tap(handoff);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(FilledButton, 'Keep this memory').hitTestable(),
+        findsOneWidget,
+      );
+      expect(
+        find
+            .widgetWithText(OutlinedButton, 'Release this memory')
+            .hitTestable(),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('keeping renders the decrypted photo instead of a placeholder', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final photoBytes = Uint8List.fromList(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+    final memory = OpenedMemory(
+      metadata: _weeklyMetadata(
+        id: 'keeping-photo',
+        format: MemoryFormat.photo,
+      ),
+      payload: EntryPayload(
+        format: MemoryFormat.photo,
+        primaryBytes: photoBytes,
+        text: null,
+        caption: 'The family picnic',
+        mediaExtension: 'png',
+        mediaDurationMs: null,
+      ),
+    );
+
+    await tester.pumpWidget(_liveMemoryCeremony(memory: memory));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Choose what to keep'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('ceremony-keeping')), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Image &&
+            widget.image is MemoryImage &&
+            identical((widget.image as MemoryImage).bytes, photoBytes),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.semantics.byLabel(
+        'Photo memory decision card. Swipe up to keep or down to release.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.semantics.byLabel(RegExp('The family picnic')), findsOneWidget);
+    expect(find.byIcon(Icons.landscape_rounded), findsNothing);
+    semantics.dispose();
+  });
+
+  testWidgets('keeping plays the decrypted voice memory', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final playback = _RecordingPlaybackAdapter();
+    final voiceBytes = Uint8List.fromList([8, 5, 3, 1]);
+    final memory = OpenedMemory(
+      metadata: _weeklyMetadata(
+        id: 'keeping-voice',
+        format: MemoryFormat.voice,
+      ),
+      payload: EntryPayload(
+        format: MemoryFormat.voice,
+        primaryBytes: voiceBytes,
+        text: null,
+        caption: 'Grandad tells the train story',
+        mediaExtension: 'm4a',
+        mediaDurationMs: 4200,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _liveMemoryCeremony(memory: memory, playback: playback),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Choose what to keep'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('ceremony-keeping')), findsOneWidget);
+    expect(
+      find.semantics.byLabel(
+        'Voice memory decision card. Swipe up to keep or down to release.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.semantics.byLabel(RegExp('Grandad tells the train story')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Play Voice Memory'));
+    await tester.pump();
+
+    expect(playback.playedBytes, [same(voiceBytes)]);
+
+    final keep = find.widgetWithText(FilledButton, 'Keep this memory');
+    await tester.ensureVisible(keep);
+    await tester.tap(keep);
+    await tester.pumpAndSettle();
+
+    expect(playback.stops, 1);
+    semantics.dispose();
+  });
+
+  testWidgets('keeping keeps a long paragraph readable without overflow', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    const paragraph =
+        'After dinner we stayed around the table while Mariam taught everyone '
+        'the old card game her grandmother had shown her. Nobody remembered '
+        'the rules in quite the same way, so every round came with another '
+        'story, another correction, and more laughter. We kept playing until '
+        'the tea went cold and the youngest children started falling asleep '
+        'against our shoulders. It felt ordinary in the moment, which is '
+        'exactly why we wanted to remember every part of it.';
+    final memory = OpenedMemory(
+      metadata: _weeklyMetadata(id: 'keeping-text', format: MemoryFormat.text),
+      payload: const EntryPayload(
+        format: MemoryFormat.text,
+        primaryBytes: null,
+        text: paragraph,
+        caption: null,
+        mediaExtension: null,
+        mediaDurationMs: null,
+      ),
+    );
+
+    await tester.pumpWidget(_liveMemoryCeremony(memory: memory));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Choose what to keep'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('ceremony-keeping')), findsOneWidget);
+    expect(find.text(paragraph), findsOneWidget);
+    expect(find.byIcon(Icons.landscape_rounded), findsNothing);
+    expect(
+      find.semantics.byLabel(
+        'Text memory decision card. Scroll to read, then use Keep this memory '
+        'or Release this memory.',
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    final paragraphScroll = find
+        .descendant(
+          of: find.byKey(const ValueKey('ceremony-keeping')),
+          matching: find.byType(Scrollable),
+        )
+        .last;
+    final paragraphScrollState = tester.state<ScrollableState>(paragraphScroll);
+    expect(paragraphScrollState.position.maxScrollExtent, greaterThan(0));
+
+    await tester.drag(paragraphScroll, const Offset(0, -100));
+    await tester.pumpAndSettle();
+
+    expect(paragraphScrollState.position.pixels, greaterThan(0));
+    expect(find.text('KEPT'), findsNothing);
+    expect(find.text('RELEASED'), findsNothing);
+    semantics.dispose();
+  });
 
   testWidgets(
     'disposing live voice while playback starts still requests teardown',
@@ -472,7 +684,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final keeping = find.widgetWithText(FilledButton, 'Begin keeping');
+    final keeping = find.widgetWithText(FilledButton, 'Choose what to keep');
     await tester.ensureVisible(keeping);
     await tester.tap(keeping);
     await tester.pumpAndSettle();
@@ -527,6 +739,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('16 May, 2025'), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, 'Next memory').hitTestable(),
+      findsOneWidget,
+    );
     expect(find.byType(KeepersBottomNav), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -616,7 +832,9 @@ void main() {
     expect(find.text('Photo memory'), findsOneWidget);
     expect(find.text('1 of 3'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('weekly-gallery-thumbnail-1')));
+    final nextMemory = find.widgetWithText(FilledButton, 'Next memory');
+    expect(nextMemory.hitTestable(), findsOneWidget);
+    await tester.tap(nextMemory);
     await tester.pumpAndSettle();
     expect(find.text('Voice memory'), findsOneWidget);
     await tester.tap(find.byTooltip('Play Rehearsal Voice Memory'));
@@ -637,7 +855,10 @@ void main() {
       findsOneWidget,
     );
 
-    final keepingButton = find.widgetWithText(FilledButton, 'Begin keeping');
+    final keepingButton = find.widgetWithText(
+      FilledButton,
+      'Choose what to keep',
+    );
     await tester.ensureVisible(keepingButton);
     await tester.tap(keepingButton);
     await tester.pumpAndSettle();
@@ -970,25 +1191,13 @@ Widget _liveVoiceCeremony({required AudioPlaybackAdapter playback}) {
       mediaDurationMs: 1200,
     ),
   );
-  return MaterialApp(
-    theme: KeepersTheme.daylight(),
-    home: MediaQuery(
-      data: const MediaQueryData(disableAnimations: true),
-      child: CeremonyScreen(
-        familyName: 'Sabati',
-        currentMemberName: 'Chris',
-        startInWeekly: true,
-        weeklyPreview: false,
-        weeklyMemories: Future.value([memory]),
-        weeklyPlayback: playback,
-        onWeeklyDecision: (_, _) async {},
-        onDestinationSelected: (_) {},
-      ),
-    ),
-  );
+  return _liveMemoryCeremony(memory: memory, playback: playback);
 }
 
-Widget _liveMemoryCeremony({required OpenedMemory memory}) => MaterialApp(
+Widget _liveMemoryCeremony({
+  required OpenedMemory memory,
+  AudioPlaybackAdapter? playback,
+}) => MaterialApp(
   theme: KeepersTheme.daylight(),
   home: MediaQuery(
     data: const MediaQueryData(disableAnimations: true),
@@ -998,6 +1207,7 @@ Widget _liveMemoryCeremony({required OpenedMemory memory}) => MaterialApp(
       startInWeekly: true,
       weeklyPreview: false,
       weeklyMemories: Future.value([memory]),
+      weeklyPlayback: playback,
       onWeeklyDecision: (_, _) async {},
       onDestinationSelected: (_) {},
     ),
@@ -1044,6 +1254,27 @@ VaultEntryMetadata _capsuleMetadata({
   id: id,
   format: format,
 ).copyWith(privacy: PrivacyTier.capsule);
+
+final class _RecordingPlaybackAdapter implements AudioPlaybackAdapter {
+  final playedBytes = <Uint8List>[];
+  var stops = 0;
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<void> playBytes(Uint8List bytes) async {
+    playedBytes.add(bytes);
+  }
+
+  @override
+  Future<void> playFile(String path) async {}
+
+  @override
+  Future<void> stop() async {
+    stops += 1;
+  }
+}
 
 final class _ControllablePlaybackAdapter implements AudioPlaybackAdapter {
   _ControllablePlaybackAdapter({this.stopError});
