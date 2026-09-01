@@ -6,6 +6,36 @@ import 'package:keepers/design_system/observatory/observatory_theme.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 
 void main() {
+  test('daylight generic Material accent roles resolve to neutral ink', () {
+    final colors = KeepersTheme.daylight().colorScheme;
+
+    expect(colors.primary, KeepersColors.ink);
+    expect(colors.onPrimary, KeepersColors.auraIvory);
+    expect(colors.primaryContainer, KeepersColors.ink);
+    expect(colors.onPrimaryContainer, KeepersColors.auraIvory);
+    expect(colors.secondary, KeepersColors.ink);
+    expect(colors.tertiary, KeepersColors.ink);
+    expect(colors.outline, KeepersColors.ink);
+  });
+
+  test(
+    'neutral daylight chrome preserves semantic family and format colors',
+    () {
+      final tokens = KeepersTheme.daylight().extension<ObservatoryTokens>()!;
+
+      expect(tokens.memberColors['sage'], const Color(0xFF48643A));
+      expect(tokens.memberColors['sea'], const Color(0xFF2E6173));
+      expect(KeepersColors.homeGreen, const Color(0xFF5BD5AA));
+      expect(KeepersColors.homeGold, const Color(0xFFFFD563));
+      expect(KeepersColors.brass, const Color(0xFFC9A227));
+    },
+  );
+
+  test('memory-key chrome no longer introduces olive UI accents', () {
+    expect(KeepersColors.legacyOlive, KeepersColors.ink);
+    expect(KeepersColors.legacyOliveText, KeepersColors.inkMuted);
+  });
+
   test('every application text role uses Modern Society', () {
     expect(KeepersType.primary, 'ModernSociety');
 

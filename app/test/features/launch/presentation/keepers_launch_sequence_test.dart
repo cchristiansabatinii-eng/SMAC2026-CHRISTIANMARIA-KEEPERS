@@ -32,7 +32,7 @@ void main() {
     expect(find.text('Be authentic.'), findsOneWidget);
 
     await tester.pump(const Duration(milliseconds: 600));
-    expect(find.text('Be bold.'), findsOneWidget);
+    expect(find.text('Keep moments'), findsOneWidget);
 
     await tester.pump(const Duration(milliseconds: 600));
     expect(find.text('Be you.'), findsOneWidget);

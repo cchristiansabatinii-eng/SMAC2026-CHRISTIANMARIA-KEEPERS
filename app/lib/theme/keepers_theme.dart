@@ -9,7 +9,7 @@ class KeepersColors {
   static const inkMuted = Color(0xFF6D6963);
   static const homeInk = Color(0xFF201810);
   static const homeTaupe = Color(0xFF8B7E70);
-  static const homeGold = Color(0xFFBE8E20);
+  static const homeGold = Color(0xFFFFD563);
   static const homeGoldText = Color(0xFF8A650E);
   static const homeClay = Color(0xFFFF7A72);
   static const homeGreen = Color(0xFF5BD5AA);
@@ -17,9 +17,9 @@ class KeepersColors {
   static const homeMauve = Color(0xFFC99CFF);
   static const homeActionLine = Color(0xFFD4BBAC);
   static const homeLine = Color(0xFFDDCFBF);
-  static const homeAvatarGold = Color(0xFFFFD563);
-  static const legacyOlive = Color(0xFF7C835C);
-  static const legacyOliveText = Color(0xFF646943);
+  static const homeAvatarGold = homeGold;
+  static const legacyOlive = ink;
+  static const legacyOliveText = inkMuted;
   static const ground = Color(0xFF0B0A08);
   static const groundVignette = Color(0xFF171310);
   static const cream = Color(0xFFEFE7D4);

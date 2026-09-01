@@ -205,7 +205,7 @@ final class _LaunchMessage extends StatelessWidget {
     final phrase = switch (phase) {
       _LaunchPhase.present => milliseconds < 820 ? 'Be' : 'Be present.',
       _LaunchPhase.authentic => 'Be authentic.',
-      _LaunchPhase.bold => 'Be bold.',
+      _LaunchPhase.bold => 'Keep moments',
       _LaunchPhase.you => 'Be you.',
       _LaunchPhase.logo => '',
     };
