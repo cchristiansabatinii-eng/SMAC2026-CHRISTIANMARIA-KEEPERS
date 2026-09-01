@@ -9,6 +9,7 @@ import 'package:keepers/features/capture/data/audio_playback_adapter.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/ceremony/presentation/pastel_flood.dart';
 import 'package:keepers/features/vault/domain/vault_models.dart';
+import 'package:keepers/intelligence/local_conversation_prompt_service.dart';
 import 'package:keepers/theme/keepers_theme.dart';
 import 'package:keepers/ui/keepers_bottom_nav.dart';
 import 'package:keepers/ui/keepers_destination_scaffold.dart';
@@ -38,6 +39,7 @@ final class _RehearsalMemory {
     this.imageAsset,
     this.primaryBytes,
     this.metadata,
+    this.conversationPrompts,
     this.preview = true,
   });
 
@@ -49,6 +51,7 @@ final class _RehearsalMemory {
   final String? imageAsset;
   final Uint8List? primaryBytes;
   final VaultEntryMetadata? metadata;
+  final ConversationPromptSet? conversationPrompts;
   final Color color;
   final bool preview;
 }
@@ -132,6 +135,10 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
       dateLabel: '16 May, 2025',
       imageAsset: 'assets/memories/weekly_reference_1.png',
       color: Color(0xFFE4626F),
+      conversationPrompts: ConversationPromptSet(
+        everyday: 'What was happening just outside this frame?',
+        reflective: 'What does this moment say about your family?',
+      ),
     ),
     const _RehearsalMemory(
       author: 'A family member',
@@ -141,6 +148,10 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
       dateLabel: '18 May, 2025',
       imageAsset: 'assets/memories/weekly_reference_2.png',
       color: Color(0xFF3EB8A5),
+      conversationPrompts: ConversationPromptSet(
+        everyday: 'Which detail in this story made everyone smile?',
+        reflective: 'Why is this voice worth carrying forward?',
+      ),
     ),
     _RehearsalMemory(
       author: widget.currentMemberName,
@@ -150,6 +161,10 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
       dateLabel: '21 May, 2025',
       imageAsset: 'assets/memories/weekly_reference_3.png',
       color: const Color(0xFF9B6BD5),
+      conversationPrompts: const ConversationPromptSet(
+        everyday: 'What happened next?',
+        reflective: 'What does this memory help your family hold onto?',
+      ),
     ),
   ];
 
@@ -390,6 +405,8 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
         color: colors[index % colors.length],
         primaryBytes: payload.primaryBytes,
         metadata: memory.metadata,
+        conversationPrompts: const LocalConversationPromptService()
+            .promptsFor(memory),
         preview: false,
       );
     }, growable: false);
@@ -1165,6 +1182,16 @@ final class _Reel extends StatelessWidget {
                     currentIndex: currentIndex,
                     onSelect: onSelect,
                   ),
+                  if (memory.conversationPrompts case final prompts?) ...[
+                    const SizedBox(height: 18),
+                    _ConversationSpark(
+                      key: ValueKey(
+                        'conversation-spark-'
+                        '${memory.metadata?.id ?? currentIndex}',
+                      ),
+                      prompts: prompts,
+                    ),
+                  ],
                   if (preview && currentIndex == memories.length - 1) ...[
                     const SizedBox(height: 22),
                     _GalleryEcho(open: echoOpen, onOpen: onEcho),
@@ -1251,6 +1278,160 @@ String _memoryFormatLabel(_RehearsalFormat format) => switch (format) {
   _RehearsalFormat.voice => 'Voice memory',
   _RehearsalFormat.text => 'Text memory',
 };
+
+final class _ConversationSpark extends StatefulWidget {
+  const _ConversationSpark({required this.prompts, super.key});
+
+  final ConversationPromptSet prompts;
+
+  @override
+  State<_ConversationSpark> createState() => _ConversationSparkState();
+}
+
+final class _ConversationSparkState extends State<_ConversationSpark> {
+  bool _reflective = false;
+  bool _skipped = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_skipped) return const SizedBox.shrink();
+
+    final question = _reflective
+        ? widget.prompts.reflective
+        : widget.prompts.everyday;
+    return Container(
+      key: const ValueKey('weekly-conversation-spark'),
+      padding: const EdgeInsets.fromLTRB(16, 15, 16, 12),
+      decoration: BoxDecoration(
+        color: KeepersColors.auraIvory,
+        border: Border.all(color: KeepersColors.homeActionLine),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.auto_awesome_outlined,
+                size: 17,
+                color: KeepersColors.homeGoldText,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: KeepersText(
+                  'AI conversation spark',
+                  style: TextStyle(
+                    color: KeepersColors.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: .25,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          const KeepersText(
+            'Created privately on this phone',
+            style: TextStyle(
+              color: KeepersColors.inkMuted,
+              fontSize: 9,
+              letterSpacing: .2,
+            ),
+          ),
+          const SizedBox(height: 13),
+          Semantics(
+            liveRegion: true,
+            child: KeepersText(
+              question,
+              key: ValueKey(_reflective ? 'deep-question' : 'light-question'),
+              style: const TextStyle(
+                color: KeepersColors.ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w500,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _ConversationToneButton(
+                label: 'Keep it light',
+                selected: !_reflective,
+                onPressed: () => setState(() => _reflective = false),
+              ),
+              _ConversationToneButton(
+                label: 'Go deeper',
+                selected: _reflective,
+                onPressed: () => setState(() => _reflective = true),
+              ),
+              SizedBox(
+                height: 48,
+                child: TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: KeepersColors.inkMuted,
+                  ),
+                  onPressed: () => setState(() => _skipped = true),
+                  child: const KeepersText('Skip question'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _ConversationToneButton extends StatelessWidget {
+  const _ConversationToneButton({
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = ButtonStyle(
+      minimumSize: const WidgetStatePropertyAll(Size(0, 48)),
+      shape: WidgetStatePropertyAll(
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+    if (selected) {
+      return FilledButton.icon(
+        style: style.copyWith(
+          backgroundColor: const WidgetStatePropertyAll(
+            KeepersColors.homeGold,
+          ),
+          foregroundColor: const WidgetStatePropertyAll(KeepersColors.ink),
+        ),
+        onPressed: onPressed,
+        icon: const Icon(Icons.check_rounded, size: 16),
+        label: KeepersText(label),
+      );
+    }
+    return OutlinedButton(
+      style: style.copyWith(
+        foregroundColor: const WidgetStatePropertyAll(KeepersColors.ink),
+        side: const WidgetStatePropertyAll(
+          BorderSide(color: KeepersColors.homeTaupe),
+        ),
+      ),
+      onPressed: onPressed,
+      child: KeepersText(label),
+    );
+  }
+}
 
 final class _GalleryMemory extends StatelessWidget {
   const _GalleryMemory({

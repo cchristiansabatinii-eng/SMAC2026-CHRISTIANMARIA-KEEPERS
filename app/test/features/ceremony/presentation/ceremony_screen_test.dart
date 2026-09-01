@@ -300,6 +300,63 @@ void main() {
   });
 
   testWidgets(
+    'weekly conversation spark offers light and deeper questions without blocking the ritual',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final memory = OpenedMemory(
+        metadata: _weeklyMetadata(
+          id: 'family-dinner',
+          format: MemoryFormat.text,
+        ),
+        payload: const EntryPayload(
+          format: MemoryFormat.text,
+          primaryBytes: null,
+          text: 'We made pizza together after dinner.',
+          caption: 'Family dinner',
+          mediaExtension: null,
+          mediaDurationMs: null,
+        ),
+      );
+
+      await tester.pumpWidget(_liveMemoryCeremony(memory: memory));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('weekly-conversation-spark')),
+        findsOneWidget,
+      );
+      expect(find.text('AI conversation spark'), findsOneWidget);
+      expect(
+        find.text('What was on the table that everyone kept reaching for?'),
+        findsOneWidget,
+      );
+
+      final deeper = find.widgetWithText(OutlinedButton, 'Go deeper');
+      await tester.ensureVisible(deeper);
+      await tester.tap(deeper);
+      await tester.pump();
+      expect(
+        find.text('Which family tradition would you like this meal to become?'),
+        findsOneWidget,
+      );
+
+      final skip = find.widgetWithText(TextButton, 'Skip question');
+      await tester.tap(skip);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('weekly-conversation-spark')),
+        findsNothing,
+      );
+      final keeping = find.widgetWithText(FilledButton, 'Begin keeping');
+      await tester.ensureVisible(keeping);
+      expect(keeping.hitTestable(), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'disposing live voice while playback starts still requests teardown',
     (tester) async {
       final playback = _ControllablePlaybackAdapter();
@@ -930,6 +987,22 @@ Widget _liveVoiceCeremony({required AudioPlaybackAdapter playback}) {
     ),
   );
 }
+
+Widget _liveMemoryCeremony({required OpenedMemory memory}) => MaterialApp(
+  theme: KeepersTheme.daylight(),
+  home: MediaQuery(
+    data: const MediaQueryData(disableAnimations: true),
+    child: CeremonyScreen(
+      familyName: 'Sabati',
+      currentMemberName: 'Chris',
+      startInWeekly: true,
+      weeklyPreview: false,
+      weeklyMemories: Future.value([memory]),
+      onWeeklyDecision: (_, _) async {},
+      onDestinationSelected: (_) {},
+    ),
+  ),
+);
 
 VaultEntryMetadata _weeklyMetadata({
   required String id,
