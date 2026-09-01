@@ -23,6 +23,21 @@ enum CapturePhase {
 
 enum CapturePermissionSource { camera, library, microphone }
 
+enum CaptureRetryIntent {
+  save,
+  discard,
+  camera,
+  library,
+  recording,
+  replacePrimary,
+  recoverLostPhoto,
+  selectPhoto,
+  selectVoice,
+  selectText,
+  pendingCleanup,
+  committedCleanup,
+}
+
 extension PhotoSourcePermission on PhotoSource {
   CapturePermissionSource get permissionSource => switch (this) {
     PhotoSource.camera => CapturePermissionSource.camera,
@@ -172,6 +187,8 @@ final class CaptureDraft {
     this.text = '',
     this.phase = CapturePhase.editing,
     this.errorMessage,
+    this.retryIntent,
+    this.cleanupRequired = false,
     this.savedEntry,
   });
 
@@ -185,6 +202,8 @@ final class CaptureDraft {
   final String text;
   final CapturePhase phase;
   final String? errorMessage;
+  final CaptureRetryIntent? retryIntent;
+  final bool cleanupRequired;
   final EntryMetadata? savedEntry;
 
   bool get isRecording => recordingActive;
@@ -196,7 +215,18 @@ final class CaptureDraft {
   bool get canSave =>
       hasPrimary &&
       !isRecording &&
-      (phase == CapturePhase.editing || phase == CapturePhase.failed);
+      (phase == CapturePhase.editing ||
+          (phase == CapturePhase.failed &&
+              retryIntent == CaptureRetryIntent.save));
+  bool get retryRequiresCleanup => switch (retryIntent) {
+    CaptureRetryIntent.discard ||
+    CaptureRetryIntent.replacePrimary ||
+    CaptureRetryIntent.selectPhoto ||
+    CaptureRetryIntent.selectVoice ||
+    CaptureRetryIntent.selectText ||
+    CaptureRetryIntent.committedCleanup => true,
+    _ => false,
+  };
   bool get hasDraft => hasPrimary || caption.trim().isNotEmpty || isRecording;
 
   CaptureDraft copyWith({
@@ -213,6 +243,9 @@ final class CaptureDraft {
     CapturePhase? phase,
     String? errorMessage,
     bool clearErrorMessage = false,
+    CaptureRetryIntent? retryIntent,
+    bool clearRetryIntent = false,
+    bool? cleanupRequired,
     EntryMetadata? savedEntry,
     bool clearSavedEntry = false,
   }) => CaptureDraft(
@@ -226,6 +259,8 @@ final class CaptureDraft {
     text: text ?? this.text,
     phase: phase ?? this.phase,
     errorMessage: clearErrorMessage ? null : errorMessage ?? this.errorMessage,
+    retryIntent: clearRetryIntent ? null : retryIntent ?? this.retryIntent,
+    cleanupRequired: cleanupRequired ?? this.cleanupRequired,
     savedEntry: clearSavedEntry ? null : savedEntry ?? this.savedEntry,
   );
 }
