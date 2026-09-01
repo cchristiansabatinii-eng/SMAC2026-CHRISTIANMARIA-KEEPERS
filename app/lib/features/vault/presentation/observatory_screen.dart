@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -127,6 +128,70 @@ void _clearOpenedPrimaryBytes(Iterable<OpenedMemory> opened) {
   }
 }
 
+typedef ArchivePhotoPreviewOpener = Future<MemoryOpenResult> Function(
+  VaultEntryMetadata metadata, {
+  required int maxSourceBytes,
+});
+
+@visibleForTesting
+Future<Uint8List?> loadArchivePhotoPreview({
+  required ArchiveMemorySummary summary,
+  required Iterable<VaultEntryMetadata> entries,
+  required ArchivePhotoPreviewOpener open,
+}) async {
+  final metadata = _findKeptArchiveEntry(
+    summary,
+    entries,
+    requiredFormat: MemoryFormat.photo,
+  );
+  if (metadata == null) return null;
+
+  MemoryOpenResult result;
+  try {
+    result = await open(
+      metadata,
+      maxSourceBytes: archivePhotoPreviewMaxSourceBytes,
+    );
+  } on Object {
+    return null;
+  }
+  if (result is! OpenedMemory) return null;
+
+  final bytes = result.payload.primaryBytes;
+  final isExactPhoto =
+      result.metadata.toEntryMetadata() == metadata.toEntryMetadata() &&
+      result.metadata.state == metadata.state &&
+      result.metadata.expiresAt == metadata.expiresAt &&
+      result.metadata.format == MemoryFormat.photo &&
+      result.payload.format == MemoryFormat.photo &&
+      bytes != null &&
+      bytes.isNotEmpty;
+  if (!isExactPhoto) {
+    _clearOpenedPrimaryBytes([result]);
+    return null;
+  }
+  return bytes;
+}
+
+VaultEntryMetadata? _findKeptArchiveEntry(
+  ArchiveMemorySummary summary,
+  Iterable<VaultEntryMetadata> entries, {
+  MemoryFormat? requiredFormat,
+}) {
+  VaultEntryMetadata? match;
+  for (final entry in entries) {
+    if (entry.id != summary.id) continue;
+    if (match != null) return null;
+    match = entry;
+  }
+  if (match == null ||
+      match.state != 'kept' ||
+      (requiredFormat != null && match.format != requiredFormat)) {
+    return null;
+  }
+  return match;
+}
+
 /// Owns decrypted Weekly media for exactly one on-screen experience.
 ///
 /// A late load is cleared too, so closing while decryption is in flight cannot
@@ -179,6 +244,7 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
 
   bool _captureInFlight = false;
   bool _nudgeInFlight = false;
+  bool _archiveMemoryViewerCovering = false;
   KeepersNavDestination _selectedDestination = KeepersNavDestination.wheel;
   _WeeklyExperienceMode? _weeklyExperienceMode;
   Future<List<OpenedMemory>>? _weeklyMemories;
@@ -189,12 +255,16 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
   bool _weeklyRosterRefreshInFlight = false;
   bool _appIsForeground = true;
   WeeklyFamilyPresenceSessionActions? _activeWeeklyPresenceActions;
-  var _weeklyRosterRefreshEpoch = 0;  final Set<String> _awaitingActivationMemberIds = {};
+  var _weeklyRosterRefreshEpoch = 0;
+  final Set<String> _awaitingActivationMemberIds = {};
   Timer? _activationRefreshTimer;
   String? _activationFamilyId;
   String? _activationAccountId;
   int? _activationRefreshInFlightEpoch;
   var _activationEpoch = 0;
+  final Set<String> _ownerBootstrapRosterRetryKeys = {};
+  String? _ownerBootstrapRosterRetryFamilyId;
+  String? _ownerBootstrapRosterRetryAccountId;
 
   @override
   void initState() {
@@ -655,6 +725,7 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     FamilyRosterState? previous,
     FamilyRosterState next,
   ) {
+    _retryRosterAfterOwnerBootstrap();
     if (_weeklyPresenceSessionActive &&
         _weeklyExperienceMode == _WeeklyExperienceMode.waiting &&
         next.hasLoadedLocal) {
@@ -672,6 +743,62 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     if (_awaitingActivationMemberIds.isNotEmpty) {
       _pruneActivatedMembers(next.members);
     }
+  }
+
+  void _handleFamilyCodeChanged(
+    FamilyCodeState? previous,
+    FamilyCodeState next,
+  ) {
+    _retryRosterAfterOwnerBootstrap();
+    final ownerInboxBecameAvailable =
+        next.phase == FamilyCodePhase.ready &&
+        next.isCreator &&
+        (previous?.phase != FamilyCodePhase.ready ||
+            previous?.isCreator != true);
+    if (ownerInboxBecameAvailable) {
+      unawaited(
+        ref
+            .read(
+              familyJoinRequestsControllerProvider(widget.identity.familyId)
+                  .notifier,
+            )
+            .refresh(),
+      );
+    }
+  }
+
+  void _retryRosterAfterOwnerBootstrap() {
+    final familyId = widget.identity.familyId;
+    final accountId = ref
+        .read(cloudFamilyGatewayProvider)
+        .authenticatedAccountId;
+    if (accountId == null) return;
+    final code = ref.read(familyCodeControllerProvider(familyId));
+    final roster = ref.read(familyRosterProvider(familyId));
+    if (code.phase != FamilyCodePhase.ready ||
+        code.isOffline ||
+        roster.refreshFailure?.code != InvitationFailureCode.forbidden) {
+      return;
+    }
+    if (_ownerBootstrapRosterRetryFamilyId != familyId ||
+        _ownerBootstrapRosterRetryAccountId != accountId) {
+      _ownerBootstrapRosterRetryKeys.clear();
+      _ownerBootstrapRosterRetryFamilyId = familyId;
+      _ownerBootstrapRosterRetryAccountId = accountId;
+    }
+    final retryKey = '$familyId:${code.codeVersion}:$accountId';
+    if (!_ownerBootstrapRosterRetryKeys.add(retryKey)) return;
+    unawaited(
+      Future<void>.microtask(() async {
+        if (!mounted ||
+            widget.identity.familyId != familyId ||
+            ref.read(cloudFamilyGatewayProvider).authenticatedAccountId !=
+                accountId) {
+          return;
+        }
+        await _refreshRoster();
+      }),
+    );
   }
 
   void _pruneActivatedMembers(Iterable<FamilyMember> members) {
@@ -733,7 +860,7 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
               final metadata = entries.firstWhere(
                 (entry) => entry.id == summary.id,
               );
-              _openMemory(metadata);
+              unawaited(_openMemory(metadata));
             },
           ),
         ),
@@ -741,16 +868,26 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
     );
   }
 
-  void _openMemory(VaultEntryMetadata metadata) {
+  Future<void> _openMemory(VaultEntryMetadata metadata) async {
+    final coversArchive = _selectedDestination == KeepersNavDestination.archive;
+    if (coversArchive && !_archiveMemoryViewerCovering) {
+      setState(() => _archiveMemoryViewerCovering = true);
+    }
     final controller = ref.read(vaultControllerProvider.future);
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => MemoryViewer(
-          memory: controller.then((value) => value.open(metadata)),
-          playback: ref.read(audioPlaybackAdapterProvider),
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => MemoryViewer(
+            memory: controller.then((value) => value.open(metadata)),
+            playback: ref.read(audioPlaybackAdapterProvider),
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      if (coversArchive && mounted && _archiveMemoryViewerCovering) {
+        setState(() => _archiveMemoryViewerCovering = false);
+      }
+    }
   }
 
   Future<bool> _completeCapsuleTask(CapsuleAssignment assignment) async {
@@ -803,7 +940,7 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
               final metadata = entries.firstWhere(
                 (entry) => entry.id == summary.id,
               );
-              _openMemory(metadata);
+              unawaited(_openMemory(metadata));
             },
           ),
         ),
@@ -818,6 +955,7 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
       widget.identity.familyId,
     );
     final familyCode = ref.watch(codeProvider);
+    ref.listen(codeProvider, _handleFamilyCodeChanged);
     if (familyCode.failure?.code ==
         FamilyJoinFailureCode.accountFamilyConflict) {
       return AccountConflictScreen(
@@ -979,11 +1117,27 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
           onRetry: () => ref.invalidate(vaultEntriesProvider),
           onCapture: _captureInFlight ? () {} : () => unawaited(_capture()),
           onDestinationSelected: _selectDestination,
+          loadPhotoPreview:
+              _appIsForeground &&
+                  !_captureInFlight &&
+                  !_archiveMemoryViewerCovering
+              ? (summary) => loadArchivePhotoPreview(
+                  summary: summary,
+                  entries: entries,
+                  open: (metadata, {required maxSourceBytes}) async {
+                    final controller = await ref.read(
+                      vaultControllerProvider.future,
+                    );
+                    return controller.openPhotoPreview(
+                      metadata,
+                      maxSourceBytes: maxSourceBytes,
+                    );
+                  },
+                )
+              : null,
           onOpenMemory: (summary) {
-            final metadata = entries.firstWhere(
-              (entry) => entry.id == summary.id,
-            );
-            _openMemory(metadata);
+            final metadata = _findKeptArchiveEntry(summary, entries);
+            if (metadata != null) unawaited(_openMemory(metadata));
           },
         ),
       ),
@@ -993,12 +1147,48 @@ final class _ObservatoryScreenState extends ConsumerState<ObservatoryScreen>
         onDestinationSelected: _selectDestination,
       ),
     };
-    if (rosterState.refreshFailure == null) return destination;
+
+    final showGlobalJoinRequest = pendingJoinRequest != null;
+    final showJoinRequestsFailure =
+        pendingJoinRequest == null &&
+        familyCode.phase == FamilyCodePhase.ready &&
+        !familyCode.isOffline &&
+        joinRequests.failure != null;
+    final showJoinRequestsNotice =
+        showGlobalJoinRequest || showJoinRequestsFailure;
+    if (rosterState.refreshFailure == null && !showJoinRequestsNotice) {
+      return destination;
+    }
     return Stack(
       fit: StackFit.expand,
       children: [
         destination,
-        _RosterRefreshNotice(onRetry: () => unawaited(_refreshRoster())),
+        if (rosterState.refreshFailure != null)
+          _RosterRefreshNotice(
+            bottomInset: showJoinRequestsNotice ? 148 : 82,
+            onRetry: () => unawaited(_refreshRoster()),
+          ),
+        if (showGlobalJoinRequest)
+          _FamilyActionNotice(
+            key: const ValueKey('global-family-join-request-notice'),
+            semanticsLabel:
+                '${pendingJoinRequest.displayName} wants to join your family. '
+                'Review request.',
+            label:
+                '${pendingJoinRequest.displayName.toUpperCase()} '
+                'WANTS TO JOIN YOUR FAMILY',
+            actionLabel: 'REVIEW REQUEST',
+            onPressed: () => unawaited(_openJoinRequest(pendingJoinRequest)),
+          ),
+        if (showJoinRequestsFailure)
+          _FamilyActionNotice(
+            key: const ValueKey('family-join-requests-failure-notice'),
+            semanticsLabel: 'Family requests could not be checked. Retry.',
+            label: 'FAMILY REQUESTS COULD NOT BE CHECKED',
+            actionLabel: 'RETRY',
+            onPressed: () =>
+                unawaited(ref.read(requestsProvider.notifier).refresh()),
+          ),
       ],
     );
   }
@@ -1119,15 +1309,16 @@ final class _RosterGate extends StatelessWidget {
 }
 
 final class _RosterRefreshNotice extends StatelessWidget {
-  const _RosterRefreshNotice({required this.onRetry});
+  const _RosterRefreshNotice({required this.onRetry, this.bottomInset = 82});
 
   final VoidCallback onRetry;
+  final double bottomInset;
 
   @override
   Widget build(BuildContext context) => Align(
     alignment: Alignment.bottomCenter,
     child: SafeArea(
-      minimum: const EdgeInsets.fromLTRB(20, 0, 20, 82),
+      minimum: EdgeInsets.fromLTRB(20, 0, 20, bottomInset),
       child: Semantics(
         liveRegion: true,
         container: true,
@@ -1153,6 +1344,64 @@ final class _RosterRefreshNotice extends StatelessWidget {
                 TextButton(
                   onPressed: onRetry,
                   child: const KeepersText('RETRY'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+final class _FamilyActionNotice extends StatelessWidget {
+  const _FamilyActionNotice({
+    required this.semanticsLabel,
+    required this.label,
+    required this.actionLabel,
+    required this.onPressed,
+    super.key,
+  });
+
+  final String semanticsLabel;
+  final String label;
+  final String actionLabel;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.bottomCenter,
+    child: SafeArea(
+      minimum: const EdgeInsets.fromLTRB(20, 0, 20, 82),
+      child: Semantics(
+        liveRegion: true,
+        container: true,
+        label: semanticsLabel,
+        child: Material(
+          color: KeepersColors.homeInk,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: KeepersText(
+                    label,
+                    style: const TextStyle(
+                      color: KeepersColors.auraIvory,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: onPressed,
+                  style: TextButton.styleFrom(
+                    foregroundColor: KeepersColors.auraIvory,
+                  ),
+                  child: KeepersText(actionLabel),
                 ),
               ],
             ),
