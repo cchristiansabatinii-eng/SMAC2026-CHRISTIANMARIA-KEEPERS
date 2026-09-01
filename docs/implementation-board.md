@@ -11,8 +11,8 @@ This issue-ready backlog is derived from Section 5 of [KEEPERS_SPEC.md](KEEPERS_
 
 - [x] **P0-01 · Repository, CI, and evidence docs (R1)** — Configure analyze/test CI; add the canonical spec, meeting-minutes template, AI-usage log, and issue-ready backlog. **Acceptance:** the workflow is valid, documentation links resolve, and the pull request is reviewable.
 - [x] **P0-02 · Flutter scaffold, Riverpod, and encrypted schema (R2)** — Create the Flutter app under app/, wire Riverpod, and implement the Section 4.2 SQLCipher schema. **Acceptance:** app boots, schema migrations run, analyze/tests pass.
-- [ ] **P0-03 · Capture flow v0 (R3)** — Capture photo, voice, and text entries into encrypted storage and display them in the personal vault. **Acceptance:** capture → store → display works for all three types.
-- [ ] **P0-GATE · Two-device capture gate (All)** — Demonstrate capture → store → display on two physical devices, using iOS and Android when available.
+- [ ] **P0-03 · Capture flow v0 (R3)** — Capture photo, voice, and text entries into encrypted storage and display them in the personal vault. **Acceptance:** capture → store → display works for all three types. **Evidence:** [physical-device gate (pending)](evidence/p0-03-device-gate.md).
+- [ ] **P0-GATE · Two-device capture gate (All)** — Demonstrate capture → store → display on two physical devices, using iOS and Android when available. **Evidence:** [physical-device gate (pending)](evidence/p0-03-device-gate.md).
 
 ## Phase 1 — Sync core (Days 2–5)
 
