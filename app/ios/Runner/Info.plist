@@ -26,6 +26,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Keepers uses the camera when you choose to capture a photo memory.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Keepers uses the microphone when you choose to record a voice memory.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Keepers lets you choose a photo memory from your library.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

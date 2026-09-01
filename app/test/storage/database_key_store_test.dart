@@ -36,6 +36,14 @@ void main() {
     expect(base64Url.decode(key), hasLength(32));
     expect(secureStore.values[DatabaseKeyStore.keyName], key);
   });
+
+  test('secure values can be deleted for rollback', () async {
+    final store = _MemorySecureValueStore()..values['temporary'] = 'secret';
+
+    await store.delete('temporary');
+
+    expect(await store.read('temporary'), isNull);
+  });
 }
 
 final class _MemorySecureValueStore implements SecureValueStore {
@@ -47,5 +55,10 @@ final class _MemorySecureValueStore implements SecureValueStore {
   @override
   Future<void> write(String key, String value) async {
     values[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    values.remove(key);
   }
 }

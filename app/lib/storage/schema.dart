@@ -1,7 +1,7 @@
 final class KeepersSchema {
   const KeepersSchema._();
 
-  static const int version = 1;
+  static const int version = 2;
 
   static const List<String> tableNames = [
     'families',
@@ -204,13 +204,13 @@ CREATE TABLE draw_logs (
         'ON draw_logs(member_id, shown_at DESC)',
   ];
 
-  static List<String> statementsForUpgrade(
-    int oldVersion,
-    int newVersion,
-  ) {
-    if (oldVersion < 0 ||
-        newVersion > version ||
-        oldVersion >= newVersion) {
+  static const List<String> versionTwoStatements = [
+    'ALTER TABLE members ADD COLUMN member_key_ref TEXT',
+    "ALTER TABLE members ADD COLUMN color_token TEXT NOT NULL DEFAULT 'ochre'",
+  ];
+
+  static List<String> statementsForUpgrade(int oldVersion, int newVersion) {
+    if (oldVersion < 0 || newVersion > version || oldVersion >= newVersion) {
       throw ArgumentError(
         'Unsupported schema upgrade from $oldVersion to $newVersion',
       );
@@ -219,6 +219,9 @@ CREATE TABLE draw_logs (
     final statements = <String>[];
     if (oldVersion < 1 && newVersion >= 1) {
       statements.addAll(versionOneStatements);
+    }
+    if (oldVersion < 2 && newVersion >= 2) {
+      statements.addAll(versionTwoStatements);
     }
 
     return List.unmodifiable(statements);

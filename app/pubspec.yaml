@@ -7,16 +7,25 @@ environment:
   sdk: ^3.13.2
 
 dependencies:
+  audioplayers: ^6.8.1
+  cryptography: ^2.9.0
+  cryptography_flutter: ^2.3.4
+  ffi: ^2.2.0
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.4.2
   flutter_secure_storage: ^11.0.0
+  image_picker: ^1.2.3
   path: ^1.9.1
   path_provider: ^2.1.6
+  record: ^7.1.1
   sqflite_sqlcipher: ^3.4.1
+  uuid: ^4.6.0
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   sqflite_common: ^2.5.11
@@ -24,3 +33,12 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/textures/observatory-grain.png
+  fonts:
+    - family: Fraunces
+      fonts:
+        - asset: assets/fonts/Fraunces.ttf
+    - family: Schibsted Grotesk
+      fonts:
+        - asset: assets/fonts/SchibstedGrotesk.ttf
