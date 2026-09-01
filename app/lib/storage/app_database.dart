@@ -56,11 +56,7 @@ final class AppDatabase {
     );
   }
 
-  Future<void> _onUpgrade(
-    Database database,
-    int oldVersion,
-    int newVersion,
-  ) {
+  Future<void> _onUpgrade(Database database, int oldVersion, int newVersion) {
     return _runStatements(
       database,
       KeepersSchema.statementsForUpgrade(oldVersion, newVersion),

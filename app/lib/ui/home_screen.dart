@@ -31,9 +31,7 @@ class HomeScreen extends StatelessWidget {
                     'This week is still yours. Bring your family together '
                     'to unlock what everyone chose to share.',
                     style: textTheme.titleMedium?.copyWith(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurfaceVariant,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                       height: 1.45,
                     ),
                   ),
@@ -43,9 +41,7 @@ class HomeScreen extends StatelessWidget {
                   Text(
                     'No cloud. No feed. The memories arrive when the family does.',
                     style: textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurfaceVariant,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
@@ -65,17 +61,12 @@ class _Mark extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(
-          Icons.lock_rounded,
-          color: Theme.of(context).colorScheme.primary,
-        ),
+        Icon(Icons.lock_rounded, color: Theme.of(context).colorScheme.primary),
         const SizedBox(width: 10),
         Text(
           'KEEPERS',
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 2.4,
-              ),
+          style: Theme.of(context).textTheme.labelLarge
+              ?.copyWith(fontWeight: FontWeight.w800, letterSpacing: 2.4),
         ),
       ],
     );
