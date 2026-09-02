@@ -17,6 +17,26 @@ The mobile client is generated from Flutter stable and targets Android and iOS.
 - Mobile sandboxing and app-private roots exclude other principals. Hostile or non-cooperating same-euid writers are outside this contract: POSIX discretionary permissions cannot provide mandatory exclusion from the owning identity.
 - Physical Android and iOS acceptance remains part of the Phase 0 Task 9 device matrix; CI runs the same production persistence smoke on an Android emulator and iOS simulator.
 
+## Weekly waiting-room presence
+
+The production waiting room uses foreground Bluetooth Low Energy to discover
+nearby signed-in family members who also have the room open. Each phone
+advertises a rotating, family-keyed service UUID and scans only for roster
+members' current tokens; raw family/member identifiers, device addresses, and
+scan payloads are not persisted or logged. Remote attendance expires per member
+after 15 seconds and fails closed when Bluetooth is off, permission is denied,
+the app backgrounds, the room closes, or identity changes. Weekly content is
+loaded only after Start performs a fresh photo-progress and three-quarter-quorum
+check.
+
+Android declares foreground scan/connect/advertise permissions and iOS declares
+the Bluetooth usage description without background modes. The BSD-licensed
+`flutter_ble_peripheral` 3.1.0 runtime is vendored under
+`packages/flutter_ble_peripheral`; its local native patch resolves Android's
+advertiser at call time, defers Darwin CoreBluetooth creation until first use,
+and removes advertisement-payload logging. A two-physical-phone Android/iOS
+matrix is still required before treating proximity as release-ready.
+
 ## Supabase family membership
 
 Supabase configuration is required for a new installation to pass account setup
@@ -111,20 +131,23 @@ The backend must deploy before the client, in this order:
 1. `supabase/migrations/202609050001_family_invitations.sql`
 2. `supabase/migrations/202609070001_family_code_join_requests.sql`
 3. `supabase/migrations/202609070002_membership_join_serialization.sql`
-4. `supabase/functions/keepers-auth-bridge`, for account-email callback handoff
-5. purge scheduling and an external per-IP throttle
-6. the configured mobile build
+4. `supabase/migrations/202609080001_family_code_bootstrap_recovery.sql`
+5. `supabase/functions/keepers-auth-bridge`, for account-email callback handoff
+6. purge scheduling and an external per-IP throttle
+7. the configured mobile build
 
 See `../supabase/README.md` for exact deployment, retention, link-association,
 and database verification steps.
 
-Unit/widget tests and static platform checks are not live release evidence. All
-three hosted migrations and the mobile auth callback bridge were deployed and
-verified on 2026-09-07. There is still no recorded PostgreSQL concurrency run,
-production IP throttle, purge job, release-signing certificate, published domain
-association, two-physical-phone family-code run, iOS runtime/accessibility pass,
-or release proximity source. Manual-code joining is the reliable demo path; the
-verified-link/store release remains gated by the missing external evidence.
+Unit/widget tests and static platform checks are not live release evidence. The
+first three hosted migrations and the mobile auth callback bridge were deployed
+on 2026-09-07. The fourth migration's recovery SQL was applied and live-verified
+on 2026-09-08; it still needs normal migration-history deployment. There is no
+recorded PostgreSQL concurrency run, production IP throttle, purge job,
+release-signing certificate, published domain association, two-physical-phone
+family-code run, iOS runtime/accessibility pass, or physical BLE proximity matrix.
+Manual-code joining is the reliable demo path; the verified-link/store release
+remains gated by the missing external evidence.
 
 ## Commands
 

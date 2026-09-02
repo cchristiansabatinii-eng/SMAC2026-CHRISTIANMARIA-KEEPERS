@@ -109,9 +109,9 @@ The feature is complete only when:
   as `YOU`.
 - Other active members render using their persisted name, immutable color token,
   and Humation avatar recipe.
-- Cloud membership does not assert physical presence. Until the proximity
-  adapter exists, remote members use `away`, and only the current device counts
-  as present.
+- Cloud membership does not assert physical presence. Remote members remain
+  `away` until the foreground, family-private BLE waiting-room session observes
+  their current rotating token nearby.
 - The dashed bubble remains `INVITE`. `Ask … to come` is a separate nudge action
   and must not create a membership invitation or claim that a message was sent.
 

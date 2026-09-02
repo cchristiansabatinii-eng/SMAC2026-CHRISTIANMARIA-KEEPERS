@@ -16,7 +16,7 @@ This issue-ready backlog is derived from Section 5 of [KEEPERS_SPEC.md](KEEPERS_
 
 ## Phase 1 — Sync core (Days 2–5)
 
-- [ ] **P1-01 · BLE presence (R1)** — Advertise and scan with the family UUID; display the present-member list.
+- [ ] **P1-01 · BLE presence (R1)** — Foreground advertise/scan, rotating family-private member tokens, independent expiry, and the present-member list are implemented; keep open until the Android↔iOS physical-device matrix passes.
 - [ ] **P1-02 · Local session and ritual fallback (R1)** — Implement mDNS/TCP host and join, authentication handshake, and QR fallback.
 - [ ] **P1-03 · Resumable TransferProto (R1)** — Transfer manifests and encrypted blob frames idempotently with resume support.
 - [ ] **P1-04 · Ceremony state machine (R1 + R3)** — Implement ROLLCALL with quorum/reciprocity, EXCHANGE, REEL control frames, and synchronized haptics.
@@ -36,7 +36,7 @@ This issue-ready backlog is derived from Section 5 of [KEEPERS_SPEC.md](KEEPERS_
 - [ ] **P3-01 · Keeping engine (R1)** — Add votes, Keeper tie-breaks, replication, and 30-day expiry.
 - [ ] **P3-02 · Keeper rotation and closing ritual (R3)** — Rotate the weekly Keeper and auto-keep the closing-question recording.
 - [ ] **P3-03 · Archive and Draw (R2 + R3)** — Implement weighted Draw, On this day, person/theme views, Timeline, and Family Draw.
-- [ ] **P3-04 · Locks, capsules, and memorial state (R3)** — Complete one human-approved Legacy Lock, one date capsule, waiting shelf, and memorial flag.
+- [ ] **P3-04 · Capsules and memorial state (R3)** — Complete one Capsule with an optional self-confirmed task, per-member readiness, and a memorial flag.
 - [ ] **P3-05 · Cold-start import (R2, schedule-dependent)** — Scan the local camera roll for family photos without uploading content.
 - [ ] **P3-GATE · Repeatable happy path (All)** — Run the full happy path twice consecutively without a restart.
 

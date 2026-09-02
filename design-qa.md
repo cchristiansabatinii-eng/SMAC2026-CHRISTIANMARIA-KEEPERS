@@ -244,6 +244,55 @@ Resolved by giving every enabled destination a solid black icon and replacing th
 
 final result: passed
 
+## Archive square-gallery redesign
+
+### Evidence
+
+- Source composition truth: `C:\Users\Chris\AppData\Local\Temp\codex-clipboard-97c9fe87-4a25-4ff7-821e-442fa60a53b3.png` (720 × 1544 physical pixels).
+- Source Random Memory control: `C:\Users\Chris\AppData\Local\Temp\codex-clipboard-92857d7a-d3e0-463e-b0e5-f435449de580.png` (1774 × 887 pixels).
+- Deterministic initial-state capture: `app/test/features/archive/presentation/goldens/archive_gallery_390x844.png` (390 × 844 logical pixels at DPR 1).
+- Deterministic scrolled capture: `app/test/features/archive/presentation/goldens/archive_gallery_scrolled_390x844.png` (390 × 844 logical pixels at DPR 1).
+- Same-input visual comparison: `app/build/archive-gallery-qa/reference-comparison.png`.
+- State: seven kept memories across 2026 and 2025, mixing three real photo previews with voice and text cards, four people, and five themes.
+
+### Full-view and focused review
+
+- The Archive retains the supplied header, summary, warm background, shared gutters, and bottom navigation, while replacing the metadata list with a fixed three-column, 1:1 gallery grouped newest-first by year.
+- Photo memories are full-bleed and use real decrypted image bytes with `BoxFit.cover`; no placeholder icon, title badge, or metadata overlay obscures the photograph. Voice and text remain equally sized, clearly labeled square cards so every kept format stays discoverable.
+- People and Themes remain independent horizontal rails. Their visible chips are 32 logical pixels high with four-pixel spacing, while each chip retains a 48-logical-pixel semantic and interaction target.
+- The Random Memory action now follows the supplied quiet outlined-pill composition: full content width, 48 logical pixels high, 24-pixel radius and horizontal padding, app-font label, and trailing shuffle icon. The existing `homeTaupe` outline is intentionally darker than the pale source line so the boundary remains accessible on the cream surface.
+- The gallery keeps 24-pixel left and right gutters, four-pixel row and column gaps, and four-pixel tile radii at 390- and 430-logical-pixel phone widths. A 1.4× text-scale fixture confirms the three-column grid and controls do not overflow.
+- Every tile is one labeled button semantic that retains format, title, author, and date even when the photo itself is visually clean. Random Memory is one enabled/disabled semantic button, and filtered empty, loading, retry, and photo-error fallbacks remain usable. Loading and error use an honest count placeholder in the summary's reserved 58-pixel slot, so the Random Memory control does not move between states.
+- Filtering and random selection continue to operate on the current combined Person/Theme result; Random Memory avoids immediately repeating the previous choice when alternatives exist, and each tile opens the exact selected memory.
+
+### Image lifecycle and comparison history
+
+- Photo previews are requested only for built photo tiles. A screen-local queue caps active decryptions at three and removes queued work after ownership ends; the 16 MiB source policy is enforced before full encrypted-file allocation and again before ciphertext, plaintext, and primary base64 decoding, and accepted photos decode within a 512 × 512 fit bound. Partial, rejected, allocation-failure, envelope, plaintext, and failed-primary buffers are zeroed. Ordinary parent rebuilds retain the existing lease, while scrolling away, opening a covering viewer/capture route, backgrounding, replacing a tile, or disposing Archive evicts the exact decoded provider and zeroes owned decrypted bytes. Stale, wrong-format, missing, malformed, and failed vault opens fail closed.
+- Final combined verification passed 1,009 Flutter tests with 34 platform-only skips; full Flutter analysis reported no issues. The native POSIX bounded-read integration remains covered by Linux-targeted tests and is skipped on this Windows host.
+- The first test-harness capture exposed a transparent black background, an unloaded Material icon font, and photo futures that had not completed. The fixture was corrected to use the real app background, load the bundled fonts, pre-cache the exact resized providers, and settle before capture; these were harness defects rather than accepted UI differences.
+- The final same-input comparison shows the approved denser gallery, visibly smaller filter chrome, and the reference pill silhouette without crop, collision, clipping, or placeholder imagery. No actionable P0, P1, or P2 visual mismatch remains.
+
+final result: passed
+
+## Compact launcher icon replacement
+
+### Evidence
+
+- Supplied visual truth: `C:\Users\Chris\Downloads\ChatGPT Image Sep 8, 2026, 10_07_10 AM.png` (1254 × 1254 pixels).
+- Production master: `app/assets/brand/keepers-app-icon-master.png` (1024 × 1024 pixels).
+- Same-input comparison: `C:\Users\Chris\Documents\Codex\2026-09-07\instead-of-having-to-sign-in\outputs\keepers-icon-source-left-production-right.png` (supplied source left, production master right).
+- Installed Android evidence: `C:\Users\Chris\Documents\Codex\2026-09-07\instead-of-having-to-sign-in\outputs\keepers-icon-launcher-drawer-final.png` on Pixel 8 emulator `emulator-5554`.
+
+### Review
+
+- The replacement preserves the supplied compact key's scale, position, silhouette, and negative-space keyhole. The generated image's edge-connected off-white corner regions are removed so the native launcher—not painted artwork—owns the iOS and Android mask.
+- The shared production master is fully opaque grayscale, with pure-black and pure-white fields plus antialiased edges. Every Android legacy icon and iOS AppIcon size is regenerated from that master.
+- Android adaptive launchers use the existing solid-black background plus a transparent foreground containing only the new key. The foreground is centered at 68% of the 108dp layer to compensate for adaptive-layer overscan, preserving the supplied key's visible proportions across circular and squircle masks without an optical offset.
+- The platform contract was changed first and failed against the old larger key at both master and adaptive sizes. It passes after regeneration, including dimensions, opaque black corners, compact bright bounds, grayscale coverage, transparent adaptive corners, and safe-zone radius.
+- The installed app drawer renders the intended black masked icon with the compact white key and no white outside corners. No application layout, navigation, or runtime brand token changed.
+
+final result: passed
+
 ## Home gathering and Weekly controls
 
 ### Evidence
@@ -489,13 +538,43 @@ final result: implementation and external acceptance pending
 - Spacing and layout rhythm: the progress, invitation, and panel retain 12-pixel transitions and shared page gutters. The panel preserves a 104-logical-pixel touch target and the separate preview preserves 44 logical pixels.
 - Colors and visual tokens: the implementation uses existing ivory, warm gold, ink, line, and five pastel family tokens. No gradient, glass, decorative blur, or shadow was introduced.
 - Image and icon fidelity: no raster placeholder or approximate drawn asset is used. The installed Material key is the existing app-wide Memory Key symbol; its horizontal silhouette is a minor intentional departure from the reference keyhole so the symbol remains consistent across navigation and Weekly.
-- Copy and behavior: the progress reports the real qualifying count, names both missing requirements, and the real action unlocks only at five photos plus at least three quarters of the family present, rounded up. The explicitly requested prototype bypass remains a separately labeled, non-mutating `Preview weekly experience`; the opened capture confirms `REHEARSAL MODE` remains visible.
+- Historical copy and behavior at this prior pass: the progress reported the real qualifying count and the then-present local rehearsal action remained non-mutating. That rehearsal entry point is superseded by the 2026-09-08 no-preview Home decision below.
 - Accessibility: count semantics are not duplicated, requirement changes are a live region, disabled panels do not announce an open action, and the ready panel exposes one tap action.
 
 ### Comparison history
 
 - Pass 1 found no visual P0, P1, or P2 mismatch after normalizing the source component against the installed panel. Read-only implementation review did identify contrast, duplicate announcement, clock-boundary, future-date, and unavailable-action truthfulness defects; each was repaired and regression-tested before the final capture.
 - Pass 2 re-captured the installed build after opening and returning from the rehearsal. The composition remained stable, the Weekly preview opened successfully, and no actionable P0, P1, or P2 visual issue remained. The horizontal key glyph and intentionally shadowless treatment remain accepted P3/product-system deviations.
+
+final result: passed
+
+## Home Weekly preview removal and vertical alignment
+
+### Evidence
+
+- Source visual truth: `C:\Users\Chris\AppData\Local\Temp\codex-clipboard-aaff0b04-6915-404b-90a4-eb46ffde35f3.png` (720 × 1544 physical pixels; app surface 720 × 1454 before the source device's three-button system navigation).
+- Deterministic implementation capture: `app/build/home-preview-removal/rendered-384x776.png` (384 × 776 logical pixels at DPR 1).
+- Installed implementation capture: `app/build/home-preview-removal/emulator-home-720x1544.png` (720 × 1544 physical pixels on Android emulator `emulator-5554`, 300 dpi display override).
+- Full-view installed comparison: `app/build/home-preview-removal/comparison-installed-reference-left-build-right.png` (source left, installed build right).
+- Focused lower-action comparison: `app/build/home-preview-removal/comparison-actions-reference-left-build-right.png` (source left, installed build right).
+- Deterministic layout comparison: `app/build/home-preview-removal/comparison-384-reference-left-render-right.png` (source left, widget render right).
+- Normalization: the source app surface was scaled from 720 × 1454 to the 384 × 776 logical target for deterministic layout inspection. For installed-runtime inspection, the emulator's 720 × 1518 gesture-navigation app region was normalized to the source's 720 × 1454 app region; system-navigation chrome was excluded from both sides.
+- State: one-person family, zero of five Weekly photos, locked Weekly panel, Invite-capable gathering prompt. Persisted family name, family-code availability, avatar recipe, and contribution ring differ between the supplied source and emulator and are intentionally treated as dynamic content rather than visual fixtures.
+
+### Comparison history
+
+- Normalization preflight rejected the initial 360 × 727 capture because the source's 68-logical-pixel app navigation measured approximately 128 physical pixels, establishing an effective 384-logical-pixel reference width instead.
+- Pass 1 at 384 × 776 found one P2 spacing drift: after removing the 48-pixel preview row, the progress, gathering prompt, and Weekly panel sat about eight logical pixels too low relative to the reference. The Home action group's bottom reserve was increased from 14 to 22 logical pixels, with a widget geometry regression asserting the exact gap.
+- Pass 2 re-rendered at the same logical viewport. The progress, gathering prompt, Weekly panel, and navigation now align to the reference rhythm with no clipping or overlap. The installed-runtime comparison confirms the real Material icons, wordmark, Humation avatar rendering, background asset, disabled lock treatment, and five-destination navigation; no actionable P0, P1, or P2 mismatch remains.
+
+### Required fidelity review
+
+- Fonts and typography: the supplied Keepers wordmark and Modern Society roles are unchanged. Family, presence, gathering, and navigation hierarchy retain their established weights, tracking, line heights, and single-line behavior.
+- Spacing and layout rhythm: the user-facing preview row is gone. The 12-pixel progress-to-gather and gather-to-Weekly gaps remain intact, while the action group receives the approved eight-pixel lift through layout spacing rather than a paint transform.
+- Colors and visual tokens: no palette or semantic color changed. The existing ivory/blush background, taupe lock, gold/pastel progress roles, and warm-neutral outlines remain mapped through shared Keepers tokens.
+- Image quality and asset fidelity: the implementation keeps the real bundled background, exact wordmark asset, Humation avatar renderer, and Material icon family. No placeholder, generated substitute, CSS drawing, or new raster asset was introduced.
+- Copy and content: `Preview weekly experience` is absent from Home. Incomplete progress exposes only the disabled lock; five qualifying photos still expose the real waiting-room entry, and quorum still owns the sole `Start weekly experience` path.
+- Accessibility and interaction: the locked panel has no tap action or hidden preview semantics. Existing tests cover large text, stable phone layout, the 48-pixel help target, disabled Weekly state, five-photo waiting-room entry, and the real quorum start path.
 
 final result: passed
 
@@ -535,7 +614,7 @@ final result: passed
 - Pass two confirmed the corrected hierarchy and stable voice presentation. The hero width and aspect ratio were then tuned closer to the reference, and the final source crop was cleaned to remove a captured black video edge.
 - The final combined comparison shows the same quiet top controls, dominant rounded portrait memory, date rhythm, and selected-thumbnail sequence. Added format/count metadata is deliberately subordinate and makes photo, voice, and text states explicit without competing with the memory.
 - Thumbnail taps and disclosed horizontal swipes update image, title, date, format, count, and selection semantics from one index. Selection uses a 170 ms opacity crossfade; reduced motion changes immediately. Voice retains a labeled play/pause control, the text memory retains its echo, and the final memory continues to the existing labeled Keep/Release decision.
-- Weekly playback has no persistent app navigation. Close returns to the Family Wheel. The five-photo and rounded-up 75%-of-family presence gate remains owned by the Wheel; the local bypass remains visibly labeled `Rehearsal Mode` and does not mutate gate state.
+- At that prior gallery pass, a local rehearsal route remained visible for evaluation. The 2026-09-08 Home decision above supersedes that entry point: production Weekly playback now has no user-facing bypass around the five-photo and rounded-up 75%-of-family gate.
 - The 390 × 844 widget target and installed emulator were checked for hierarchy, alignment, crop, contrast, touch targets, navigation clarity, wrapping, overflow, and layout stability. No actionable P0, P1, or P2 visual issue remains.
 
 final result: passed

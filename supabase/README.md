@@ -1,11 +1,12 @@
 # Keepers Supabase control plane
 
 Supabase stores account identity, family roster metadata, family-code hashes,
-encrypted display-code material, join-request state, public joining keys, and
-encrypted family-key envelopes. It must never receive a plaintext family or
-member key, joining private key, approval shared secret, decrypted envelope,
-memory payload, transcript, or media blob. Legacy recipient-email invitation
-rows remain temporarily supported only for already-issued clients.
+encrypted display-code material, join-request state, public joining keys,
+encrypted family-key envelopes, and the opaque family-key-encrypted Weekly
+Reveal relay. It must never receive a plaintext family or member key, joining
+private key, approval shared secret, decrypted envelope, private Journal or
+Capsule entry, transcript, photo, audio, or text. Legacy recipient-email
+invitation rows remain temporarily supported only for already-issued clients.
 
 ## Project setup
 
@@ -24,12 +25,17 @@ supabase functions deploy keepers-auth-bridge --no-verify-jwt
 1. `migrations/202609050001_family_invitations.sql`
 2. `migrations/202609070001_family_code_join_requests.sql`
 3. `migrations/202609070002_membership_join_serialization.sql`
+4. `migrations/202609080001_family_code_bootstrap_recovery.sql`
+5. `migrations/202609080002_weekly_reveal_sync.sql`
 
-Do not release a family-code client until all three appear in the linked
+Do not release a family-code client until all five appear in the linked
 project's migration history. The first remains for compatibility, the second
 adds permanent codes and join requests, and the third serializes every
-membership-producing path with those requests. Deploying the app before the
-second or third migration leaves the new membership contract incomplete.
+membership-producing path with those requests. The fourth repairs the family
+routines' SQL `COALESCE` expressions so owner bootstrap and code joining can
+run. The fifth adds the private, RLS-protected encrypted Weekly Reveal relay.
+Deploying the app before any of these migrations leaves family membership or
+shared Weekly readiness incomplete.
 
 Keep the client URL and publishable key in the ignored
 `app/config/supabase.local.json`. From `app`, use the file without printing its
@@ -43,31 +49,76 @@ flutter build apk --debug --dart-define-from-file=config/supabase.local.json
 `KEEPERS_SUPABASE_URL` and `KEEPERS_SUPABASE_PUBLISHABLE_KEY` are client
 configuration, not privileged credentials. A Supabase service-role key must
 never be placed in Dart defines, committed to source control, or bundled in an
-app build. On 2026-09-07, the hosted Keepers project was verified with all three
-migration-history rows and the deployed `keepers-auth-bridge` function. The
-migrations were submitted through Supabase's official Management API because a
-noninteractive CLI link also requires the database password. This proves the
-hosted schema and callback deployment, but not the separate concurrency CI gate.
+app build. On 2026-09-07, the hosted Keepers project was verified with the first
+three migration-history rows and the deployed `keepers-auth-bridge` function.
+The recovery SQL was applied and live-verified on 2026-09-08; its checked-in
+migration must still pass through the normal migration-history deployment. The
+earlier migrations were submitted through Supabase's official Management API
+because a noninteractive CLI link also requires the database password. This
+proves the hosted schema and callback deployment, but not the separate
+concurrency CI gate.
 
-## Email authentication and callback
+## Account authentication and callback
 
-Keepers supports a Supabase email sign-in link and is ready for a six-digit
-code fallback once custom SMTP is configured. In Authentication → URL
-Configuration, allow both the HTTPS handoff and the final app callback:
+Keepers requires account authentication before Create or Join family. A local
+identity proceeds only with a current compatible session: a bound account must
+match, while a newly created unbound identity is bound only after the owner
+bootstrap succeeds. A mismatch or `DIFFERENT_FAMILY` keeps the device-local
+family, keys, and memories intact and offers `Use another account`. If the
+Supabase client is unconfigured, a new installation remains blocked at the
+account screen with Retry. A Supabase session links an account to family
+membership; it does not restore a device-held encryption key by itself. After
+an approved join installs the family key, the device can reconcile only the
+family's opaque encrypted Weekly Reveal entries into its SQLCipher vault.
+
+Keepers supports email OTP plus Google, Microsoft, and Apple. In Authentication
+→ URL Configuration, allow both the email HTTPS handoff and the final app
+callback:
 
 ```text
-https://<project-ref>.supabase.co/functions/v1/keepers-auth-bridge
-keepers://auth-callback
+https://<project-ref>.supabase.co/functions/v1/keepers-auth-bridge**
+keepers://auth-callback**
 ```
 
-Set the Site URL to the same HTTPS handoff so a missing or rejected runtime
-redirect never falls back to localhost.
+The `**` suffix is required because Keepers adds a bounded, opaque `attempt`
+query parameter to each runtime redirect. Keep the origin and path before that
+suffix exact. Set the Site URL to the HTTPS handoff without the wildcard or a
+query string so a missing or rejected runtime redirect never falls back to
+localhost.
+
+In Authentication → Providers, enable Google, Azure (Microsoft), and Apple and
+configure each provider's production client ID and secret. At each provider,
+register Supabase's OAuth callback exactly as:
+
+```text
+https://<project-ref>.supabase.co/auth/v1/callback
+```
+
+Keep the Azure email permission enabled; the app requests the required `email`
+scope so Supabase receives the address used for the account.
+
+Keep `keepers://auth-callback**` in Supabase's redirect allow list. The app
+passes that URI with its per-attempt marker as the post-OAuth redirect and opens
+authorization in the external browser; the provider returns to Supabase first,
+then Supabase returns the session to Keepers. Development and production
+projects need their own matching provider credentials and callback
+registrations.
+
+Keepers permits only one pending PKCE authentication flow. If a user chooses a
+different method, the client atomically removes an unclaimed verifier before
+enabling the replacement flow. If the callback has already claimed that
+verifier, it remains the sole in-flight sign-in so two browser callbacks cannot
+share or overwrite one local verifier slot. The opaque attempt marker is stored
+with that verifier and returned through the callback, so a stale browser result
+cannot consume or clear a newer pending flow.
 
 Deploy `functions/keepers-auth-bridge` with JWT verification disabled. This is
 the pre-login callback, so no session token exists yet. The endpoint validates
-the single PKCE `code`, returns a no-store platform redirect, and does not read
-or mutate family data. Android is sent to a package-scoped `intent://` callback;
-iOS and other clients are sent to `keepers://auth-callback`.
+the single PKCE `code` plus an optional single attempt marker, returns a no-store
+platform redirect, and does not read or mutate family data. Code-only links stay
+supported for already-issued email messages. Android is sent to a package-scoped
+`intent://` callback; iOS and other clients are sent to
+`keepers://auth-callback`.
 
 Supabase's hosted default email currently supplies the sign-in link. After
 custom SMTP is configured, keep both the sign-in link and the six-digit token
@@ -107,7 +158,7 @@ only local, non-secret settings.
 
 ### Required concurrent-transition CI gate
 
-The family-code pgTAP suite contains 106 authorization, privacy, quota,
+The family-code pgTAP suite contains 107 authorization, privacy, quota,
 projection, expiry, and transition assertions. A single pgTAP transaction
 cannot prove simultaneous multi-session behavior, so CI must also run the
 deterministic two-session race harness:
@@ -253,9 +304,10 @@ and unauthenticated callers cannot execute any RPC.
 
 The permanent-code schema, Dart gateway, crypto/storage units, requester and
 approver controllers, and native route declarations have focused automated
-coverage. All three migrations and the unauthenticated callback bridge are
-deployed to the hosted Keepers project. This does not establish a launch-ready
-backend. A green PostgreSQL concurrency run, configured daily purge job,
+coverage. All five migrations, including the recovery and encrypted Weekly
+Reveal relay, plus the unauthenticated callback bridge are deployed to the
+hosted Keepers project. This does not establish a launch-ready backend. A
+green PostgreSQL concurrency run, configured daily purge job,
 verified external IP throttle, production Android signing and hosted
 Digital-Asset-Links/AASA files, two-physical-phone Android join run, iOS
 runtime/accessibility run, and a release proximity source are not yet recorded

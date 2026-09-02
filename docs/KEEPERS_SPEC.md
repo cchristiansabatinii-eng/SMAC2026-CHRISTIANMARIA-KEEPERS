@@ -24,7 +24,7 @@ Keepers is a family memory app whose weekly content is locked until the family p
 
 | # | Feature | Priority |
 |---|---------|----------|
-| F1 | Personal Living Vaults — multimodal capture (photo, voice, text, scans, recipes); privacy tiers: Private Journal / Weekly Reveal / Legacy Milestone | **Core** |
+| F1 | Personal Living Vaults — multimodal capture (photo, voice, text, scans, recipes); privacy tiers: Private Journal / Weekly Reveal / Capsule | **Core** |
 | F2 | Automated Memory Structuring — on-device transcription; auto-tagging by theme, person, place, event (no emotion inference, no photo restoration) | **Core** |
 | F3 | Touch Ritual / Proximity Unlock — BLE discovery + local Wi-Fi payload + shared passive NFC tag + QR fallback | **Core** |
 | F4 | Reciprocity Gate — no contribution that week, no unlock | **Core** |
@@ -34,9 +34,9 @@ Keepers is a family memory app whose weekly content is locked until the family p
 | F8 | Live Discussion Prompts — context-aware, addressed to named people; offline fallback to a template bank | **Core** |
 | F9 | Keeping Ceremony — collective vote at reel end; kept entries replicate to all devices; unkept entries expire in 30 days | **Core** |
 | F10 | The Archive & The Draw — kept memories browsable by **Draw (weighted random)**, **On this day**, **By person**, **By theme**, **Timeline**; Family Draw mode during sessions; drawn memories can seed next week's reveal | **Core** |
-| F11 | Quest-Based Legacy Locks — content locked behind real-world tasks, verified by the human who set the lock (grandmother approves the cooked meal) | Demo-quality: one full flow |
-| F12 | Milestone Time Capsules — letters/recordings unlocked on dates or verified life events; plus the "waiting shelf" the recipient opens by choice | Demo-quality: one hardcoded trigger |
-| F13 | Memorial State — deceased member's vault becomes read-only; locks and capsules still fire; no simulation, no generated content in their voice | Core (small) |
+| F11 | Capsule Tasks — a Capsule may name a specific real-world task; each family member confirms completion for themselves before that memory becomes available | Demo-quality: one full flow |
+| F12 | Family Capsules — letters, recordings, and other memories shared from Memory Key immediately or after the recipient completes the optional task | Demo-quality: one full flow |
+| F13 | Memorial State — deceased member's vault becomes read-only; their Capsules remain available under the same rules; no simulation, no generated content in their voice | Core (small) |
 | F14 | Extended Family Bridge — reunion sync of missed highlights when distant relatives meet | Report only (same mechanic, different wrapper) |
 | F15 | Cold-start import — on-device camera-roll scan pre-loads vaults with photos of family members | Should-have |
 
@@ -73,12 +73,12 @@ Not used (documented as roadmap in the report): UWB (platform-restricted hardwar
 ┌──────────────────────────────────────────────────────────────┐
 │  PRESENTATION (Flutter UI)                                   │
 │  Vault · Capture · WaitingRoom · Ceremony · Archive/Draw ·   │
-│  Locks & Capsules · Family Setup                             │
+│  Memory Key / Capsules · Family Setup                        │
 ├──────────────────────────────────────────────────────────────┤
 │  DOMAIN ENGINES                                              │
 │  CeremonyEngine   — session lifecycle, roll call, reel state │
 │  KeepingEngine    — votes, tie-break, replication, expiry    │
-│  LockEngine       — legacy locks, capsules, memorial state   │
+│  CapsuleEngine    — task gates, readiness, memorial state    │
 │  DrawEngine       — weighted sampling, browse queries        │
 │  KeeperRotation   — weekly role assignment                   │
 ├──────────────────────────────────────────────────────────────┤
@@ -154,11 +154,8 @@ Entry       id · authorId · createdAt · type(photo/voice/text/
 Ceremony    id · date · keeperId · presentMemberIds[] ·
             reelManifest · closingQuestionEntryId
 KeepVote    ceremonyId · entryId · memberId · vote
-LegacyLock  id · ownerId · targetId · contentEntryId ·
-            questDescription · state(locked/submitted/approved) ·
-            proofEntryId?
 Capsule     id · authorId · targetId · contentEntryId ·
-            trigger(date | milestone | shelf) · state
+            optionalTask · state(locked/ready/opened)
 DrawLog     entryId · memberId · shownAt        (feeds Draw weights)
 ```
 
@@ -193,7 +190,7 @@ Three developers: **R1 — Sync & Protocol**, **R2 — Intelligence & Data**, **
 - **Gate:** capture → store → display works on 2 physical devices (one iOS, one Android if available).
 
 ### Phase 1 — Sync core (Days 2–5) — *the critical path*
-- [ ] BLE advertise/scan with family UUID; presence list *(R1)*
+- [ ] BLE advertise/scan with rotating family-private member UUID; presence list implemented, physical Android/iOS matrix pending *(R1)*
 - [ ] mDNS + TCP host/join; auth handshake; QR fallback *(R1)*
 - [ ] TransferProto: manifest + blob frames, resumable *(R1)*
 - [ ] Ceremony state machine: ROLLCALL (quorum + reciprocity) → EXCHANGE → REEL control frames; synchronized haptic *(R1 + R3)*
@@ -211,7 +208,7 @@ Three developers: **R1 — Sync & Protocol**, **R2 — Intelligence & Data**, **
 - [ ] Keeping votes, tie-break, replication, 30-day expiry *(R1)*
 - [ ] Keeper rotation + closing-question ritual *(R3)*
 - [ ] Archive: Draw (weighted), On-this-day, By-person, By-theme, Timeline; Family Draw in-session *(R2 + R3)*
-- [ ] One full Legacy Lock flow (grandmother approves proof) + one date-triggered capsule + waiting shelf + memorial flag *(R3)*
+- [ ] One full Capsule flow with optional self-confirmed task, per-member readiness, and memorial flag *(R3)*
 - [ ] Cold-start camera-roll import (if on schedule; else cut) *(R2)*
 - **Gate:** full happy-path run-through end to end, twice in a row, no restarts.
 
@@ -233,7 +230,7 @@ Three developers: **R1 — Sync & Protocol**, **R2 — Intelligence & Data**, **
 3. **The reel** — a few real entries from a seeded week.
 4. **The moment** — a teenager's nervous entry pauses the reel; a grandfather's 1994 voice note plays. Say nothing over it.
 5. **Keeping** — the family (judges) votes one entry into forever; the rest will fade.
-6. **Kicker** — a physical object with the NFC tag: a Legacy Lock opens that nothing else could have opened. Screens dim: *"Put your phones down."*
+6. **Kicker** — a family member completes a Capsule task in Memory Key and opens the newly available memory. Screens dim: *"Put your phones down."*
 
 ---
 
