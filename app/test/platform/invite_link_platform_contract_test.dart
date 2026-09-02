@@ -64,11 +64,18 @@ void main() {
         ),
       );
       expect(android, contains('android.permission.INTERNET'));
-      final permissions = RegExp(r'<uses-permission android:name="([^"]+)"')
-          .allMatches(android)
-          .map((match) => match.group(1))
-          .toSet();
+      final permissions = RegExp(
+        r'<uses-permission(?:-sdk-23)?\s+android:name="([^"]+)"',
+        multiLine: true,
+      ).allMatches(android).map((match) => match.group(1)).toSet();
       expect(permissions, {
+        'android.permission.BLUETOOTH_SCAN',
+        'android.permission.BLUETOOTH_ADVERTISE',
+        'android.permission.BLUETOOTH_CONNECT',
+        'android.permission.BLUETOOTH',
+        'android.permission.BLUETOOTH_ADMIN',
+        'android.permission.ACCESS_FINE_LOCATION',
+        'android.permission.ACCESS_COARSE_LOCATION',
         'android.permission.CAMERA',
         'android.permission.RECORD_AUDIO',
         'android.permission.INTERNET',
