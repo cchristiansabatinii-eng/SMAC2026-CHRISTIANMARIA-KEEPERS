@@ -8,7 +8,6 @@ import 'package:keepers/features/capture/data/photo_capture_adapter.dart';
 import 'package:keepers/features/capture/data/voice_capture_adapter.dart';
 import 'package:keepers/features/capture/domain/capture_models.dart';
 import 'package:keepers/features/onboarding/application/onboarding_providers.dart';
-import 'package:keepers/features/onboarding/domain/local_identity.dart';
 
 final captureControllerProvider =
     NotifierProvider<CaptureController, CaptureDraft>(CaptureController.new);
@@ -19,7 +18,6 @@ final class CaptureController extends Notifier<CaptureDraft> {
   late final VoiceCaptureAdapter _voice;
   late final AudioPlaybackAdapter _playback;
   late final CaptureFileAccess _files;
-  late final Future<LocalIdentity?> _identity;
   late final String Function() _idFactory;
   late final DateTime Function() _utcNow;
   late final EntrySave _saveEntry;
@@ -40,7 +38,6 @@ final class CaptureController extends Notifier<CaptureDraft> {
     _voice = ref.read(voiceCaptureAdapterProvider);
     _playback = ref.read(audioPlaybackAdapterProvider);
     _files = ref.read(captureFileAccessProvider);
-    _identity = ref.read(localIdentityProvider.future);
     _idFactory = ref.read(idFactoryProvider);
     _utcNow = ref.read(utcNowProvider);
     _saveEntry = ref.read(entrySaveProvider);
@@ -678,7 +675,7 @@ final class CaptureController extends Notifier<CaptureDraft> {
       return;
     }
     try {
-      final identity = await _identity;
+      final identity = await ref.read(localIdentityProvider.future);
       if (!_current(token)) return;
       if (identity == null) throw StateError('Local identity is unavailable');
       metadata = EntryMetadata(

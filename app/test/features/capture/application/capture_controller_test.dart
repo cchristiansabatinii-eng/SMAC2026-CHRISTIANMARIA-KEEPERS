@@ -41,6 +41,46 @@ void main() {
     expect(state.canSave, isFalse);
   });
 
+  test(
+    'save resolves an identity installed after the controller builds',
+    () async {
+      LocalIdentity? installedIdentity;
+      final savedRequests = <EntrySaveRequest>[];
+      final container = captureContainer(
+        identityLoader: () => installedIdentity,
+        save: (request) async {
+          savedRequests.add(request);
+          return request.metadata.copyWith(
+            blobRef: 'entries/blobs/entry-1.keeper',
+          );
+        },
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(captureControllerProvider.notifier);
+      expect(await container.read(localIdentityProvider.future), isNull);
+
+      installedIdentity = identity;
+      container.invalidate(localIdentityProvider);
+      expect(
+        (await container.read(localIdentityProvider.future))?.memberId,
+        'member-1',
+      );
+
+      await controller.selectFormat(MemoryFormat.text);
+      controller.updateText('A first memory after joining');
+      await controller.save();
+
+      expect(savedRequests, hasLength(1));
+      expect(savedRequests.single.identity.familyId, 'family-1');
+      expect(savedRequests.single.identity.memberId, 'member-1');
+      expect(savedRequests.single.metadata.authorId, 'member-1');
+      expect(
+        container.read(captureControllerProvider).phase,
+        CapturePhase.saved,
+      );
+    },
+  );
+
   test('exactly one primary format survives switching', () async {
     final container = captureContainer();
     addTearDown(container.dispose);
@@ -1505,6 +1545,7 @@ ProviderContainer captureContainer({
   AudioPlaybackAdapter? playback,
   CaptureFileAccess? files,
   EntrySave? save,
+  LocalIdentity? Function()? identityLoader,
 }) => ProviderContainer(
   overrides: [
     photoCaptureAdapterProvider.overrideWithValue(
@@ -1520,7 +1561,10 @@ ProviderContainer captureContainer({
       files ?? FakeCaptureFileAccess(),
     ),
     entrySaveProvider.overrideWithValue(save ?? _successfulSave),
-    localIdentityProvider.overrideWithValue(const AsyncValue.data(identity)),
+    if (identityLoader == null)
+      localIdentityProvider.overrideWithValue(const AsyncValue.data(identity))
+    else
+      localIdentityProvider.overrideWith((ref) async => identityLoader()),
     idFactoryProvider.overrideWithValue(() => 'entry-1'),
     utcNowProvider.overrideWithValue(() => DateTime.utc(2026, 9, 1)),
   ],
