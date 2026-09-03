@@ -147,7 +147,15 @@ void main() {
     await tester.tap(find.text('Capsule'));
     await tester.pumpAndSettle();
 
+    expect(
+      find.text('Saved to this device’s Memory Key as a Capsule.'),
+      findsOneWidget,
+    );
     expect(find.text('Set specific task to unlock'), findsOneWidget);
+    expect(
+      find.text('Optional · task completion is stored only on this device.'),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('capsule-task-toggle')), findsOneWidget);
     expect(find.byKey(const Key('capsule-task-field')), findsNothing);
     expect(find.text('Legacy Milestone'), findsNothing);
@@ -156,6 +164,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('capsule-task-field')), findsOneWidget);
+    expect(
+      find.text(
+        'Add a task. Capsule access and task completion stay on this device.',
+      ),
+      findsOneWidget,
+    );
     expect(
       tester
           .widget<FilledButton>(
@@ -171,6 +185,11 @@ void main() {
     );
     await tester.pump();
 
+    expect(
+      find.text('Capsule access and task completion stay on this device.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('their own device'), findsNothing);
     expect(
       tester
           .widget<FilledButton>(

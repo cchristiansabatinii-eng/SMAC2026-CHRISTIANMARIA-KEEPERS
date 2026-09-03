@@ -149,6 +149,10 @@ family-code run, iOS runtime/accessibility pass, or physical BLE proximity matri
 Manual-code joining is the reliable demo path; the verified-link/store release
 remains gated by the missing external evidence.
 
+Capsule payloads, assignments, and task-completion state remain local to the
+capturing device. Cross-device Capsule delivery and unlock synchronization are
+not implemented in this build.
+
 ## Commands
 
 Run these from this directory:

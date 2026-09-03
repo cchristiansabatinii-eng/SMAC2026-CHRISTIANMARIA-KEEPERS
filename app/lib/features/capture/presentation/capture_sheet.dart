@@ -26,7 +26,7 @@ const _privacyCopy = <PrivacyTier, ({String title, String consequence})>{
   ),
   PrivacyTier.capsule: (
     title: 'Capsule',
-    consequence: 'Shared through Memory Key when each family member is ready.',
+    consequence: 'Saved to this device’s Memory Key as a Capsule.',
   ),
 };
 
@@ -621,7 +621,7 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
                 activeColor: KeepersColors.ink,
                 title: const KeepersText('Set specific task to unlock'),
                 subtitle: const KeepersText(
-                  'Optional · each family member confirms the task for themselves.',
+                  'Optional · task completion is stored only on this device.',
                 ),
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 14,
@@ -647,10 +647,10 @@ final class _CaptureSheetState extends ConsumerState<CaptureSheet> {
                         'For example, cook our family recipe together',
                       ),
                       helperText: draft.capsuleTask.trim().isEmpty
-                          ? 'Add a task. Each member confirms completion on '
-                                'their own device.'
-                          : 'Each family member confirms completion on their '
-                                'own device.',
+                          ? 'Add a task. Capsule access and task completion '
+                                'stay on this device.'
+                          : 'Capsule access and task completion stay on this '
+                                'device.',
                     ),
                   ),
                 ),
