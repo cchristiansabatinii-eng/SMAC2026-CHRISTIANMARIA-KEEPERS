@@ -150,10 +150,9 @@ select is(
   ),
   array[
     'weekly reveal: active family reads',
-    'weekly reveal: author inserts',
-    'weekly reveal: author upserts'
+    'weekly reveal: author inserts'
   ]::pg_catalog.text[],
-  'Storage has family read, author insert, and author upsert policies'
+  'Storage has family read and create-only author policies'
 );
 
 -- Isolated family fixtures.
@@ -457,14 +456,19 @@ select is(
   'the author can read their family ciphertext object through Storage RLS'
 );
 
-select lives_ok(
-  $sql$
-    update storage.objects
-    set user_metadata = '{"sha256":"A5BYxvLAy0ksUzsKTRTvd8wPeKvMztUofYShogEc-4E"}'
-    where bucket_id = 'keepers-weekly-reveal'
-      and name = '11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.keeper'
-  $sql$,
-  'the author-only UPDATE policy supports idempotent Storage upserts'
+select is(
+  (
+    with attempted_update as (
+      update storage.objects
+      set user_metadata = '{"sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}'
+      where bucket_id = 'keepers-weekly-reveal'
+        and name = '11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.keeper'
+      returning 1
+    )
+    select pg_catalog.count(*)::pg_catalog.integer from attempted_update
+  ),
+  0,
+  'an author cannot overwrite their published ciphertext object'
 );
 
 select throws_ok(

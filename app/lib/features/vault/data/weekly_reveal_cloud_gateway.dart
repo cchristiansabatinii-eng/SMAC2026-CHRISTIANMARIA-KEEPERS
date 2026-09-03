@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:keepers/features/capture/domain/capture_models.dart';
 
+const maximumWeeklyRevealBlobBytes = 25 * 1024 * 1024;
+
 /// Opaque, family-key-encrypted Weekly Reveal entry advertised by the cloud.
 ///
 /// The cloud receives routing metadata and ciphertext only. Captions, text,

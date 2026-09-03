@@ -206,6 +206,62 @@ void main() {
         );
       },
     );
+
+    test(
+      'an oversized local blob is skipped while a later entry still syncs',
+      () async {
+        final oversized = await firstDevice.seed(
+          _metadata(
+            id: 'z-oversized-photo',
+            identity: _firstIdentity,
+            privacy: PrivacyTier.reveal,
+          ),
+          Uint8List.fromList(const [0x01]),
+        );
+        final valid = await firstDevice.seed(
+          _metadata(
+            id: 'a-valid-photo',
+            identity: _firstIdentity,
+            privacy: PrivacyTier.reveal,
+          ),
+          Uint8List.fromList(const [0x02, 0x03]),
+        );
+        final reads = <({String blobRef, int? maxBytes})>[];
+
+        Future<Uint8List> readBounded(String blobRef, {int? maxBytes}) async {
+          reads.add((blobRef: blobRef, maxBytes: maxBytes));
+          if (blobRef == oversized.blobRef) {
+            throw FileSystemException(
+              'Encrypted blob exceeds bounded read limit',
+              blobRef,
+            );
+          }
+          return firstDevice.blobStore.read(blobRef, maxBytes: maxBytes);
+        }
+
+        final service = WeeklyRevealSyncService(
+          cloud: cloud,
+          listLocal: firstDevice.listLocal,
+          readLocalBlob: readBounded,
+          importRemote: firstDevice.importRemote,
+        );
+
+        await service.synchronize(_firstIdentity);
+
+        expect(reads, [
+          (blobRef: oversized.blobRef!, maxBytes: 25 * 1024 * 1024),
+          (blobRef: valid.blobRef!, maxBytes: 25 * 1024 * 1024),
+        ]);
+        expect(
+          (await cloud.list(_familyId)).map((entry) => entry.metadata.id),
+          ['a-valid-photo'],
+        );
+        expect(
+          (await firstDevice.listLocal(_familyId)).map((entry) => entry.id),
+          ['z-oversized-photo', 'a-valid-photo'],
+        );
+      },
+    );
   });
 }
 
@@ -306,7 +362,8 @@ CREATE TABLE entries (
       WeeklyRevealSyncService(
         cloud: cloud,
         listLocal: listLocal,
-        readLocalBlob: readLocalBlob,
+        readLocalBlob: (blobRef, {required maxBytes}) =>
+            blobStore.read(blobRef, maxBytes: maxBytes),
         importRemote: importRemote,
       );
 

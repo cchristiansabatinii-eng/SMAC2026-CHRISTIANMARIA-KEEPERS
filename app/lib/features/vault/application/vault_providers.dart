@@ -48,7 +48,8 @@ final vaultEntriesProvider = FutureProvider<List<VaultEntryMetadata>>((
     final service = WeeklyRevealSyncService(
       cloud: cloud,
       listLocal: (familyId) => repository.listForFamily(database, familyId),
-      readLocalBlob: blobStore.read,
+      readLocalBlob: (blobRef, {required maxBytes}) =>
+          blobStore.read(blobRef, maxBytes: maxBytes),
       importRemote: (entry, bytes) => _importRemoteWeeklyReveal(
         database: database,
         repository: repository,

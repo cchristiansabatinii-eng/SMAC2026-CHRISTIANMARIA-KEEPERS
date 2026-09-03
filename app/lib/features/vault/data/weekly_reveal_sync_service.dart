@@ -10,7 +10,10 @@ import 'package:keepers/features/vault/domain/vault_models.dart';
 typedef ListLocalWeeklyEntries = Future<List<VaultEntryMetadata>> Function(
   String familyId,
 );
-typedef ReadLocalWeeklyBlob = Future<Uint8List> Function(String blobRef);
+typedef ReadLocalWeeklyBlob = Future<Uint8List> Function(
+  String blobRef, {
+  required int maxBytes,
+});
 typedef ImportRemoteWeeklyEntry = Future<void> Function(
   RemoteWeeklyRevealEntry entry,
   Uint8List bytes,
@@ -53,7 +56,10 @@ final class WeeklyRevealSyncService {
         continue;
       }
       try {
-        final encrypted = await readLocalBlob(entry.blobRef);
+        final encrypted = await readLocalBlob(
+          entry.blobRef,
+          maxBytes: maximumWeeklyRevealBlobBytes,
+        );
         await cloud.publish(entry.toEntryMetadata(), encrypted);
         remoteIds.add(entry.id);
         published = true;

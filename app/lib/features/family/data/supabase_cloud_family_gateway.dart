@@ -21,7 +21,6 @@ import 'package:uuid/uuid.dart';
 const supabaseAuthCallbackUrl = 'keepers://auth-callback';
 const supabaseAuthAttemptParameter = 'attempt';
 const _weeklyRevealBucket = 'keepers-weekly-reveal';
-const _maximumWeeklyRevealBlobBytes = 25 * 1024 * 1024;
 
 /// The narrow external boundary used by [SupabaseCloudFamilyGateway].
 ///
@@ -82,6 +81,7 @@ abstract interface class SupabaseCloudRealtimeClient {
 /// Optional encrypted-object capability kept separate from the core client so
 /// existing authentication and family fakes do not gain media responsibilities.
 abstract interface class SupabaseWeeklyRevealClient {
+  /// Creates a ciphertext object and fails if [path] already exists.
   Future<void> uploadWeeklyRevealBlob({
     required String path,
     required Uint8List bytes,
@@ -214,7 +214,7 @@ final class SupabaseCloudClientAdapter
           path,
           bytes,
           fileOptions: FileOptions(
-            upsert: true,
+            upsert: false,
             contentType: 'application/octet-stream',
             metadata: {'sha256': sha256},
           ),
@@ -267,7 +267,7 @@ final class SupabaseCloudFamilyGateway
   Future<void> publish(EntryMetadata metadata, Uint8List encryptedBlob) async {
     _validateWeeklyRevealMetadata(metadata);
     if (encryptedBlob.isEmpty ||
-        encryptedBlob.lengthInBytes > _maximumWeeklyRevealBlobBytes) {
+        encryptedBlob.lengthInBytes > maximumWeeklyRevealBlobBytes) {
       throw ArgumentError.value(
         encryptedBlob.lengthInBytes,
         'encryptedBlob',
@@ -277,25 +277,30 @@ final class SupabaseCloudFamilyGateway
     final client = _weeklyRevealClient();
     final digest = await _weeklyRevealDigest(encryptedBlob);
     final storagePath = _weeklyRevealStoragePath(metadata);
+    final params = <String, Object?>{
+      'p_entry_id': metadata.id,
+      'p_family_id': metadata.familyId,
+      'p_author_member_id': metadata.authorId,
+      'p_created_at': metadata.createdAt.toUtc().toIso8601String(),
+      'p_format': metadata.format.name,
+      'p_storage_path': storagePath,
+      'p_blob_sha256': digest,
+      'p_blob_bytes': encryptedBlob.lengthInBytes,
+    };
     final response = await _guard(() async {
+      try {
+        return await _client.rpc('publish_weekly_reveal_entry', params: params);
+      } on PostgrestException catch (error) {
+        if (!_isMissingWeeklyRevealObject(error)) {
+          rethrow;
+        }
+      }
       await client.uploadWeeklyRevealBlob(
         path: storagePath,
         bytes: encryptedBlob,
         sha256: digest,
       );
-      return _client.rpc(
-        'publish_weekly_reveal_entry',
-        params: {
-          'p_entry_id': metadata.id,
-          'p_family_id': metadata.familyId,
-          'p_author_member_id': metadata.authorId,
-          'p_created_at': metadata.createdAt.toUtc().toIso8601String(),
-          'p_format': metadata.format.name,
-          'p_storage_path': storagePath,
-          'p_blob_sha256': digest,
-          'p_blob_bytes': encryptedBlob.lengthInBytes,
-        },
-      );
+      return _client.rpc('publish_weekly_reveal_entry', params: params);
     });
     final published = _decodeWeeklyRevealEntry(response);
     if (!_sameWeeklyReveal(
@@ -1289,7 +1294,7 @@ void _validateRemoteWeeklyRevealEntry(RemoteWeeklyRevealEntry entry) {
   if (entry.storagePath != _weeklyRevealStoragePath(entry.metadata) ||
       !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(entry.blobSha256) ||
       entry.blobBytes <= 0 ||
-      entry.blobBytes > _maximumWeeklyRevealBlobBytes ||
+      entry.blobBytes > maximumWeeklyRevealBlobBytes ||
       entry.state != 'pending') {
     throw const FormatException('Invalid Weekly Reveal cloud entry');
   }
@@ -1480,6 +1485,12 @@ InvitationFailure _mapPostgrestFailure(PostgrestException error) {
   };
   return InvitationFailure(code);
 }
+
+bool _isMissingWeeklyRevealObject(PostgrestException error) =>
+    error.code == 'P0001' &&
+    error.message == 'OBJECT_NOT_FOUND' &&
+    (error.details == null || error.details == 'Bad Request') &&
+    error.hint == null;
 
 String _redirectWithAuthAttempt(String redirect, String attemptId) {
   final uri = Uri.parse(redirect);
