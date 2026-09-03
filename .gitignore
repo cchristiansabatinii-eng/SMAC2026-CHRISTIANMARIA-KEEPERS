@@ -21,3 +21,6 @@ supabase/.temp/
 /app/design-qa-*.jpg
 /app/premium-audit*.json
 /app/outputs/
+
+# Flutter golden-test diagnostics are regenerated on a failed comparison.
+/app/test/features/archive/presentation/failures/
