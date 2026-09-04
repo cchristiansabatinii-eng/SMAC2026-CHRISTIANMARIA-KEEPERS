@@ -27,15 +27,17 @@ supabase functions deploy keepers-auth-bridge --no-verify-jwt
 3. `migrations/202609070002_membership_join_serialization.sql`
 4. `migrations/202609080001_family_code_bootstrap_recovery.sql`
 5. `migrations/202609080002_weekly_reveal_sync.sql`
+6. `migrations/202609080003_weekly_reveal_create_only.sql`
 
-Do not release a family-code client until all five appear in the linked
+Do not release a family-code client until all six appear in the linked
 project's migration history. The first remains for compatibility, the second
 adds permanent codes and join requests, and the third serializes every
 membership-producing path with those requests. The fourth repairs the family
 routines' SQL `COALESCE` expressions so owner bootstrap and code joining can
-run. The fifth adds the private, RLS-protected encrypted Weekly Reveal relay.
-Deploying the app before any of these migrations leaves family membership or
-shared Weekly readiness incomplete.
+run. The fifth adds the private, RLS-protected encrypted Weekly Reveal relay,
+and the sixth removes author updates so published ciphertext objects remain
+immutable. Deploying the app before any of these migrations leaves family
+membership or shared Weekly readiness incomplete.
 
 Keep the client URL and publishable key in the ignored
 `app/config/supabase.local.json`. From `app`, use the file without printing its
@@ -304,11 +306,12 @@ and unauthenticated callers cannot execute any RPC.
 
 The permanent-code schema, Dart gateway, crypto/storage units, requester and
 approver controllers, and native route declarations have focused automated
-coverage. All five migrations, including the recovery and encrypted Weekly
-Reveal relay, plus the unauthenticated callback bridge are deployed to the
-hosted Keepers project. This does not establish a launch-ready backend. A
-green PostgreSQL concurrency run, configured daily purge job,
-verified external IP throttle, production Android signing and hosted
-Digital-Asset-Links/AASA files, two-physical-phone Android join run, iOS
-runtime/accessibility run, and a release proximity source are not yet recorded
-and must remain open release gates.
+coverage. The first five migrations, including the recovery and encrypted
+Weekly Reveal relay, plus the unauthenticated callback bridge are recorded as
+deployed to the hosted Keepers project. The sixth, create-only hardening
+migration is pending hosted deployment and migration-ledger verification. This
+does not establish a launch-ready backend. A green PostgreSQL concurrency run,
+configured daily purge job, verified external IP throttle, production Android
+signing and hosted Digital-Asset-Links/AASA files, two-physical-phone Android
+join run, iOS runtime/accessibility run, and a release proximity source are not
+yet recorded and must remain open release gates.
