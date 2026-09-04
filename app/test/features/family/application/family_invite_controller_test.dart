@@ -699,13 +699,8 @@ final class _FakeInviteShareService implements InviteShareService {
   }
 
   @override
-  Future<void> shareFamilyLink(
-    FamilyCode code, {
-    Rect? sharePositionOrigin,
-  }) => shareInvitation(
-    code.joinUri,
-    sharePositionOrigin: sharePositionOrigin,
-  );
+  Future<void> shareFamilyLink(FamilyCode code, {Rect? sharePositionOrigin}) =>
+      shareInvitation(code.joinUri, sharePositionOrigin: sharePositionOrigin);
 
   @override
   Future<void> shareGatheringNudge({Rect? sharePositionOrigin}) async {}

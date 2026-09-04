@@ -60,9 +60,7 @@ void main() {
   });
 
   test('uses photo-specific questions when a photo has no text', () {
-    final result = service.promptsFor(
-      _memory(format: MemoryFormat.photo),
-    );
+    final result = service.promptsFor(_memory(format: MemoryFormat.photo));
 
     expect(result.everyday.toLowerCase(), contains('photo'));
     expect(result.reflective.toLowerCase(), contains('notice'));

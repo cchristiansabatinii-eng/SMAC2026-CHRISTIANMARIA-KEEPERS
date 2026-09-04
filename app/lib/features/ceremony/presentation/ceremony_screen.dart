@@ -406,8 +406,9 @@ final class _CeremonyScreenState extends State<CeremonyScreen>
         color: colors[index % colors.length],
         primaryBytes: payload.primaryBytes,
         metadata: memory.metadata,
-        conversationPrompts: const LocalConversationPromptService()
-            .promptsFor(memory),
+        conversationPrompts: const LocalConversationPromptService().promptsFor(
+          memory,
+        ),
         preview: false,
       );
     }, growable: false);
@@ -1430,9 +1431,7 @@ final class _ConversationToneButton extends StatelessWidget {
     if (selected) {
       return FilledButton.icon(
         style: style.copyWith(
-          backgroundColor: const WidgetStatePropertyAll(
-            KeepersColors.homeGold,
-          ),
+          backgroundColor: const WidgetStatePropertyAll(KeepersColors.homeGold),
           foregroundColor: const WidgetStatePropertyAll(KeepersColors.ink),
         ),
         onPressed: onPressed,
