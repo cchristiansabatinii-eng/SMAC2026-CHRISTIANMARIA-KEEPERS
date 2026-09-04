@@ -244,6 +244,7 @@ void main() {
           listLocal: firstDevice.listLocal,
           readLocalBlob: readBounded,
           importRemote: firstDevice.importRemote,
+          isCurrent: () => true,
         );
 
         await service.synchronize(_firstIdentity);
@@ -262,6 +263,72 @@ void main() {
         );
       },
     );
+
+    test(
+      'scope invalidation after a blob read starts prevents publish',
+      () async {
+        final bytes = Uint8List.fromList(const [0x61, 0x62, 0x63]);
+        await firstDevice.seed(
+          _metadata(
+            id: 'stale-local-reveal',
+            identity: _firstIdentity,
+            privacy: PrivacyTier.reveal,
+          ),
+          bytes,
+        );
+        final readStarted = Completer<void>();
+        final releaseRead = Completer<void>();
+        var current = true;
+        final service = WeeklyRevealSyncService(
+          cloud: cloud,
+          listLocal: firstDevice.listLocal,
+          readLocalBlob: (blobRef, {required maxBytes}) async {
+            readStarted.complete();
+            await releaseRead.future;
+            return firstDevice.blobStore.read(blobRef, maxBytes: maxBytes);
+          },
+          importRemote: firstDevice.importRemote,
+          isCurrent: () => current,
+        );
+
+        final synchronization = service.synchronize(_firstIdentity);
+        await readStarted.future;
+        current = false;
+        releaseRead.complete();
+        await synchronization;
+
+        expect(cloud.publishes, 0);
+      },
+    );
+
+    test('scope invalidation after download prevents import', () async {
+      final metadata = _metadata(
+        id: 'stale-remote-reveal',
+        identity: _firstIdentity,
+        privacy: PrivacyTier.reveal,
+      );
+      await cloud.injectListing(
+        requestedFamilyId: _familyId,
+        metadata: metadata,
+        bytes: Uint8List.fromList(const [0x71, 0x72, 0x73]),
+      );
+      var current = true;
+      cloud.beforeDownloadReturn = () => current = false;
+      final service = WeeklyRevealSyncService(
+        cloud: cloud,
+        listLocal: secondDevice.listLocal,
+        readLocalBlob: (blobRef, {required maxBytes}) =>
+            secondDevice.blobStore.read(blobRef, maxBytes: maxBytes),
+        importRemote: secondDevice.importRemote,
+        isCurrent: () => current,
+      );
+
+      await service.synchronize(_secondIdentity);
+
+      expect(cloud.downloads, 1);
+      expect(secondDevice.importAttempts, 0);
+      expect(await secondDevice.listLocal(_familyId), isEmpty);
+    });
   });
 }
 
@@ -365,6 +432,7 @@ CREATE TABLE entries (
         readLocalBlob: (blobRef, {required maxBytes}) =>
             blobStore.read(blobRef, maxBytes: maxBytes),
         importRemote: importRemote,
+        isCurrent: () => true,
       );
 
   Future<EntryMetadata> seed(EntryMetadata metadata, Uint8List bytes) async {
@@ -412,6 +480,7 @@ final class _FakeWeeklyRevealCloudGateway implements WeeklyRevealCloudGateway {
   bool online = true;
   int downloads = 0;
   int publishes = 0;
+  void Function()? beforeDownloadReturn;
 
   @override
   Future<void> publish(EntryMetadata metadata, Uint8List bytes) async {
@@ -455,6 +524,7 @@ final class _FakeWeeklyRevealCloudGateway implements WeeklyRevealCloudGateway {
     final record =
         _records[entry.metadata.id] ?? _extraBlobs[entry.metadata.id];
     if (record == null) throw StateError('Remote entry is unavailable');
+    beforeDownloadReturn?.call();
     return Uint8List.fromList(record.bytes);
   }
 

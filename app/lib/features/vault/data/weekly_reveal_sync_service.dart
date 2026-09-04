@@ -18,6 +18,7 @@ typedef ImportRemoteWeeklyEntry = Future<void> Function(
   RemoteWeeklyRevealEntry entry,
   Uint8List bytes,
 );
+typedef IsWeeklyRevealSyncCurrent = bool Function();
 
 /// Reconciles this device's opaque Weekly Reveal ciphertext with the family
 /// relay. Every operation is idempotent by entry ID and transport failures
@@ -28,22 +29,28 @@ final class WeeklyRevealSyncService {
     required this.listLocal,
     required this.readLocalBlob,
     required this.importRemote,
+    required this.isCurrent,
   });
 
   final WeeklyRevealCloudGateway cloud;
   final ListLocalWeeklyEntries listLocal;
   final ReadLocalWeeklyBlob readLocalBlob;
   final ImportRemoteWeeklyEntry importRemote;
+  final IsWeeklyRevealSyncCurrent isCurrent;
 
   Future<void> synchronize(LocalIdentity identity) async {
+    if (!isCurrent()) return;
     final local = await listLocal(identity.familyId);
+    if (!isCurrent()) return;
 
     List<RemoteWeeklyRevealEntry> remote;
     try {
+      if (!isCurrent()) return;
       remote = await cloud.list(identity.familyId);
     } on Object {
       return;
     }
+    if (!isCurrent()) return;
 
     final remoteIds = {
       for (final entry in remote)
@@ -52,18 +59,23 @@ final class WeeklyRevealSyncService {
     var published = false;
 
     for (final entry in local) {
+      if (!isCurrent()) return;
       if (!_isPublishableBy(entry, identity) || remoteIds.contains(entry.id)) {
         continue;
       }
       try {
+        if (!isCurrent()) return;
         final encrypted = await readLocalBlob(
           entry.blobRef,
           maxBytes: maximumWeeklyRevealBlobBytes,
         );
+        if (!isCurrent()) return;
         await cloud.publish(entry.toEntryMetadata(), encrypted);
+        if (!isCurrent()) return;
         remoteIds.add(entry.id);
         published = true;
       } on Object {
+        if (!isCurrent()) return;
         // Local durability is authoritative. A later provider refresh retries
         // the exact idempotent upload without changing capture success.
       }
@@ -71,29 +83,40 @@ final class WeeklyRevealSyncService {
 
     if (published) {
       try {
+        if (!isCurrent()) return;
         remote = await cloud.list(identity.familyId);
       } on Object {
+        if (!isCurrent()) return;
         // The initial manifest is still safe to reconcile. The newly uploaded
         // entry already exists locally and will appear on other devices once
         // their next manifest request succeeds.
       }
+      if (!isCurrent()) return;
     }
 
     final localIds = local.map((entry) => entry.id).toSet();
     for (final entry in remote) {
+      if (!isCurrent()) return;
       if (localIds.contains(entry.metadata.id) ||
           !_isImportable(entry, identity.familyId)) {
         continue;
       }
       try {
+        if (!isCurrent()) return;
         final encrypted = await cloud.download(entry);
+        if (!isCurrent()) return;
+        final digest = await _sha256(encrypted);
+        if (!isCurrent()) return;
         if (encrypted.lengthInBytes != entry.blobBytes ||
-            await _sha256(encrypted) != entry.blobSha256) {
+            digest != entry.blobSha256) {
           continue;
         }
+        if (!isCurrent()) return;
         await importRemote(entry, encrypted);
+        if (!isCurrent()) return;
         localIds.add(entry.metadata.id);
       } on Object {
+        if (!isCurrent()) return;
         // One malformed, missing, or temporarily unavailable object must not
         // prevent the rest of the family manifest from converging.
       }
