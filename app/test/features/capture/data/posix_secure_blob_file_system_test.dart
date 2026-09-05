@@ -1100,7 +1100,9 @@ void main() {
         expect(observed, contains(PosixSyscallOperation.fsync));
         expect(
           observed.where((item) => item == PosixSyscallOperation.close),
-          hasLength(7),
+          // Two private mutation-authority descriptors, the staging source
+          // and attempt descriptors, and the five retained layout handles.
+          hasLength(9),
         );
       },
       skip: requiresPosix,
