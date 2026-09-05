@@ -1829,6 +1829,54 @@ final class PosixSecureBlobFileSystem
     }
   }
 
+  void _validateDirectoryPathIdentity(
+    int parentFd,
+    String name,
+    SecureFileIdentity expectedIdentity,
+  ) {
+    var pathFd = -1;
+    try {
+      pathFd = _openDirectoryAt(parentFd, name);
+      if (_fileIdentity(pathFd, expectedKind: _FileKind.directory) !=
+          expectedIdentity) {
+        throw FileSystemException(
+          'Private directory path no longer names its retained identity',
+          name,
+        );
+      }
+    } finally {
+      _closeIfOpen(pathFd);
+    }
+  }
+
+  void _verifyDirectoryPathRemoved(
+    int parentFd,
+    String name,
+    SecureFileIdentity expectedIdentity,
+  ) {
+    var pathFd = -1;
+    try {
+      try {
+        pathFd = _openDirectoryAt(parentFd, name);
+      } on _PosixException catch (error) {
+        if (error.errno == _enoent) return;
+        rethrow;
+      }
+      final actualIdentity = _fileIdentity(
+        pathFd,
+        expectedKind: _FileKind.directory,
+      );
+      throw FileSystemException(
+        actualIdentity == expectedIdentity
+            ? 'Removed private directory identity remains reachable'
+            : 'Private directory path was replaced during removal',
+        name,
+      );
+    } finally {
+      _closeIfOpen(pathFd);
+    }
+  }
+
   PosixStatLayout get _statLayout =>
       PosixStatLayout.forAbi(currentPosixNativeAbi());
 
@@ -2386,6 +2434,11 @@ final class _PosixQuarantineOperations implements AnchoredQuarantineOperations {
       PosixCleanupAction(PosixCleanupOperation.fstat, () {
         owner._validateQuarantineAuthority(quarantineFd, quarantineIdentity);
         owner._validateQuarantineAuthority(authorityFd, authorityIdentity);
+        owner._validateDirectoryPathIdentity(
+          quarantineFd,
+          authorityName,
+          authorityIdentity,
+        );
         authorityValid = true;
       }),
       PosixCleanupAction(PosixCleanupOperation.unlinkat, () {
@@ -2396,11 +2449,11 @@ final class _PosixQuarantineOperations implements AnchoredQuarantineOperations {
         }
         owner._unlinkAt(quarantineFd, authorityName, directory: true);
         authorityUnlinked = true;
-        if (owner._linkCount(authorityFd) != 0) {
-          throw const FileSystemException(
-            'Private mutation authority removal could not be verified',
-          );
-        }
+        owner._verifyDirectoryPathRemoved(
+          quarantineFd,
+          authorityName,
+          authorityIdentity,
+        );
       }),
       PosixCleanupAction(PosixCleanupOperation.fsync, () {
         if (!authorityUnlinked) {
@@ -2505,22 +2558,38 @@ final class _PosixQuarantineOperations implements AnchoredQuarantineOperations {
           'Quarantine identity changed immediately before removal',
         );
       }
-      final linksBefore = owner._linkCount(fd);
+      final linksBefore = kind == SecureFileKind.regular
+          ? owner._linkCount(fd)
+          : null;
       owner._hook(
         PosixFileBoundary.afterQuarantineIdentityCheckBeforeUnlink,
         destinationName: destinationName,
         plaintextSegments: plaintextSegments,
       );
+      if (kind == SecureFileKind.directory) {
+        owner._validateDirectoryPathIdentity(
+          _privateAuthorityFd,
+          name,
+          expectedIdentity,
+        );
+      }
       owner._unlinkAt(
         _privateAuthorityFd,
         name,
         directory: kind == SecureFileKind.directory,
       );
+      if (kind == SecureFileKind.directory) {
+        owner._verifyDirectoryPathRemoved(
+          _privateAuthorityFd,
+          name,
+          expectedIdentity,
+        );
+        // Directory link counts after rmdir are not portable. Zero denotes
+        // that the anchored pathname/identity absence proof succeeded.
+        return 0;
+      }
       final linksAfter = owner._linkCount(fd);
-      final identityWasRemoved = kind == SecureFileKind.directory
-          ? linksAfter == 0
-          : linksAfter == linksBefore - 1;
-      if (!identityWasRemoved) {
+      if (linksAfter != linksBefore! - 1) {
         throw const FileSystemException(
           'Quarantine removal did not unlink its verified identity',
         );
@@ -2603,9 +2672,14 @@ final class _OpenFlags {
   }
 }
 
-typedef _OpenNative = Int32 Function(Pointer<Utf8>, Int32, Uint32);
+typedef _OpenNative = Int32 Function(Pointer<Utf8>, Int32, VarArgs<(Int,)>);
 typedef _OpenDart = int Function(Pointer<Utf8>, int, int);
-typedef _OpenAtNative = Int32 Function(Int32, Pointer<Utf8>, Int32, Uint32);
+typedef _OpenAtNative = Int32 Function(
+  Int32,
+  Pointer<Utf8>,
+  Int32,
+  VarArgs<(Int,)>,
+);
 typedef _OpenAtDart = int Function(int, Pointer<Utf8>, int, int);
 typedef _MkdirAtNative = Int32 Function(Int32, Pointer<Utf8>, Uint32);
 typedef _MkdirAtDart = int Function(int, Pointer<Utf8>, int);

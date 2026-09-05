@@ -13,6 +13,21 @@ void main() {
             'support Windows.'
       : false;
 
+  test('POSIX open bindings model the C mode argument as variadic', () {
+    final source = File(
+      'lib/features/capture/data/secure_blob_file_system.dart',
+    ).readAsStringSync();
+
+    expect(
+      _compactTypedef(source, '_OpenNative'),
+      'Int32Function(Pointer<Utf8>,Int32,VarArgs<(Int,)>)',
+    );
+    expect(
+      _compactTypedef(source, '_OpenAtNative'),
+      'Int32Function(Int32,Pointer<Utf8>,Int32,VarArgs<(Int,)>)',
+    );
+  });
+
   test('bounded encrypted reads zero partial buffers on overflow', () {
     final first = Uint8List.fromList([1, 2]);
     final overflow = Uint8List.fromList([3, 4]);
@@ -102,6 +117,38 @@ void main() {
         expect(await fileSystem.readBlob(finalized.destinationName), [1, 2, 3]);
         await fileSystem.rollbackBlob(finalized);
         expect(await fileSystem.blobExists(finalized.destinationName), isFalse);
+      },
+      skip: requiresPosix,
+    );
+
+    test(
+      'native ABI creates staged payloads with owner-only permissions',
+      () async {
+        final roots = await _PosixRoots.create('keepers-posix-native-mode-');
+        addTearDown(roots.close);
+        final fileSystem = PosixSecureBlobFileSystem(
+          supportDirectory: roots.support,
+          captureTemporaryDirectory: roots.capture,
+        );
+
+        final staged = await fileSystem.stage(Uint8List.fromList([1, 2, 3]));
+        final payload = File(
+          p.join(
+            roots.support.path,
+            'entries',
+            'staging',
+            staged.attemptId,
+            'payload.part',
+          ),
+        );
+
+        expect(payload.statSync().mode & 0x1ff, 0x180);
+        final finalized = await fileSystem.finalize(
+          staged,
+          destinationName: 'entry-mode.keeper',
+          publishedRef: p.join('entries', 'blobs', 'entry-mode.keeper'),
+        );
+        await fileSystem.rollbackBlob(finalized);
       },
       skip: requiresPosix,
     );
@@ -1048,6 +1095,69 @@ void main() {
     );
 
     test(
+      'attempt cleanup restores a directory replacement before unlink',
+      () async {
+        final roots = await _PosixRoots.create(
+          'keepers-posix-attempt-replacement-',
+        );
+        addTearDown(roots.close);
+        var interposed = false;
+        Directory? retained;
+        final fileSystem = PosixSecureBlobFileSystem(
+          supportDirectory: roots.support,
+          captureTemporaryDirectory: roots.capture,
+          boundaryHook: (boundary, _) {
+            if (boundary !=
+                    PosixFileBoundary
+                        .afterQuarantineIdentityCheckBeforeUnlink ||
+                interposed) {
+              return;
+            }
+            final quarantine = Directory(
+              p.join(roots.support.path, 'entries', 'quarantine'),
+            );
+            for (final authority
+                in quarantine
+                    .listSync(followLinks: false)
+                    .whereType<Directory>()) {
+              final candidates = authority.listSync(followLinks: false);
+              if (candidates.length != 1 || candidates.single is! Directory) {
+                continue;
+              }
+              final candidate = candidates.single as Directory;
+              retained = Directory('${candidate.path}.retained');
+              candidate.renameSync(retained!.path);
+              Directory(candidate.path).createSync();
+              interposed = true;
+              return;
+            }
+          },
+        );
+        final staged = await fileSystem.stage(Uint8List.fromList([1, 2, 3]));
+
+        await expectLater(
+          fileSystem.finalize(
+            staged,
+            destinationName: 'entry-1.keeper',
+            publishedRef: p.join('entries', 'blobs', 'entry-1.keeper'),
+          ),
+          throwsA(isA<SecureBlobFileSystemFailure>()),
+        );
+
+        expect(interposed, isTrue);
+        expect(retained, isNotNull);
+        expect(retained!.existsSync(), isTrue);
+        expect(
+          Directory(
+            p.join(roots.support.path, 'entries', 'staging', staged.attemptId),
+          ).existsSync(),
+          isTrue,
+        );
+      },
+      skip: requiresPosix,
+    );
+
+    test(
       'syscall cleanup faults preserve finalize primary and close every fd',
       () async {
         final roots = await _PosixRoots.create('keepers-posix-syscall-fault-');
@@ -1180,4 +1290,13 @@ final class _PosixRoots {
       await sandbox.delete(recursive: true);
     }
   }
+}
+
+String _compactTypedef(String source, String name) {
+  final match = RegExp('typedef $name =([\\s\\S]*?);').firstMatch(source);
+  expect(match, isNotNull, reason: 'Missing $name typedef');
+  return match!
+      .group(1)!
+      .replaceAll(RegExp(r'\s+'), '')
+      .replaceFirst(RegExp(r',\)$'), ')');
 }
