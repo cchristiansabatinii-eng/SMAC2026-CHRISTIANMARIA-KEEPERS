@@ -28,16 +28,18 @@ supabase functions deploy keepers-auth-bridge --no-verify-jwt
 4. `migrations/202609080001_family_code_bootstrap_recovery.sql`
 5. `migrations/202609080002_weekly_reveal_sync.sql`
 6. `migrations/202609080003_weekly_reveal_create_only.sql`
+7. `migrations/202609090001_family_code_cooldown_recovery.sql`
 
-Do not release a family-code client until all six appear in the linked
+Do not release a family-code client until all seven appear in the linked
 project's migration history. The first remains for compatibility, the second
 adds permanent codes and join requests, and the third serializes every
 membership-producing path with those requests. The fourth repairs the family
 routines' SQL `COALESCE` expressions so owner bootstrap and code joining can
 run. The fifth adds the private, RLS-protected encrypted Weekly Reveal relay,
 and the sixth removes author updates so published ciphertext objects remain
-immutable. Deploying the app before any of these migrations leaves family
-membership or shared Weekly readiness incomplete.
+immutable. The seventh repairs the family-code cooldown routine's invalid
+schema-qualified `LEAST` expression. Deploying the app before any of these
+migrations leaves family membership or shared Weekly readiness incomplete.
 
 Keep the client URL and publishable key in the ignored
 `app/config/supabase.local.json`. From `app`, use the file without printing its
@@ -53,12 +55,13 @@ configuration, not privileged credentials. A Supabase service-role key must
 never be placed in Dart defines, committed to source control, or bundled in an
 app build. On 2026-09-07, the hosted Keepers project was verified with the first
 three migration-history rows and the deployed `keepers-auth-bridge` function.
-The recovery SQL was applied and live-verified on 2026-09-08; its checked-in
-migration must still pass through the normal migration-history deployment. The
-earlier migrations were submitted through Supabase's official Management API
-because a noninteractive CLI link also requires the database password. This
-proves the hosted schema and callback deployment, but not the separate
-concurrency CI gate.
+The fourth and fifth migrations are also deployed. The sixth, create-only
+hardening migration and the seventh, family-code cooldown recovery migration
+are pending hosted deployment and migration-ledger verification. The earlier
+migrations were submitted through Supabase's official Management API because a
+noninteractive CLI link also requires the database password. This proves the
+hosted schema and callback deployment, but not the separate concurrency CI
+gate.
 
 ## Account authentication and callback
 
@@ -141,7 +144,7 @@ template that omits both authentication recovery paths.
 
 ## Database verification
 
-The migration is idempotent and lives in `migrations/`. The executable pgTAP
+The migrations are idempotent and live in `migrations/`. The executable pgTAP
 authorization and transition suite lives in `tests/`; neither directory is
 ignored. Only local Supabase CLI runtime state under `.branches/` and `.temp/`
 is ignored.
@@ -309,9 +312,10 @@ approver controllers, and native route declarations have focused automated
 coverage. The first five migrations, including the recovery and encrypted
 Weekly Reveal relay, plus the unauthenticated callback bridge are recorded as
 deployed to the hosted Keepers project. The sixth, create-only hardening
-migration is pending hosted deployment and migration-ledger verification. This
-does not establish a launch-ready backend. A green PostgreSQL concurrency run,
-configured daily purge job, verified external IP throttle, production Android
-signing and hosted Digital-Asset-Links/AASA files, two-physical-phone Android
-join run, iOS runtime/accessibility run, and a release proximity source are not
-yet recorded and must remain open release gates.
+migration and the seventh, family-code cooldown recovery migration are pending
+hosted deployment and migration-ledger verification. This does not establish a
+launch-ready backend. A green PostgreSQL concurrency run, configured daily
+purge job, verified external IP throttle, production Android signing and hosted
+Digital-Asset-Links/AASA files, two-physical-phone Android join run, iOS
+runtime/accessibility run, and a release proximity source are not yet recorded
+and must remain open release gates.

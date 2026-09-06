@@ -9,11 +9,15 @@ void main() {
   final recoveryMigration = File(
     '../supabase/migrations/202609080001_family_code_bootstrap_recovery.sql',
   );
+  final cooldownRecoveryMigration = File(
+    '../supabase/migrations/202609090001_family_code_cooldown_recovery.sql',
+  );
   final config = File('../supabase/config.toml');
   final readme = File('../supabase/README.md');
   final pgTap = File('../supabase/tests/family_invitations_test.sql');
   late String sql;
   late String recoverySql;
+  late String cooldownRecoverySql;
   late String configText;
   late String readmeText;
   late String pgTapText;
@@ -22,6 +26,9 @@ void main() {
     sql = migration.existsSync() ? migration.readAsStringSync() : '';
     recoverySql = recoveryMigration.existsSync()
         ? recoveryMigration.readAsStringSync()
+        : '';
+    cooldownRecoverySql = cooldownRecoveryMigration.existsSync()
+        ? cooldownRecoveryMigration.readAsStringSync()
         : '';
     configText = config.existsSync() ? config.readAsStringSync() : '';
     readmeText = readme.existsSync() ? readme.readAsStringSync() : '';
@@ -61,6 +68,21 @@ void main() {
     expect(
       recoverySql,
       contains('or not private.is_active_family_member(p_family_id)'),
+    );
+  });
+
+  test('cooldown recovery migration repairs only the invalid LEAST call', () {
+    expect(cooldownRecoveryMigration.existsSync(), isTrue);
+    expect(cooldownRecoverySql, contains('pg_catalog.pg_get_functiondef'));
+    expect(
+      cooldownRecoverySql,
+      contains('private.record_invalid_family_code_attempt(uuid)'),
+    );
+    expect(cooldownRecoverySql, contains("'pg_catalog.least('"));
+    expect(cooldownRecoverySql, contains("'least('"));
+    expect(
+      cooldownRecoverySql,
+      contains('failed to repair private.record_invalid_family_code_attempt'),
     );
   });
 
@@ -499,7 +521,12 @@ void main() {
     ).firstMatch(pgTapText);
     expect(plan, isNotNull);
     expect(int.parse(plan!.group(1)!), assertions);
-    expect(pgTapText, contains('set local role anon;'));
+    expect(pgTapText, contains('pg_catalog.has_function_privilege'));
+    expect(
+      pgTapText,
+      contains('public.preview_family_invite(pg_catalog.text)'),
+    );
+    expect(pgTapText, isNot(contains('set local role anon;')));
     expect(
       RegExp(
         r'set\s+local\s+role\s+authenticated\s*;',

@@ -7,7 +7,10 @@ grant execute on all functions in schema extensions to anon, authenticated;
 select plan(36);
 
 -- Public contract, least privilege, and Realtime wiring.
-select has_table('public', 'weekly_reveal_entries');
+select has_table(
+  'public'::pg_catalog.name,
+  'weekly_reveal_entries'::pg_catalog.name
+);
 
 select is(
   (

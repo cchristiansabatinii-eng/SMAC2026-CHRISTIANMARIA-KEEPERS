@@ -134,24 +134,23 @@ The backend must deploy before the client, in this order:
 4. `supabase/migrations/202609080001_family_code_bootstrap_recovery.sql`
 5. `supabase/migrations/202609080002_weekly_reveal_sync.sql`
 6. `supabase/migrations/202609080003_weekly_reveal_create_only.sql`
-7. `supabase/functions/keepers-auth-bridge`, for account-email callback handoff
-8. purge scheduling and an external per-IP throttle
-9. the configured mobile build
+7. `supabase/migrations/202609090001_family_code_cooldown_recovery.sql`
+8. `supabase/functions/keepers-auth-bridge`, for account-email callback handoff
+9. purge scheduling and an external per-IP throttle
+10. the configured mobile build
 
 See `../supabase/README.md` for exact deployment, retention, link-association,
 and database verification steps.
 
 Unit/widget tests and static platform checks are not live release evidence. The
-first three hosted migrations and the mobile auth callback bridge were deployed
-on 2026-09-07. The fourth migration's recovery SQL was applied and live-verified
-on 2026-09-08; it still needs normal migration-history deployment. The fifth
-migration is recorded as deployed, but the sixth, create-only hardening
-migration is pending hosted deployment and migration-ledger verification. There
-is no recorded PostgreSQL concurrency run, production IP throttle, purge job,
-release-signing certificate, published domain association, two-physical-phone
-family-code run, iOS runtime/accessibility pass, or physical BLE proximity
-matrix. Manual-code joining is the reliable demo path; the verified-link/store
-release remains gated by the missing external evidence.
+first five hosted migrations and the mobile auth callback bridge are deployed.
+The sixth, create-only hardening migration and the seventh, family-code cooldown
+recovery migration are pending hosted deployment and migration-ledger
+verification. There is no recorded PostgreSQL concurrency run, production IP
+throttle, purge job, release-signing certificate, published domain association,
+two-physical-phone family-code run, iOS runtime/accessibility pass, or physical
+BLE proximity matrix. Manual-code joining is the reliable demo path; the
+verified-link/store release remains gated by the missing external evidence.
 
 Capsule payloads, assignments, and task-completion state remain local to the
 capturing device. Cross-device Capsule delivery and unlock synchronization are

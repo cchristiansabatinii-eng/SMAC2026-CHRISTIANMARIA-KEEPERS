@@ -31,9 +31,18 @@ select ok(
 );
 
 -- Schema, constraints, RLS, grants, and compatibility.
-select has_table('public', 'family_join_codes');
-select has_table('public', 'family_join_requests');
-select has_table('private', 'family_code_account_limits');
+select has_table(
+  'public'::pg_catalog.name,
+  'family_join_codes'::pg_catalog.name
+);
+select has_table(
+  'public'::pg_catalog.name,
+  'family_join_requests'::pg_catalog.name
+);
+select has_table(
+  'private'::pg_catalog.name,
+  'family_code_account_limits'::pg_catalog.name
+);
 
 select is(
   (select enum_range(null::public.family_join_request_state)::text),

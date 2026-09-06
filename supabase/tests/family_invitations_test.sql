@@ -10,16 +10,40 @@ grant execute on all functions in schema extensions to anon, authenticated;
 select plan(88);
 
 -- Required schema and policy contract from the implementation plan.
-select has_table('public', 'cloud_families');
-select has_table('public', 'family_memberships');
-select has_table('public', 'family_invites');
-select has_function('public', 'bootstrap_owner_family');
-select has_function('public', 'create_family_invite');
-select has_function('public', 'preview_family_invite');
-select has_function('public', 'claim_family_invite');
-select has_function('public', 'complete_family_invite');
-select has_function('public', 'revoke_family_invite');
-select has_function('public', 'list_active_family_members');
+select has_table('public'::pg_catalog.name, 'cloud_families'::pg_catalog.name);
+select has_table(
+  'public'::pg_catalog.name,
+  'family_memberships'::pg_catalog.name
+);
+select has_table('public'::pg_catalog.name, 'family_invites'::pg_catalog.name);
+select has_function(
+  'public'::pg_catalog.name,
+  'bootstrap_owner_family'::pg_catalog.name
+);
+select has_function(
+  'public'::pg_catalog.name,
+  'create_family_invite'::pg_catalog.name
+);
+select has_function(
+  'public'::pg_catalog.name,
+  'preview_family_invite'::pg_catalog.name
+);
+select has_function(
+  'public'::pg_catalog.name,
+  'claim_family_invite'::pg_catalog.name
+);
+select has_function(
+  'public'::pg_catalog.name,
+  'complete_family_invite'::pg_catalog.name
+);
+select has_function(
+  'public'::pg_catalog.name,
+  'revoke_family_invite'::pg_catalog.name
+);
+select has_function(
+  'public'::pg_catalog.name,
+  'list_active_family_members'::pg_catalog.name
+);
 select policies_are(
   'public',
   'family_memberships',
@@ -27,7 +51,7 @@ select policies_are(
 );
 select policies_are('public', 'profiles', array['own profile']);
 
-select has_table('public', 'profiles');
+select has_table('public'::pg_catalog.name, 'profiles'::pg_catalog.name);
 
 select is(
   (
@@ -227,20 +251,17 @@ select is(
   'authenticated can execute exactly the seven family invitation RPCs'
 );
 
-set local role anon;
-
-select throws_ok(
-  $sql$
-    select public.preview_family_invite(
-      'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
-    )
-  $sql$,
-  '42501',
-  'permission denied for function preview_family_invite',
-  'anon is denied when it actually invokes an RPC'
+-- Supabase Postgres 17.6.1.106 can crash instead of returning 42501 when a
+-- reserved role invokes a function without EXECUTE through pgTAP's dynamic
+-- SQL path: https://github.com/supabase/postgres/issues/2112
+select ok(
+  not pg_catalog.has_function_privilege(
+    'anon',
+    'public.preview_family_invite(pg_catalog.text)'::pg_catalog.regprocedure,
+    'EXECUTE'
+  ),
+  'anon cannot execute preview_family_invite'
 );
-
-reset role;
 
 set local role authenticated;
 
