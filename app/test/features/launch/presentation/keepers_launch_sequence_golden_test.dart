@@ -61,5 +61,5 @@ void main() {
       find.byKey(const ValueKey('keepers-launch-sequence')),
       matchesGoldenFile('goldens/keepers_launch_you_390x844.png'),
     );
-  });
+  }, tags: 'golden');
 }

@@ -88,7 +88,7 @@ void main() {
       find.byType(KeepersAppBackground),
       matchesGoldenFile('goldens/archive_gallery_scrolled_390x844.png'),
     );
-  });
+  }, tags: 'golden');
 }
 
 final _galleryMemories = <ArchiveMemorySummary>[

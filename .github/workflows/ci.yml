@@ -182,6 +182,7 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_7
+          disk-size: 2048M
           disable-animations: true
           script: |
             test "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" = "x86_64"
@@ -278,4 +279,31 @@ jobs:
       - name: Run unit tests
         if: steps.app.outputs.exists == 'true'
         working-directory: app
-        run: flutter test
+        run: flutter test --exclude-tags golden
+
+  flutter-goldens-windows:
+    name: Flutter golden compositions (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Run approved golden compositions on their canonical renderer
+        working-directory: app
+        run: >-
+          flutter test --no-pub
+          test/features/archive/presentation/archive_screen_golden_test.dart
+          test/features/launch/presentation/keepers_launch_sequence_golden_test.dart
