@@ -135,9 +135,10 @@ The backend must deploy before the client, in this order:
 5. `supabase/migrations/202609080002_weekly_reveal_sync.sql`
 6. `supabase/migrations/202609080003_weekly_reveal_create_only.sql`
 7. `supabase/migrations/202609090001_family_code_cooldown_recovery.sql`
-8. `supabase/functions/keepers-auth-bridge`, for account-email callback handoff
-9. purge scheduling and an external per-IP throttle
-10. the configured mobile build
+8. `supabase/migrations/202609090002_family_membership_timestamp_defaults.sql`
+9. `supabase/functions/keepers-auth-bridge`, for account-email callback handoff
+10. purge scheduling and an external per-IP throttle
+11. the configured mobile build
 
 See `../supabase/README.md` for exact deployment, retention, link-association,
 and database verification steps.
@@ -145,8 +146,9 @@ and database verification steps.
 Unit/widget tests and static platform checks are not live release evidence. The
 first five hosted migrations and the mobile auth callback bridge are deployed.
 The sixth, create-only hardening migration and the seventh, family-code cooldown
-recovery migration are pending hosted deployment and migration-ledger
-verification. There is no recorded PostgreSQL concurrency run, production IP
+recovery migration, plus the eighth, membership timestamp-default repair, are
+pending hosted deployment and migration-ledger verification. There is no
+recorded PostgreSQL concurrency run, production IP
 throttle, purge job, release-signing certificate, published domain association,
 two-physical-phone family-code run, iOS runtime/accessibility pass, or physical
 BLE proximity matrix. Manual-code joining is the reliable demo path; the

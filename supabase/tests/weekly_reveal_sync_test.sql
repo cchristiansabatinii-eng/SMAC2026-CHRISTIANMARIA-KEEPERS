@@ -286,6 +286,7 @@ values (
 );
 
 create temporary table weekly_publish_result (value pg_catalog.jsonb);
+grant select, insert on table pg_temp.weekly_publish_result to authenticated;
 
 set local role authenticated;
 

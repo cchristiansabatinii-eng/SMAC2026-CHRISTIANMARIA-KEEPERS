@@ -12,12 +12,16 @@ void main() {
   final cooldownRecoveryMigration = File(
     '../supabase/migrations/202609090001_family_code_cooldown_recovery.sql',
   );
+  final membershipTimestampDefaultsMigration = File(
+    '../supabase/migrations/202609090002_family_membership_timestamp_defaults.sql',
+  );
   final config = File('../supabase/config.toml');
   final readme = File('../supabase/README.md');
   final pgTap = File('../supabase/tests/family_invitations_test.sql');
   late String sql;
   late String recoverySql;
   late String cooldownRecoverySql;
+  late String membershipTimestampDefaultsSql;
   late String configText;
   late String readmeText;
   late String pgTapText;
@@ -29,6 +33,10 @@ void main() {
         : '';
     cooldownRecoverySql = cooldownRecoveryMigration.existsSync()
         ? cooldownRecoveryMigration.readAsStringSync()
+        : '';
+    membershipTimestampDefaultsSql =
+        membershipTimestampDefaultsMigration.existsSync()
+        ? membershipTimestampDefaultsMigration.readAsStringSync()
         : '';
     configText = config.existsSync() ? config.readAsStringSync() : '';
     readmeText = readme.existsSync() ? readme.readAsStringSync() : '';
@@ -83,6 +91,40 @@ void main() {
     expect(
       cooldownRecoverySql,
       contains('failed to repair private.record_invalid_family_code_attempt'),
+    );
+  });
+
+  test('membership timestamp defaults are stable within each statement', () {
+    expect(membershipTimestampDefaultsMigration.existsSync(), isTrue);
+    _expectExactlyOnce(
+      membershipTimestampDefaultsSql,
+      RegExp(
+        r'alter\s+table\s+public\.family_memberships\b',
+        caseSensitive: false,
+      ),
+      'family membership timestamp-default repair',
+    );
+    for (final column in <String>['joined_at', 'created_at', 'updated_at']) {
+      _expectExactlyOnce(
+        membershipTimestampDefaultsSql,
+        RegExp(
+          'alter\\s+column\\s+$column\\s+set\\s+default\\s+'
+          r'pg_catalog\.statement_timestamp\s*\(\s*\)',
+          caseSensitive: false,
+        ),
+        'statement-stable default for family_memberships.$column',
+      );
+    }
+    expect(
+      membershipTimestampDefaultsSql,
+      isNot(
+        contains(
+          RegExp(
+            r'set\s+default\s+(?:pg_catalog\.)?clock_timestamp\s*\(',
+            caseSensitive: false,
+          ),
+        ),
+      ),
     );
   });
 
