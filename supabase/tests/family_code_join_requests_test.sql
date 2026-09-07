@@ -406,12 +406,12 @@ select public.get_family_join_code(
 ) result;
 select is(
   (
-    select array_agg(key order by key)
+    select array_agg(key order by key collate "C")
     from family_a_code_result,
       lateral jsonb_object_keys(result) keys(key)
   ),
   array[
-    'ciphertext', 'codecVersion', 'codeVersion', 'createdAt',
+    'ciphertext', 'codeVersion', 'codecVersion', 'createdAt',
     'creatorAccountId', 'familyId', 'mac', 'nonce', 'updatedAt'
   ]::text[],
   'code retrieval has the exact success keys'
@@ -532,7 +532,7 @@ create temporary table preview_result as
 select public.preview_family_by_code('ABCD-2345') result;
 select is(
   (
-    select array_agg(key order by key)
+    select array_agg(key order by key collate "C")
     from preview_result, lateral jsonb_object_keys(result) keys(key)
   ),
   array['codeVersion', 'familyId', 'familyName', 'members']::text[],
@@ -698,11 +698,11 @@ select public.create_family_join_request(
 ) result;
 select is(
   (
-    select array_agg(key order by key)
+    select array_agg(key order by key collate "C")
     from request_one_result, lateral jsonb_object_keys(result) keys(key)
   ),
   array[
-    'approvalEnvelope', 'avatarJson', 'codeVersion', 'colorToken',
+    'approvalEnvelope', 'avatarJson', 'cancelReason', 'codeVersion', 'colorToken',
     'createdAt', 'demographicRole', 'displayName', 'expiresAt',
     'familyId', 'familyName', 'joiningPublicKey', 'memberId',
     'requestId', 'requesterAccountId', 'roster', 'state'
@@ -823,7 +823,7 @@ select is(
 );
 select is(
   (
-    select array_agg(key order by key)
+    select array_agg(key order by key collate "C")
     from pending_list_result,
       lateral jsonb_array_elements(result) item,
       lateral jsonb_object_keys(item) keys(key)
@@ -872,7 +872,7 @@ select public.approve_family_join_request(
 ) result;
 select is(
   (
-    select array_agg(key order by key)
+    select array_agg(key order by key collate "C")
     from approval_result, lateral jsonb_object_keys(result) keys(key)
   ),
   array['familyId', 'requestId', 'state', 'updatedAt']::text[],
@@ -954,7 +954,7 @@ select public.complete_family_join_request(
 select is((select result ->> 'state' from install_result), 'installed', 'requester installs an approved membership');
 select is(
   (
-    select array_agg(key order by key)
+    select array_agg(key order by key collate "C")
     from install_result, lateral jsonb_object_keys(result) keys(key)
   ),
   array['familyId', 'requestId', 'state', 'updatedAt']::text[],
@@ -995,7 +995,7 @@ select public.cancel_family_join_request(
 select is((select result ->> 'state' from cancel_result), 'cancelled', 'requester can cancel a pending request');
 select is(
   (
-    select array_agg(key order by key)
+    select array_agg(key order by key collate "C")
     from cancel_result, lateral jsonb_object_keys(result) keys(key)
   ),
   array['familyId', 'requestId', 'state', 'updatedAt']::text[],
@@ -1040,7 +1040,7 @@ select is(
 );
 select is(
   (
-    select array_agg(key order by key)
+    select array_agg(key order by key collate "C")
     from decline_result, lateral jsonb_object_keys(result) keys(key)
   ),
   array['familyId', 'requestId', 'state', 'updatedAt']::text[],
@@ -1097,10 +1097,10 @@ select throws_ok(
 reset role;
 
 update public.family_join_requests r
-set created_at = clock_timestamp() - interval '50 days',
-    expires_at = clock_timestamp() - interval '43 days',
-    resolved_at = clock_timestamp() - interval '40 days',
-    updated_at = clock_timestamp() - interval '40 days'
+set created_at = statement_timestamp() - interval '50 days',
+    expires_at = statement_timestamp() - interval '43 days',
+    resolved_at = statement_timestamp() - interval '40 days',
+    updated_at = statement_timestamp() - interval '40 days'
 where r.id = (select (result ->> 'requestId')::uuid from request_two_result);
 set local role service_role;
 select is(
@@ -1126,9 +1126,9 @@ select
   '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"rq","selections":{},"colors":{}}',
   'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
   1, 'cancelled', 'requester',
-  clock_timestamp() - (n || ' minutes')::interval,
-  clock_timestamp() - (n || ' minutes')::interval + interval '7 days',
-  clock_timestamp(), clock_timestamp()
+  statement_timestamp() - (n || ' minutes')::interval,
+  statement_timestamp() - (n || ' minutes')::interval + interval '7 days',
+  statement_timestamp(), statement_timestamp()
 from generate_series(1, 10) n;
 select pg_temp.authenticate_as('10000000-0000-4000-8000-000000000005', 'request-quota@example.com');
 set local role authenticated;
@@ -1186,7 +1186,8 @@ select
   format('Pending %s', n), 'adult', 'slate',
   '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"fq","selections":{},"colors":{}}',
   'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
-  1, clock_timestamp(), clock_timestamp() + interval '7 days', clock_timestamp()
+  1, statement_timestamp(), statement_timestamp() + interval '7 days',
+  statement_timestamp()
 from generate_series(1, 100) n;
 select pg_temp.authenticate_as('10000000-0000-4000-8000-000000000010', 'family-quota@example.com');
 set local role authenticated;
@@ -1257,8 +1258,8 @@ insert into public.family_join_requests(
   'AAECAwQFBgcICQoL',
   'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
   'AAECAwQFBgcICQoLDA0ODw',
-  clock_timestamp(), clock_timestamp() + interval '7 days',
-  clock_timestamp(), clock_timestamp()
+  statement_timestamp(), statement_timestamp() + interval '7 days',
+  statement_timestamp(), statement_timestamp()
 );
 alter table public.family_join_requests
 enable trigger guard_family_join_request_membership;
@@ -1289,7 +1290,8 @@ insert into public.family_join_requests(
   'Regeneration', 'adult', 'violet',
   '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"regen","selections":{},"colors":{}}',
   'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
-  1, clock_timestamp(), clock_timestamp() + interval '7 days', clock_timestamp()
+  1, statement_timestamp(), statement_timestamp() + interval '7 days',
+  statement_timestamp()
 );
 select pg_temp.authenticate_as('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'member-a@example.com');
 set local role authenticated;
@@ -1328,8 +1330,8 @@ select public.regenerate_family_join_code(
 ) result;
 select ok(
   (select result ->> 'codeVersion' = '2' from regeneration_result)
-  and (select array_agg(key order by key) = array[
-    'ciphertext', 'codecVersion', 'codeVersion', 'createdAt',
+  and (select array_agg(key order by key collate "C") = array[
+    'ciphertext', 'codeVersion', 'codecVersion', 'createdAt',
     'creatorAccountId', 'familyId', 'mac', 'nonce', 'updatedAt'
   ]::text[] from regeneration_result, lateral jsonb_object_keys(result) keys(key)),
   'successful regeneration returns the exact code projection at version two'

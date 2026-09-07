@@ -236,9 +236,9 @@ insert into public.family_join_requests(
   demographic_role, color_token, avatar_json, joining_public_key,
   code_version, created_at, expires_at, updated_at
 ) values
-  ('c0000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000001', 'Approve race', 'adult', 'blue', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r1","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 1, clock_timestamp(), clock_timestamp() + interval '7 days', clock_timestamp()),
-  ('c0000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000002', 'Decision race', 'adult', 'rose', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r2","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 1, clock_timestamp(), clock_timestamp() + interval '7 days', clock_timestamp()),
-  ('c0000000-0000-4000-8000-000000000004', 'a1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000004', 'd0000000-0000-4000-8000-000000000004', 'Expiry race', 'adult', 'gold', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r4","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 1, clock_timestamp(), clock_timestamp() + interval '7 days', clock_timestamp());
+  ('c0000000-0000-4000-8000-000000000001', 'a1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'd0000000-0000-4000-8000-000000000001', 'Approve race', 'adult', 'blue', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r1","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 1, statement_timestamp(), statement_timestamp() + interval '7 days', statement_timestamp()),
+  ('c0000000-0000-4000-8000-000000000002', 'a1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000002', 'd0000000-0000-4000-8000-000000000002', 'Decision race', 'adult', 'rose', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r2","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 1, statement_timestamp(), statement_timestamp() + interval '7 days', statement_timestamp()),
+  ('c0000000-0000-4000-8000-000000000004', 'a1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000004', 'd0000000-0000-4000-8000-000000000004', 'Expiry race', 'adult', 'gold', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r4","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 1, statement_timestamp(), statement_timestamp() + interval '7 days', statement_timestamp());
 SQL
 
 cat >"$race_tmp/approve-a.sql" <<'SQL'
@@ -311,7 +311,8 @@ insert into public.family_join_requests(
   'Expiry race', 'adult', 'gold',
   '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r4","selections":{},"colors":{}}',
   'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
-  2, clock_timestamp(), clock_timestamp() + interval '7 days', clock_timestamp()
+  2, statement_timestamp(), statement_timestamp() + interval '7 days',
+  statement_timestamp()
 );
 SQL
 
@@ -344,8 +345,8 @@ insert into public.family_join_requests(
   approval_nonce, approval_ciphertext, approval_mac, created_at, expires_at,
   resolved_at, updated_at
 ) values
-  ('c0000000-0000-4000-8000-000000000005', 'a1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000005', 'd0000000-0000-4000-8000-000000000005', 'Two families', 'adult', 'blue', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r5a","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 2, 'approved', 'a0000000-0000-4000-8000-000000000001', 1, 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 'AAECAwQFBgcICQoL', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 'AAECAwQFBgcICQoLDA0ODw', clock_timestamp(), clock_timestamp() + interval '7 days', clock_timestamp(), clock_timestamp()),
-  ('c0000000-0000-4000-8000-000000000006', 'a1000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000005', 'd0000000-0000-4000-8000-000000000006', 'Two families', 'adult', 'blue', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r5b","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 1, 'approved', 'a0000000-0000-4000-8000-000000000003', 1, 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 'AAECAwQFBgcICQoL', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 'AAECAwQFBgcICQoLDA0ODw', clock_timestamp(), clock_timestamp() + interval '7 days', clock_timestamp(), clock_timestamp());
+  ('c0000000-0000-4000-8000-000000000005', 'a1000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000005', 'd0000000-0000-4000-8000-000000000005', 'Two families', 'adult', 'blue', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r5a","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 2, 'approved', 'a0000000-0000-4000-8000-000000000001', 1, 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 'AAECAwQFBgcICQoL', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 'AAECAwQFBgcICQoLDA0ODw', statement_timestamp(), statement_timestamp() + interval '7 days', statement_timestamp(), statement_timestamp()),
+  ('c0000000-0000-4000-8000-000000000006', 'a1000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000005', 'd0000000-0000-4000-8000-000000000006', 'Two families', 'adult', 'blue', '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"r5b","selections":{},"colors":{}}', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 1, 'approved', 'a0000000-0000-4000-8000-000000000003', 1, 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 'AAECAwQFBgcICQoL', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', 'AAECAwQFBgcICQoLDA0ODw', statement_timestamp(), statement_timestamp() + interval '7 days', statement_timestamp(), statement_timestamp());
 SQL
 for side in a b; do
   request_id='c0000000-0000-4000-8000-000000000005'

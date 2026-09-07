@@ -58,7 +58,7 @@ select policies_are(
 
 select is(
   (
-    select pg_catalog.count(*)::pg_catalog.integer
+    select pg_catalog.count(*)::pg_catalog.int4
     from pg_catalog.pg_proc as function
     join pg_catalog.pg_namespace as function_schema
       on function_schema.oid = function.pronamespace
@@ -74,7 +74,7 @@ select is(
 
 select is(
   (
-    select pg_catalog.count(*)::pg_catalog.integer
+    select pg_catalog.count(*)::pg_catalog.int4
     from pg_catalog.pg_proc as function
     join pg_catalog.pg_namespace as function_schema
       on function_schema.oid = function.pronamespace
@@ -108,7 +108,7 @@ select ok(
 
 select is(
   (
-    select pg_catalog.count(*)::pg_catalog.integer
+    select pg_catalog.count(*)::pg_catalog.int4
     from pg_catalog.pg_proc as function
     join pg_catalog.pg_namespace as function_schema
       on function_schema.oid = function.pronamespace
@@ -301,7 +301,7 @@ select public.publish_weekly_reveal_entry(
 
 select is(
   (
-    select pg_catalog.array_agg(key order by key)
+    select pg_catalog.array_agg(key order by key collate "C")
     from weekly_publish_result,
       lateral pg_catalog.jsonb_object_keys(value) as keys(key)
   ),
@@ -332,7 +332,7 @@ select is(
 );
 
 select is(
-  (select pg_catalog.count(*)::pg_catalog.integer from public.weekly_reveal_entries),
+  (select pg_catalog.count(*)::pg_catalog.int4 from public.weekly_reveal_entries),
   1,
   'an exact retry inserts no duplicate metadata'
 );
@@ -454,7 +454,7 @@ select is(
 );
 
 select is(
-  (select pg_catalog.count(*)::pg_catalog.integer from storage.objects),
+  (select pg_catalog.count(*)::pg_catalog.int4 from storage.objects),
   1,
   'the author can read their family ciphertext object through Storage RLS'
 );
@@ -468,7 +468,7 @@ select is(
         and name = '11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.keeper'
       returning 1
     )
-    select pg_catalog.count(*)::pg_catalog.integer from attempted_update
+    select pg_catalog.count(*)::pg_catalog.int4 from attempted_update
   ),
   0,
   'an author cannot overwrite their published ciphertext object'
@@ -509,13 +509,13 @@ select is(
 );
 
 select is(
-  (select pg_catalog.count(*)::pg_catalog.integer from public.weekly_reveal_entries),
+  (select pg_catalog.count(*)::pg_catalog.int4 from public.weekly_reveal_entries),
   1,
   'metadata RLS lets another active family member subscribe'
 );
 
 select is(
-  (select pg_catalog.count(*)::pg_catalog.integer from storage.objects),
+  (select pg_catalog.count(*)::pg_catalog.int4 from storage.objects),
   1,
   'Storage RLS lets another active family member download ciphertext'
 );
@@ -529,7 +529,7 @@ select is(
         and name = '11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.keeper'
       returning 1
     )
-    select pg_catalog.count(*)::pg_catalog.integer from attempted_update
+    select pg_catalog.count(*)::pg_catalog.int4 from attempted_update
   ),
   0,
   'a relative cannot overwrite another author member ciphertext'
@@ -552,13 +552,13 @@ select throws_ok(
 );
 
 select is(
-  (select pg_catalog.count(*)::pg_catalog.integer from public.weekly_reveal_entries),
+  (select pg_catalog.count(*)::pg_catalog.int4 from public.weekly_reveal_entries),
   0,
   'metadata RLS hides another family from an outsider'
 );
 
 select is(
-  (select pg_catalog.count(*)::pg_catalog.integer from storage.objects),
+  (select pg_catalog.count(*)::pg_catalog.int4 from storage.objects),
   0,
   'Storage RLS hides another family ciphertext from an outsider'
 );
