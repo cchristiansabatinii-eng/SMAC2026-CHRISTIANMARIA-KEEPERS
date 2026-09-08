@@ -1,4 +1,12 @@
-# Keepers — Architecture & Implementation Spec
+# Keepers — Original Architecture & Implementation Concept
+
+> **Status: historical original-concept brief.** This file preserves an early
+> proposal. Its `k-of-n`/three-developer staffing model, fully serverless and
+> in-person-only synchronization assumptions, and proposed repository layout are
+> obsolete and do not describe the shipped repository. For current behavior and
+> deployment truth, use the [repository overview](../README.md),
+> [app guide](../app/README.md), [Supabase guide](../supabase/README.md), and
+> [UX contract](../UX-CONTRACT.md).
 
 **Team:** k-of-n · **App:** Keepers · **Competition:** SMAC Summer 2026, Khalifa University
 **Theme:** AI for Stronger Family Bonds · **Tagline:** *Every family has a keeper.*

@@ -27,8 +27,8 @@ not a statement that every release gate has been completed.
 - [`app/`](app/) — the Flutter Android and iOS client.
 - [`supabase/`](supabase/) — Supabase schema, functions, local test setup, and
   operational notes.
-- [`docs/`](docs/) — product specification and project evidence, including the
-  [Keepers specification](docs/KEEPERS_SPEC.md).
+- [`docs/`](docs/) — the historical concept brief, maintained delivery records,
+  implementation plans, and project evidence.
 - [`.github/workflows/`](.github/workflows/) — continuous-integration workflows.
 
 ## Requirements
