@@ -175,6 +175,19 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Reserve disk space for the Android emulator
+        shell: bash
+        run: |
+          keepers_codeql_cache='/opt/hostedtoolcache/CodeQL'
+          if [[ -d "$keepers_codeql_cache" ]]; then
+            keepers_resolved_cache="$(readlink -f -- "$keepers_codeql_cache")"
+            test "$keepers_resolved_cache" = '/opt/hostedtoolcache/CodeQL'
+            sudo rm -r -- "$keepers_resolved_cache"
+          fi
+
+          keepers_available_kb="$(df --output=avail -k /home/runner | tail -n 1)"
+          test "$keepers_available_kb" -ge 10485760
+
       - name: Run Android storage and family invitation integrations
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
@@ -182,7 +195,6 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_7
-          disk-size: 2048M
           disable-animations: true
           script: |
             test "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" = "x86_64"
