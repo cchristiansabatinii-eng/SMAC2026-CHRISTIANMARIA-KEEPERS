@@ -43,10 +43,6 @@ State the single outcome this meeting should produce.
 |---|---|---|---|
 |  |  |  |  |
 
-## AI usage
-
-List related IDs from [../ai-usage.md](../ai-usage.md), or write “None.”
-
 ## Next gate check
 
 - Gate:

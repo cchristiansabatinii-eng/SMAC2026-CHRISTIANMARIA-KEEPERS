@@ -13,7 +13,6 @@ with the [repository overview](../README.md), [app guide](../app/README.md),
 | [KEEPERS_SPEC.md](KEEPERS_SPEC.md) | Historical original-concept brief; see its status note before using it |
 | [implementation-board.md](implementation-board.md) | Issue-ready backlog derived from the implementation plan |
 | [minutes/TEMPLATE.md](minutes/TEMPLATE.md) | Repeatable meeting record for decisions and rubric evidence |
-| [ai-usage.md](ai-usage.md) | Required record of project prompts, outputs, and human verification |
 | [evidence/p0-03-device-gate.md](evidence/p0-03-device-gate.md) | P0-03 encrypted-storage verification record and remaining physical-device gates |
 | [superpowers/specs/](superpowers/specs/) | Approved feature-level design specifications retained with the implementation |
 | [superpowers/plans/](superpowers/plans/) | Dated implementation plans for the major shipped workstreams |

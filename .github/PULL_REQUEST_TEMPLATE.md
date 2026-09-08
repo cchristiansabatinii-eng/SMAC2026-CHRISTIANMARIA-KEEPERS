@@ -9,7 +9,6 @@ Describe the working outcome and the backlog ID it completes.
 - [ ] flutter test passes (when app/ exists)
 - [ ] Physical-device evidence attached when required by the phase gate
 - [ ] Documentation and meeting minutes updated
-- [ ] AI usage recorded in docs/ai-usage.md, or no AI was used
 
 ## Design-law review
 

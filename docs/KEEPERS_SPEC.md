@@ -270,7 +270,6 @@ keepers/
 ├── docs/
 │   ├── KEEPERS_SPEC.md     # this file
 │   ├── minutes/            # dated meeting minutes (rubric evidence)
-│   ├── ai-usage.md         # every prompt + what it contributed (required by rules)
 │   └── personas.md         # wireframes & personas for the report
 └── .github/workflows/ci.yml
 ```
