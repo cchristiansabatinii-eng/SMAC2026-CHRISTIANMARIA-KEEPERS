@@ -460,17 +460,15 @@ select is(
   'the author can read their family ciphertext object through Storage RLS'
 );
 
+with attempted_update as (
+  update storage.objects
+  set user_metadata = '{"sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}'
+  where bucket_id = 'keepers-weekly-reveal'
+    and name = '11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.keeper'
+  returning 1
+)
 select is(
-  (
-    with attempted_update as (
-      update storage.objects
-      set user_metadata = '{"sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}'
-      where bucket_id = 'keepers-weekly-reveal'
-        and name = '11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.keeper'
-      returning 1
-    )
-    select pg_catalog.count(*)::pg_catalog.int4 from attempted_update
-  ),
+  (select pg_catalog.count(*)::pg_catalog.int4 from attempted_update),
   0,
   'an author cannot overwrite their published ciphertext object'
 );
@@ -521,17 +519,15 @@ select is(
   'Storage RLS lets another active family member download ciphertext'
 );
 
+with attempted_update as (
+  update storage.objects
+  set user_metadata = '{"sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}'
+  where bucket_id = 'keepers-weekly-reveal'
+    and name = '11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.keeper'
+  returning 1
+)
 select is(
-  (
-    with attempted_update as (
-      update storage.objects
-      set user_metadata = '{"sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}'
-      where bucket_id = 'keepers-weekly-reveal'
-        and name = '11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.keeper'
-      returning 1
-    )
-    select pg_catalog.count(*)::pg_catalog.int4 from attempted_update
-  ),
+  (select pg_catalog.count(*)::pg_catalog.int4 from attempted_update),
   0,
   'a relative cannot overwrite another author member ciphertext'
 );

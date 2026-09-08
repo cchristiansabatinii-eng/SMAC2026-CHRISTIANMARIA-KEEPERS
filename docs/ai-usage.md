@@ -79,3 +79,20 @@ This log is competition evidence. Add an entry whenever an AI tool contributes t
 - **Changes after review:** Per-prompt changes cannot be reconstructed reliably from the retained evidence. Later fixes and reversions remain visible in the authentic commit graph; this reconciliation does not rewrite or backdate them.
 - **Evidence:** [Pull request #4](https://github.com/cchristiansabatinii-eng/SMAC2026-CHRISTIANMARIA-KEEPERS/pull/4); [first recorded Codex-authored commit after August 31](https://github.com/cchristiansabatinii-eng/SMAC2026-CHRISTIANMARIA-KEEPERS/commit/b9d57b7c21455451e0e5e0c2f2b7bd925cb9258a); [latest commit at reconciliation time](https://github.com/cchristiansabatinii-eng/SMAC2026-CHRISTIANMARIA-KEEPERS/commit/fcb3c027ec78d155a0def81f957d4f43f2cf9630); [repository overview](../README.md); [design context](../DESIGN.md); [UX contract](../UX-CONTRACT.md); [Flutter tests](../app/test/); [database tests](../supabase/tests/); and [CI workflow](../.github/workflows/ci.yml).
 - **Data sent externally:** OpenAI Codex processed repository source, tests, documentation, and task instructions for the work summarized above. This repository does not retain a complete per-session data-transmission inventory for the period, so this entry makes no narrower claim.
+
+---
+
+## AI-004 — Submission-gate diagnosis and repair
+
+- **Date/time:** 2026-09-09 05:11 +04:00, Asia/Dubai
+- **Tool/model:** OpenAI Codex; the exact model/version is not recorded in this repository.
+- **Backlog ID:** SMAC 2026 submission verification
+- **Prompt:**
+
+> Resume the submission work after the GitHub account upgrade. Conserve the remaining GitHub Actions allowance, complete every locally available gate, diagnose the current CI failures from their exact logs, and push one consolidated correction without rewriting history or fabricating dates.
+
+- **Output used:** Diagnosis of GitHub Actions run #20 attempt 2; mobile-workflow contract tests; independently executable Android emulator commands; a deterministic, bounded, verbose iOS simulator smoke with failure diagnostics; and pgTAP fixture, RLS-observability, cooldown-isolation, and top-level data-modifying CTE corrections.
+- **Human verification:** The repository owner authorized continuation and a final push. Detailed human review of these corrections remains pending; automated local verification and final CI are the acceptance evidence.
+- **Changes after review:** An independent code-review pass confirmed the database-test corrections preserve the intended authorization and cooldown behavior. The Android and iOS workflow changes were developed with failing-then-passing contract tests based on the runners' observed behavior and Flutter 3.47.2's local device-launch implementation.
+- **Evidence:** [Pull request #4](https://github.com/cchristiansabatinii-eng/SMAC2026-CHRISTIANMARIA-KEEPERS/pull/4); [GitHub Actions run #20](https://github.com/cchristiansabatinii-eng/SMAC2026-CHRISTIANMARIA-KEEPERS/actions/runs/34285478122); [CI workflow](../.github/workflows/ci.yml); [database tests](../supabase/tests/); and [Flutter CI contract tests](../app/test/ci/).
+- **Data sent externally:** OpenAI Codex processed non-secret repository source, test code, workflow configuration, and CI logs. GitHub Actions processed the pushed repository revision. No credentials, encryption keys, family content, or unpublished secrets were included intentionally.

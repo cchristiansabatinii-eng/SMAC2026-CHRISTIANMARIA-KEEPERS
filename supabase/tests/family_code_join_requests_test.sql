@@ -1285,7 +1285,7 @@ insert into public.family_join_requests(
 ) values (
   '77777777-0000-4000-8000-000000000007',
   '11111111-1111-4111-8111-111111111111',
-  '10000000-0000-4000-8000-000000000007',
+  '10000000-0000-4000-8000-000000000009',
   '10000000-1111-4111-8111-000000000007',
   'Regeneration', 'adult', 'violet',
   '{"schemaVersion":2,"styleId":"humation-1","styleRevision":1,"seed":"regen","selections":{},"colors":{}}',
@@ -1336,6 +1336,7 @@ select ok(
   ]::text[] from regeneration_result, lateral jsonb_object_keys(result) keys(key)),
   'successful regeneration returns the exact code projection at version two'
 );
+reset role;
 select ok(
   (
     select state = 'cancelled'
@@ -1345,7 +1346,6 @@ select ok(
   ),
   'regeneration cancels pending requests from the superseded version'
 );
-reset role;
 
 select pg_temp.authenticate_as('10000000-0000-4000-8000-000000000009', 'superseded@example.com');
 set local role authenticated;
@@ -1359,6 +1359,10 @@ select is(
   '{"errorCode":"FAMILY_NOT_FOUND"}'::jsonb,
   'a superseded code is indistinguishable from malformed and unknown codes'
 );
+reset role;
+
+select pg_temp.authenticate_as('10000000-0000-4000-8000-000000000007', 'regeneration@example.com');
+set local role authenticated;
 select is(
   public.preview_family_by_code('CDEF4567') ->> 'familyId',
   '11111111-1111-4111-8111-111111111111',
