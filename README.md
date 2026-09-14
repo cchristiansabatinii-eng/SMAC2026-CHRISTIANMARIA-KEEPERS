@@ -98,14 +98,4 @@ protected by Android Keystore or Apple Keychain. Media blobs are encrypted.
 Family and member keys, along with private journal content, remain device-held.
 Supabase receives metadata and ciphertext rather than plaintext memory payloads
 or encryption keys.
-
-## Known limitations
-
-Repository evidence still identifies production throttling and purge operations,
-production signing and verified links, two-physical-phone family-code
-validation, iOS runtime/accessibility, and the physical BLE proximity matrix as
-release gates. Manual code entry is the reliable demo path.
-
-Capsule payloads, assignments, and task-completion state are local to the
-capturing device; cross-device Capsule delivery and unlock synchronization are
-not implemented.
+.
