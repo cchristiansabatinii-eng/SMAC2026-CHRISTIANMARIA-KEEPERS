@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jet Operations Console</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--bg:#0b1530;--panel:#0f1d3d;--panel2:#13244a;--line:#22345f;--ink:#eef1f8;--mute:#8d9bc0;--peach:#f2c08e;--red:#ef6b5e;--green:#6fd3a0;--amber:#f0b45a;--mono:'JetBrains Mono',monospace}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:13px/1.4 Poppins,system-ui,sans-serif;overflow:hidden}
+.app{display:grid;grid-template-columns:64px 1fr;height:100vh}
+nav{background:#0a1430;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;overflow:auto}
+nav .logo{color:var(--peach);font-size:22px;margin-bottom:8px}
+nav button{all:unset;cursor:pointer;width:54px;padding:7px 0;border-radius:8px;text-align:center;color:var(--mute);font-size:10px}
+nav button span{display:block;font-size:16px;margin-bottom:2px}
+nav button.on{background:var(--panel2);color:var(--ink);outline:1px solid var(--line)}
+main{display:flex;flex-direction:column;min-width:0}
+header{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid var(--line);background:#0c1838;flex-wrap:wrap}
+header b{font-size:15px}.chip{border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:11px;color:var(--mute);white-space:nowrap}
+.chip i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px}
+.chip strong{color:var(--ink)}.spacer{flex:1}
+.btn{all:unset;cursor:pointer;border:1px solid var(--line);border-radius:7px;padding:5px 10px;font-size:11px;color:var(--ink);background:var(--panel)}
+.btn.on,.btn.primary{background:var(--peach);color:#1a2340;border-color:var(--peach);font-weight:600}
+.btn:hover{filter:brightness(1.15)}
+.clock{font-family:var(--mono);font-size:16px}.clock small{color:var(--mute);font-size:11px}
+.view{flex:1;overflow:auto;padding:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
+.card h3{margin:0 0 8px;font-size:13px;font-weight:600}.mute{color:var(--mute)}.mono{font-family:var(--mono)}
+.grid-live{display:grid;grid-template-columns:1fr 360px;grid-template-rows:minmax(0,1fr) 260px;gap:10px;height:calc(100vh - 110px);min-height:560px}
+.twin{position:relative;padding:0;overflow:hidden}.twin canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
+.twin .ov{position:absolute;left:10px;top:8px}.twin .ovr{position:absolute;right:10px;top:8px;display:flex;gap:4px}
+.twin .ovb{position:absolute;left:10px;bottom:8px;display:flex;gap:6px}
+.twin{grid-column:1;grid-row:1}.ops{grid-column:1;grid-row:2}.inc{grid-column:2;grid-row:1/3;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.ops{display:grid;grid-template-columns:1.3fr .8fr .9fr;gap:12px;overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:11.5px}th{color:var(--mute);font-weight:500;text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
+td{padding:5px 6px;border-bottom:1px solid #1a2a52}tr.sel td{background:#1b2d58}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+.badge{font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);font-family:var(--mono);color:var(--mute)}
+.crit{background:#5a1d22;color:#ffb3aa;border-color:#7d2a2f}
+.tl{position:relative;padding-left:16px}.tl:before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:1px;background:var(--line)}
+.tl .e{position:relative;margin-bottom:9px;display:grid;grid-template-columns:58px 1fr;gap:6px}
+.tl .e:before{content:'';position:absolute;left:-15px;top:4px;width:9px;height:9px;border-radius:50%;background:var(--amber)}
+.tl .e.red:before{background:var(--red)}.tl .e.pending:before{background:var(--line)}
+.tl .t{font-family:var(--mono);color:var(--mute);font-size:10.5px}
+.opt{border:1px solid var(--line);border-radius:9px;padding:10px;cursor:pointer;background:var(--panel2)}
+.opt.sel{border-color:var(--peach)}.opt.blocked{opacity:.55;cursor:not-allowed}
+.opt h4{margin:0 0 3px;font-size:12.5px}.opt .l{color:var(--peach);font-weight:700;margin-right:6px}
+.bar{height:4px;background:#24365f;border-radius:3px;margin-top:6px;overflow:hidden}.bar i{display:block;height:100%;background:var(--peach)}
+.tag{display:inline-block;font-size:10px;font-family:var(--mono);border:1px solid var(--line);border-radius:4px;padding:1px 5px;margin:4px 4px 0 0}
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat{font-size:26px;font-weight:700;color:var(--peach)}
+input,select,textarea{background:#0a1430;border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:6px 9px;font:inherit}
+textarea{width:100%;font-family:var(--mono);font-size:12px}
+.tabs{display:flex;gap:4px;margin-bottom:8px}
+.wave{display:flex;align-items:center;gap:2px;height:46px}.wave i{width:3px;background:var(--peach);border-radius:2px;opacity:.8}
+.fact{background:var(--peach);color:#1a2340;border-radius:10px;padding:12px;text-align:center}
+.fact b{font-size:26px;display:block}
+.agent{display:flex;gap:10px;align-items:flex-start}.agent .ic{width:34px;height:34px;border-radius:50%;border:1px solid var(--peach);display:grid;place-items:center;color:var(--peach);flex:none}
+.log{font-family:var(--mono);font-size:11px;max-height:340px;overflow:auto}.log div{padding:3px 0;border-bottom:1px solid #1a2a52}
+.ok{color:var(--green)}.no{color:var(--red)}
+.modal{position:fixed;inset:0;background:#0009;display:none;place-items:center;z-index:9}.modal.show{display:grid}
+.modal .card{width:min(520px,92vw)}
+.toast{position:fixed;bottom:16px;right:16px;background:var(--peach);color:#1a2340;padding:10px 14px;border-radius:8px;font-weight:600;display:none;z-index:10}
+@media (max-width:1100px){.grid-live{grid-template-columns:1fr;grid-template-rows:420px auto auto}.twin,.ops,.inc{grid-column:1;grid-row:auto}.ops{grid-template-columns:1fr}.cols3,.cols2{grid-template-columns:1fr}body{overflow:auto}.app{height:auto;min-height:100vh}}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav id="nav"></nav>
+  <main>
+    <header>
+      <b><span style="color:var(--peach)">✈</span> Jet</b><span class="mute">Zayed International · OMAA</span>
+      <span class="chip"><i id="shDot"></i>Safe Harbour <strong id="shTop">7/7</strong></span>
+      <span class="chip"><i></i>Arrivals <strong id="rateTop">28/h</strong></span>
+      <span class="chip"><i style="background:var(--amber)"></i>Holding <strong id="holdTop">0</strong></span>
+      <span class="chip"><i></i>Re-plan <strong id="replanTop">—</strong></span>
+      <span class="spacer"></span>
+      <span class="mute">Simulation</span>
+      <button class="btn" data-speed="0">❚❚</button><button class="btn on" data-speed="1">1×</button><button class="btn" data-speed="6">6×</button><button class="btn" data-speed="12">12×</button>
+      <span class="clock" id="clock">--:--:--</span>
+      <select id="scenarioSel"><option value="medical">Medical emergency · EY505</option><option value="capacity">Fog · capacity 28 → 14</option><option value="runway">Accident · runway 31R lost</option><option value="airspace">Airspace closure · DXB/DWC shut</option><option value="ground">Ground disruption · stands blocked</option></select>
+      <button class="btn primary" id="runBtn">▶ Run scenario</button>
+    </header>
+    <div class="view" id="view"></div>
+  </main>
+</div>
+<div class="modal" id="modal"><div class="card" id="modalBody"></div></div>
+<div class="toast" id="toast"></div>
+<script>
+// ───────────────────────── data ─────────────────────────
+const TYPES={A320:{w:'M',s:'C',burn:38,wide:0},A321:{w:'M',s:'C',burn:42,wide:0},A21N:{w:'M',s:'C',burn:36,wide:0},B789:{w:'H',s:'E',burn:85,wide:1},B77W:{w:'H',s:'E',burn:120,wide:1},A35K:{w:'H',s:'E',burn:100,wide:1},A333:{w:'H',s:'E',burn:95,wide:1},A388:{w:'J',s:'F',burn:190,wide:1}};
+const ARR=[['EY610','TLV','Tel Aviv','A321',300],['EY22','YYZ','Toronto','B789',320],['QR1003','DOH','Doha','A321',280],['EY701','SEZ','Mahé','B789',200],['EY505','LHR','London','B789',315],['EY6','IAD','Washington','B789',320],['EY842','SVO','Moscow','B789',340],['EY728','ADD','Addis Ababa','A321',230],['EY46','DUB','Dublin','B789',315],['ME418','BEY','Beirut','A21N',305],['EY32','CDG','Paris','A35K',310],['EY758','CMN','Casablanca','B789',290],['3L457','ALP','Aleppo','A320',320],['EY854','LED','St Petersburg','A321',340],['EY471','CGK','Jakarta','B77W',110],['PK263','KHI','Karachi','A320',80],['EY212','BOM','Mumbai','A321',95],['AI941','COK','Kochi','A21N',110],['EY20','MAN','Manchester','A388',315],['SV582','RUH','Riyadh','A320',270],['EY290','DEL','Delhi','A321',70],['PA430','ISB','Islamabad','A320',60],['EY318','MNL','Manila','B789',100],['TK868','IST','Istanbul','A333',320],['LH630','FRA','Frankfurt','A333',315],['EY388','BKK','Bangkok','A35K',100]];
+const DEP=[['EY11','JFK','New York','B77W'],['EY19','LHR','London','B789'],['EY451','SYD','Sydney','B789'],['EY393','BKK','Bangkok','A35K'],['EY617','ZRH','Zurich','A321'],['3L184','IST','Istanbul','A320'],['EY283','ATH','Athens','A321'],['EY61','CDG','Paris','A388'],['EY296','DEL','Delhi','A321'],['EY402','KUL','Kuala Lumpur','B789'],['EY681','ADD','Addis Ababa','A321'],['EY24','FRA','Frankfurt','B789']];
+const AIRLINE={EY:'Etihad Airways',QR:'Qatar Airways',ME:'Middle East Airlines','3L':'Air Arabia Abu Dhabi',PK:'PIA',AI:'Air India Express',SV:'Saudia',TK:'Turkish Airlines',LH:'Lufthansa',PA:'Airblue',EK:'Emirates'};
+const TEL={Etihad:'EY',Qatari:'QR','Cedar Jet':'ME','Alpha Delta':'3L',Pakistan:'PK','Air India':'AI',Saudia:'SV',Turkish:'TK',Lufthansa:'LH',Airblue:'PA',Emirates:'EK'};
+const TELR=Object.fromEntries(Object.entries(TEL).map(([k,v])=>[v,k]));
+const ALTS=()=>[{c:'AUH',n:'Zayed International',km:0,spare:14,open:1,hosp:24},{c:'DWC',n:'Al Maktoum',km:95,spare:6,open:1,hosp:30},{c:'DXB',n:'Dubai International',km:120,spare:4,open:1,hosp:12},{c:'AAN',n:'Al Ain',km:150,spare:3,open:1,hosp:18},{c:'SHJ',n:'Sharjah',km:145,spare:3,open:1,hosp:15}];
+const divMin=a=>a.km?Math.round(a.km/7.5+9):0;
+let seed=27;const rnd=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296};
+// ───────────────────────── state ─────────────────────────
+const S={now:15*3600+40*60,speed:1,view:'live',flights:[],stands:[],alts:ALTS(),rate:28,rw31R:true,incident:null,timeline:[],options:[],sel:0,record:[],ear:[],hist:[],agentLog:[],replanMs:null,landed:[],closedStands:0,selFlight:null};
+function init(){
+  seed=27;S.flights=[];S.alts=ALTS();S.rate=28;S.rw31R=true;S.incident=null;S.timeline=[];S.options=[];S.hist=[];
+  ARR.forEach(([id,o,city,t,b],i)=>{const off=(i-2)*128+40+(rnd()*50-25);const eta=S.now+off+300;
+    const f={id,dir:'arr',o,city,type:t,T:TYPES[t],sched:Math.round((eta-rnd()*400+120)/300)*300,eta,slot:eta,fuel:Math.max(0,(eta-S.now)/60)+28+rnd()*34,sig:1.5+rnd()*1.5,b:b+rnd()*16-8,phase:off<-360?'on_stand':off<0?'taxi_in':'enroute',hold:0,holdKg:0,stand:null,em:null,souls:Math.round(TYPES[t].wide?220+rnd()*110:120+rnd()*70)};
+    if(off<0)f.landed=eta;S.flights.push(f)});
+  const pa=S.flights.find(f=>f.id==='PA430');pa.fuel=(pa.eta-S.now)/60+24;
+  S.flights.find(f=>f.id==='EY505').fuel=44;
+  DEP.forEach(([id,d,city,t],i)=>{const std=S.now+i*200+120+rnd()*60;S.flights.push({id,dir:'dep',o:d,city,type:t,T:TYPES[t],sched:Math.round(std/300)*300,eta:std,phase:'boarding',stand:null})});
+  // stands
+  S.stands=[];const piers=[['A',45,1],['B',135,10],['C',225,20],['D',315,40]];
+  piers.forEach(([p,ang,st])=>{const n=p==='D'?14:12;for(let i=0;i<n;i++){const a=ang*Math.PI/180,al=.32+Math.floor(i/2)*.085,sd=i%2?-1:1;
+    S.stands.push({id:p+(st+i),p,size:i<2?'F':i<8?'E':'C',ax:Math.cos(a)*al-Math.sin(a)*sd*.07,ay:Math.sin(a)*al+Math.cos(a)*sd*.07,occ:null,amb:p==='D'&&st+i>=50,closed:false})}});
+  // occupy stands
+  const free=()=>S.stands.filter(s=>!s.occ&&!s.closed);
+  S.flights.filter(f=>f.dir==='dep'||f.phase==='on_stand').forEach(f=>{const s=free().find(s=>fits(s,f.T)&&!s.amb);if(s){s.occ=f.id;f.stand=s.id}});
+  sequence();
+  for(let i=0;i<40;i++)S.hist.push({h:Math.max(0,Math.round(rnd()*2)),l:24+Math.round(rnd()*5)});
+  S.record=[];audit('System','Simulation started · Zayed International · 31R arrivals / 31L departures');
+}
+const fits=(s,T)=>({C:0,E:1,F:2})[s.size]>=({C:0,E:1,F:2})[T.s];
+const fmt=(s,sec)=>{s=((s%86400)+86400)%86400;const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=Math.floor(s%60);return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+(sec?':'+String(x).padStart(2,'0'):'')};
+const wake={MM:90,MH:90,MJ:90,HM:135,HH:105,HJ:105,JM:180,JH:150,JJ:120};
+const inbound=()=>S.flights.filter(f=>f.dir==='arr'&&['enroute','holding','approach'].includes(f.phase));
+// ───────────────────────── sequencing (AMAN) ─────────────────────────
+function sequence(order){
+  const list=inbound().slice();
+  if(order)list.sort((a,b)=>(order.indexOf(a.id)+1||999)-(order.indexOf(b.id)+1||999)||a.eta-b.eta);
+  else list.sort((a,b)=>(a.pin??999)-(b.pin??999)||a.eta-b.eta);
+  let last=null,lastT=S.now-60;const rate=S.rw31R?S.rate:Math.min(S.rate,20);
+  list.forEach(f=>{let t=Math.max(f.eta,S.now+30);if(last)t=Math.max(t,lastT+Math.max(wake[last.T.w+f.T.w],3600/rate));f.slot=t;f.rw=S.rw31R?'31R':'31L';last=f;lastT=t});
+  return list;
+}
+// ───────────────────────── safe harbour (max-flow) ─────────────────────────
+function harbour(){
+  const fl=inbound().filter(f=>f.eta-S.now<3600).sort((a,b)=>(!!b.em-!!a.em)||a.fuel-b.fuel);
+  const alts=S.alts;const reach=(f,a)=>a.open&&(a.km?f.fuel-Math.max(0,(f.eta-S.now)/60-15)-divMin(a)>=5:f.fuel-Math.max(0,(f.slot-S.now)/60)>=5);
+  // augmenting paths (Ford-Fulkerson on bipartite graph)
+  const load={};alts.forEach(a=>load[a.c]=[]);const asg={};
+  const tryAssign=(f,seen)=>{for(const a of alts){if(!reach(f,a)||seen.has(a.c))continue;seen.add(a.c);
+    if(load[a.c].length<(a.open?a.spare:0)){load[a.c].push(f.id);asg[f.id]=a.c;return true}
+    for(const g of load[a.c]){const gf=fl.find(x=>x.id===g);if(tryAssign(gf,seen)){load[a.c]=load[a.c].filter(x=>x!==g);load[a.c].push(f.id);asg[f.id]=a.c;return true}}}return false};
+  fl.forEach(f=>tryAssign(f,new Set()));
+  return{fl,asg,load,covered:Object.keys(asg).length,total:fl.length};
+}
+// ───────────────────────── planner + safety checker ─────────────────────────
+const AED={divN:55000*4.13,divW:82000*4.13,kg:181/127.2*3.6725,min:413};
+function evalPlan(cfg){
+  const t0=performance.now();
+  const saved=S.flights.map(f=>({f,slot:f.slot,pin:f.pin}));
+  const div=cfg.divert||[];const order=[];if(cfg.first)order.push(cfg.first);
+  const keep=inbound().filter(f=>!div.some(d=>d.id===f.id));
+  let list=keep.sort((a,b)=>a.eta-b.eta).map(f=>f.id).filter(id=>id!==cfg.first);
+  if(cfg.fuelFirst)list.sort((a,b)=>{const A=S.flights.find(f=>f.id===a),B=S.flights.find(f=>f.id===b);return (A.eta+A.fuel*60)-(B.eta+B.fuel*60)});
+  order.push(...list);
+  const rateSave=S.rate;if(cfg.rate)S.rate=cfg.rate;
+  div.splice(0,div.length,...div.filter(d=>inbound().some(f=>f.id===d.id)));const hidden=div.map(d=>S.flights.find(f=>f.id===d.id));hidden.forEach(f=>f._ph=f.phase,f=>0);hidden.forEach(f=>f.phase='x');
+  const seq=sequence(order).map(f=>({id:f.id,slot:f.slot,rw:cfg.rw&&f.id===cfg.first?cfg.rw:f.rw,f}));
+  hidden.forEach(f=>f.phase=f._ph);S.rate=rateSave;
+  // metrics & checks
+  let delay=0,kg=0;seq.forEach(e=>{const d=Math.max(0,e.slot-e.f.eta)/60;delay+=d;if(!(cfg.groundHold&&e.f.eta-S.now>45*60))kg+=d*e.f.T.burn});
+  let cost=kg*AED.kg+delay*AED.min+(cfg.depHold||0)*4*AED.min;div.forEach(d=>{const f=S.flights.find(x=>x.id===d.id);cost+=f.T.wide?AED.divW:AED.divN});
+  const checks=[];const base=saved.reduce((m,x)=>(m[x.f.id]=x.slot,m),{});
+  // spacing
+  let sp='All landings keep wake and rate spacing.',spOk=true;
+  if(cfg.rw==='31L'&&!cfg.depHold){spOk=false;sp=`${cfg.first} lands 64 s from a take-off on 31L`}
+  if(cfg.rw==='31R'&&!S.rw31R){spOk=false;sp='Landing planned on 31R, which is closed'}
+  checks.push(['Spacing',spOk,sp]);
+  // stands
+  const freeStands=S.stands.filter(s=>!s.occ&&!s.closed).length;const need=seq.filter(e=>e.slot-S.now<3600).length;
+  const stOk=cfg.capStands?true:freeStands+ (cfg.depHold?4:0)>=need*0.6;
+  checks.push(['Stand size',stOk,stOk?`${need} arrivals each have a fitting, free stand${cfg.first?` · ${cfg.amb?'D50 at the ambulance gate':'D43'} for ${cfg.first}`:''}.`:`${Math.ceil(need*0.6-freeStands)} arrivals have no free stand at in-block`]);
+  // fuel
+  let tight=99,tid='';let fuelOk=true,fd='';
+  seq.forEach(e=>{const left=e.f.fuel-e.f.sig-(e.slot-S.now)/60;if(left<tight){tight=left;tid=e.id}if(left<5&&fuelOk){fuelOk=false;fd=`${e.id} would land with ${left.toFixed(0)} min above reserve (needs 5)`}});
+  div.forEach(d=>{const f=S.flights.find(x=>x.id===d.id),a=S.alts.find(x=>x.c===d.to);const left=f.fuel-f.sig-Math.max(0,(f.eta-S.now)/60-15)-divMin(a);if(left<5&&fuelOk){fuelOk=false;fd=`${f.id} would reach ${d.to} with ${left.toFixed(0)} min above reserve`}});
+  checks.push(['Fuel',fuelOk,fuelOk?`Tightest: ${tid} lands with ${tight.toFixed(0)} min above reserve.`:fd]);
+  checks.push(['Fire routes',!(cfg.rw==='31L'&&!cfg.depHold),cfg.rw==='31L'&&!cfg.depHold?'2 departures taxi across TWY B within 5 min of the landing':'Fire-crew routes stay clear.']);
+  const altOk=div.every(d=>S.alts.find(a=>a.c===d.to).open);
+  checks.push(['Alternates',altOk,altOk?(div.length?'Every alternate is open and has room.':'No diversions.'):`${div.find(d=>!S.alts.find(a=>a.c===d.to).open).id} sent to a closed airport`]);
+  // restore
+  saved.forEach(x=>{x.f.slot=x.slot;x.f.pin=x.pin});
+  const affected=seq.filter(e=>e.slot-(base[e.id]??e.slot)>=60);const maxExtra=Math.max(0,...affected.map(e=>(e.slot-base[e.id])/60));
+  let treat=null;if(cfg.medical){const d=div.find(x=>x.id===cfg.medical);if(d){const a=S.alts.find(x=>x.c===d.to);treat=divMin(a)+9+a.hosp}else{const e=seq.find(x=>x.id===cfg.medical);if(e)treat=(e.slot-S.now)/60+6+(cfg.amb?24:32)}}
+  let decide=S.now+20*60;if(cfg.first){const e=seq.find(x=>x.id===cfg.first);if(e)decide=Math.min(decide,e.slot-8*60)}
+  div.forEach(d=>{const f=S.flights.find(x=>x.id===d.id),a=S.alts.find(x=>x.c===d.to);decide=Math.min(decide,S.now+Math.max(0,f.fuel-divMin(a)-8)*60)});
+  decide=Math.max(decide,S.now+150);
+  const ms=performance.now()-t0;
+  return{...cfg,seq,checks,passed:checks.every(c=>c[1]),cost,kg,delay,treat,affected:affected.length,maxExtra,decide,ms,div};
+}
+function draftOptions(kind,id){
+  const f=id&&S.flights.find(x=>x.id===id);const C=[];
+  if(kind==='medical'){
+    C.push({key:'A',title:`Land ${id} next on 31R`,first:id,rw:'31R',amb:1,medical:id,fuelFirst:1,tags:['Fastest care'],why:p=>`${p.affected||'Two'} flights hold ${Math.max(1,Math.round(p.maxExtra))||5} more minutes. Stand D50 by the ambulance gate. All fuel margins stay safe.`});
+    C.push({key:'B',title:`Divert ${id} to DXB`,divert:[{id,to:'DXB'}],medical:id,tags:['Fewest holds'],why:p=>`No extra holding at AUH. The patient reaches hospital about ${Math.max(1,Math.round(p.treat-30))} minutes later.`});
+    C.push({key:'C',title:`Land ${id} next, send QR1003 to DWC`,first:id,rw:'31R',amb:1,medical:id,divert:[{id:'QR1003',to:'DWC'}],fuelFirst:1,tags:['Most fuel margin'],why:()=>'Most fuel margin for everyone. One diversion.'});
+    C.push({key:'D',title:`Land ${id} on 31L, departures continue`,first:id,rw:'31L',medical:id,tags:[],why:()=>'Shortest flight time; departures keep rolling.'});
+  }else if(kind==='capacity'){
+    C.push({key:'A',title:'Hold at origin, fuel-first sequence',groundHold:1,fuelFirst:1,rate:14,divert:[{id:'PA430',to:'DWC'}],tags:['Least fuel burnt'],why:p=>`Flights not yet airborne wait at their origin. One early diversion (PA430 → DWC). Holding fuel ${Math.round(p.kg/1000)} t.`});
+    C.push({key:'B',title:'Divert early to keep holding short',fuelFirst:1,rate:14,divert:[{id:'PA430',to:'DWC'},{id:'EY854',to:'DWC'},{id:'AI941',to:'AAN'}],tags:['Shortest holds'],why:()=>'Three diversions now, before fuel gets tight. Holds stay under 20 minutes.'});
+    C.push({key:'C',title:'Open 31L for arrivals, hold departures 20 min',rate:22,depHold:20,fuelFirst:1,tags:['No diversions'],why:()=>'Mixed-mode on both runways. Departures wait 20 minutes; nobody diverts.'});
+    C.push({key:'D',title:"Keep today's sequence, everyone holds",rate:14,tags:[],why:()=>'First come, first served; aircraft hold until a slot opens.'});
+  }else if(kind==='runway'){
+    C.push({key:'A',title:"Load rehearsed 'runway lost' plan",rate:20,fuelFirst:1,depHold:15,tags:['Crisis library'],why:()=>'31L mixed mode. Departures hold 15 min; fire-truck routes frozen on TWY K.'});
+    C.push({key:'B',title:'Arrivals only on 31L for 30 min',rate:26,depHold:30,fuelFirst:1,tags:['Most landings'],why:()=>'All airborne traffic lands first. Departures wait 30 minutes.'});
+    C.push({key:'C',title:'Divert the next 3 inbound to DWC',rate:20,divert:[{id:'PA430',to:'DWC'},{id:'EY854',to:'DWC'},{id:'EY728',to:'DWC'}],tags:['Departures keep moving'],why:()=>'Three diversions, departures unaffected.'});
+    C.push({key:'D',title:'Resume 31R after quick inspection',first:'EY842',rw:'31R',tags:[],why:()=>'Library plan assumes 31R reopens at T+20.'});
+  }else if(kind==='airspace'){
+    C.push({key:'A',title:'Accept DXB diversions, hold own flights at origin',groundHold:1,fuelFirst:1,depHold:10,capStands:1,tags:['Keeps everyone safe'],why:()=>'Five Emirates diversions land at AUH. Etihad flights not yet airborne wait at origin; 4 stands freed by holding departures.'});
+    C.push({key:'B',title:'Split diversions AUH / AAN / SHJ',fuelFirst:1,divert:[{id:'EK2',to:'AAN'},{id:'EK4',to:'SHJ'}],tags:['Spreads load'],why:()=>'Two Emirates flights go to Al Ain and Sharjah.'});
+    C.push({key:'C',title:'Send overflow to DWC',fuelFirst:1,divert:[{id:'EK2',to:'DWC'}],tags:[],why:()=>'Al Maktoum is nearest.'});
+  }else{
+    C.push({key:'A',title:'Cap arrivals at 18/h, tow 4 to cargo apron',rate:18,capStands:1,fuelFirst:1,tags:['Stands match landings'],why:()=>'Arrivals capped at the stands that will really be free; 4 long-stay aircraft towed to free contact stands.'});
+    C.push({key:'B',title:'Hold at origin until crews arrive',rate:16,groundHold:1,capStands:1,fuelFirst:1,tags:['Least holding'],why:()=>'Flights not yet airborne wait at origin for 40 minutes.'});
+    C.push({key:'C',title:'Keep landing at 28/h',tags:[],why:()=>'Normal rate; stands assigned as they free up.'});
+  }
+  return C.map(evalPlan).map(p=>({...p,summary:p.why(p)}));
+}
+// ───────────────────────── scenarios + agents ─────────────────────────
+const SCEN={
+  medical:{title:'Medical emergency on EY505',sub:'Passenger with chest pain · 40 min of fuel',sev:'Critical',flight:'EY505',call:'Pan-pan, pan-pan, pan-pan, Etihad 505, passenger with chest pain, request priority, fuel for 40 minutes.',apply(){const f=S.flights.find(x=>x.id==='EY505');f.em='medical';f.fuel=40}},
+  capacity:{title:'Fog: capacity halved',sub:'Visibility 400 m · arrivals 28 → 14 an hour',sev:'Major',call:'Abu Dhabi Approach, all stations, low visibility procedures in force, expect holding.',apply(){S.rate=14}},
+  runway:{title:'Runway 31R closed',sub:'Burst tyre on landing roll · fire crews on scene',sev:'Critical',flight:'EY610',call:'Etihad 610, stopped on the runway, burst tyre, request fire service.',apply(){S.rw31R=false;S.rate=20}},
+  airspace:{title:'DXB and DWC closed',sub:'Airspace closure · Emirates diverting to AUH',sev:'Major',call:'Emirates 2, diverting Abu Dhabi, fuel for 45 minutes.',apply(){S.alts.find(a=>a.c==='DXB').open=0;S.alts.find(a=>a.c==='DWC').open=0;
+    ['EK2','EK4','EK7','EK12','EK18'].forEach((id,i)=>S.flights.push({id,dir:'arr',o:'DXB',city:'Diverted from Dubai',type:'B77W',T:TYPES.B77W,sched:S.now,eta:S.now+600+i*150,slot:0,fuel:42+i*2,sig:2,b:60,phase:'enroute',hold:0,holdKg:0,souls:340}))}},
+  ground:{title:'Ground disruption',sub:'Road closure · crews cannot reach 12 stands',sev:'Major',call:'Apron control, stands B10 to B21 unmanned, turnarounds stopped.',apply(){S.stands.filter(s=>s.p==='B').forEach(s=>s.closed=true)}},
+};
+const AGENTS=[['Jet Ear','👂','Speech AI: turns radio calls into structured facts. Listens only, never transmits.'],['Sentinel','◉','Watches every feed and opens incidents.'],['Safe Harbour','⚓','Max-flow proof that every plane has a place to land.'],['Strategist','♟','Drafts plans: crisis library + optimiser.'],['Brokers','⇄','Confirms with airlines, stands and ambulance on fixed message forms.'],['Dispatcher','➤','Sends signed orders: sequence, stands, controller script.'],['Recovery','↺','Unwinds holds once the crisis passes.'],['Auditor','▤','Records every step in a hash-chained log.']];
+let pending=[];
+function at(delay,fn){pending.push({t:S.now+delay,fn})}
+function tl(who,title,text,cls,tags){S.timeline.push({t:S.now,who,title,text,cls,tags});S.agentLog.unshift(`${fmt(S.now,1)}  ${who.padEnd(12)} ${title}: ${text}`);audit(who,`${title}: ${text}`)}
+function runScenario(kind){
+  init();const sc=SCEN[kind];pending=[];
+  S.incident={kind,...sc,opened:S.now,status:'open'};
+  tl('Jet Ear','The call',`Jet Ear turned the call into facts: “${sc.call}”`,'red');
+  S.ear.unshift({t:S.now,text:sc.call,facts:parse(sc.call),live:1});
+  at(6,()=>{sc.apply();sequence();tl('Sentinel','The alarm','Incident opened. The controller’s screen shows the incident strip.');
+    tl('Safe Harbour','The check',`Safe Harbour re-ran${sc.flight?` with ${sc.flight} first`:''}: ${harbour().covered}/${harbour().total} covered.`)});
+  at(16,()=>{const t0=performance.now();const opts=draftOptions(kind,sc.flight);S.replanMs=performance.now()-t0;
+    const ok=opts.filter(o=>o.passed),bad=opts.filter(o=>!o.passed);
+    ok.sort((a,b)=>(a.cost+(a.treat||0)*25000)-(b.cost+(b.treat||0)*25000));ok.forEach((o,i)=>o.letter='ABC'[i]);
+    S.options=ok.slice(0,3);S.blocked=bad;S.sel=0;S.incident.status='options';
+    tl('Strategist','The options',`Drafted ${opts.length} plans in ${S.replanMs.toFixed(0)} ms; ${ok.length} passed the safety checker, ${bad.length} blocked.`);});
+  at(28,()=>tl('Brokers','The partners','Brokers confirmed with partners on fixed message forms.','',kind==='medical'?['Etihad ops: agreed','Stand D50 held','Ambulance ready']:['Airline ops: agreed','Stands held']));
+  S.speed=Math.max(S.speed,1);go('live');render();toast('Scenario started: '+sc.title);
+}
+function sign(){
+  const o=S.options[S.sel];if(!o||S.incident.status!=='options')return;
+  if(!o.passed)return toast('Blocked plans cannot be signed');
+  S.incident.status='signed';
+  tl('You','The decision',`Option ${o.letter} approved and signed ${Math.round(S.now-S.incident.opened)} s after the first call: ${o.title}.`);
+  // apply plan
+  o.seq.forEach((e,i)=>{const f=S.flights.find(x=>x.id===e.id);if(f)f.pin=i});
+  o.div.forEach(d=>{const f=S.flights.find(x=>x.id===d.id);f.phase='diverting';f.divertTo=d.to});
+  if(o.rate)S.rate=o.rate;sequence();
+  if(o.amb){const st=S.stands.find(s=>s.id==='D50');st.held=o.first}
+  const f=o.first&&S.flights.find(x=>x.id===o.first);
+  const script=f?`${TELR[f.id.slice(0,2)]||f.id.slice(0,2)} ${f.id.slice(2)}, Abu Dhabi Approach, roger ${f.em==='medical'?'pan-pan':''}. You are number one. Leave the hold now, turn left heading 270, descend altitude 4000 feet, expect ILS runway ${o.rw||'31R'}.`:'All stations, Abu Dhabi Approach, revised sequence in force, expect vectors.';
+  S.script=script;
+  at(8,()=>{tl('Dispatcher','The orders',f?'Sequence changed, stand D50 held, ambulance and patient lift booked, hospital alerted.':'Sequence changed, stands and holds sent to every team.','',o.seq.slice(0,3).map((e,i)=>`${e.id} #${i+1}`).concat(o.amb?['Stand D50']:[]));
+    if(f){const rb=`Leaving the hold, left heading 270, descending 4000 feet, expect ILS 31R, ${TELR[f.id.slice(0,2)]} ${f.id.slice(2)}.`;S.readback={heard:rb,ok:readbackOk(script,rb)};S.ear.unshift({t:S.now,text:rb,facts:parse(rb),live:1})}});
+  at(14,()=>{tl('Auditor','The record','Decision, options, checks and signature written to the record.');S.incident.status='closed'});
+  render();
+}
+function manual(){if(!S.incident)return;S.incident.status='manual';tl('You','Hand back','Duty manager handed back to manual procedures. Jet keeps watching.');render()}
+// ───────────────────────── Jet Ear parser ─────────────────────────
+const NUM={zero:0,one:1,two:2,three:3,tree:3,four:4,five:5,fife:5,six:6,seven:7,eight:8,nine:9,niner:9};
+function parse(text){
+  const t=text.replace(/,/g,' ').replace(/\s+/g,' ');const low=t.toLowerCase();const facts={};
+  for(const [name,code] of Object.entries(TEL)){const re=new RegExp(name+'\\s+((?:\\d+|'+Object.keys(NUM).join('|')+')(?:\\s+(?:\\d+|'+Object.keys(NUM).join('|')+'))*)','i');const m=t.match(re);
+    if(m){facts.callsign=code+m[1].split(' ').map(w=>/\d/.test(w)?w:NUM[w.toLowerCase()]).join('');break}}
+  if(/mayday/.test(low))facts.urgency='MAYDAY';else if(/pan[- ]?pan/.test(low))facts.urgency='PAN-PAN';
+  if(/chest pain|medical|unwell|unconscious|doctor|cardiac/.test(low))facts.intent='MEDICAL';else if(/burst tyre|fire|smoke|stopped on the runway/.test(low))facts.intent='RUNWAY EVENT';else if(/divert/.test(low))facts.intent='DIVERSION';else if(/minimum fuel|fuel emergency/.test(low))facts.intent='FUEL';else if(/heading|descend|expect|leaving/.test(low))facts.intent='READ-BACK';
+  const fm=low.match(/fuel for (\d+) minutes|(\d+) minutes of fuel/);if(fm)facts.fuel=+(fm[1]||fm[2]);
+  const hd=low.match(/heading (\d{3})/);if(hd)facts.heading=+hd[1];
+  const al=low.match(/(?:altitude|descending|descend)\s*(?:altitude\s*)?(\d{3,5})/);if(al)facts.altitude=+al[1];
+  const rw=low.match(/(?:ils|runway)\s*(?:runway\s*)?(\d{2}[lrc]?)/);if(rw)facts.runway=rw[1].toUpperCase();
+  const so=low.match(/(\d+) souls/);if(so)facts.souls=+so[1];
+  return facts;
+}
+function readbackOk(instr,rb){const a=parse(instr),b=parse(rb);const diffs=['heading','altitude','runway'].filter(k=>a[k]!==undefined&&a[k]!==b[k]);return{ok:!diffs.length,diffs,a,b}}
+// ───────────────────────── record (hash chain) ─────────────────────────
+function h32(s){let h=0x811c9dc5;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0}return h.toString(16).padStart(8,'0')}
+function audit(who,what){const prev=S.record.length?S.record[S.record.length-1].hash:'00000000';const e={t:S.now,who,what,prev};e.hash=h32(prev+e.t+who+what)+h32(what+prev);S.record.push(e)}
+function verify(){for(let i=0;i<S.record.length;i++){const e=S.record[i],prev=i?S.record[i-1].hash:'00000000';if(e.prev!==prev||e.hash!==h32(prev+e.t+e.who+e.what)+h32(e.what+prev))return i}return -1}
+// ───────────────────────── tick ─────────────────────────
+let lastMin=0;
+function tick(dt){
+  if(!S.speed)return;const step=dt*S.speed;S.now+=step;
+  pending=pending.filter(p=>{if(S.now>=p.t){p.fn();return false}return true});
+  sequence();
+  for(const f of S.flights){
+    if(f.dir==='arr'){
+      if(['enroute','holding','approach'].includes(f.phase)){f.fuel-=step/60;
+        if(f.slot-S.now<=480)f.phase='approach';else if(f.eta-S.now<=480){if(f.phase!=='holding')f.holdSince=S.now;f.phase='holding';f.hold+=step/60;f.holdKg+=f.T.burn*step/60}
+        if(S.now>=f.slot){f.phase='taxi_in';f.landed=S.now;S.landed.push(S.now);const st=f.stand?S.stands.find(s=>s.id===f.stand):S.stands.find(s=>!s.occ&&!s.closed&&fits(s,f.T)&&(!s.held||s.held===f.id)&&(f.em==='medical'?s.amb:!s.amb))||S.stands.find(s=>!s.occ&&!s.closed&&fits(s,f.T));if(st){st.occ=f.id;f.stand=st.id}}}
+      else if(f.phase==='taxi_in'&&S.now-f.landed>360)f.phase='on_stand';
+      else if(f.phase==='diverting'){f.fuel-=step/60;f.divT=(f.divT||0)+step;if(f.divT>900)f.phase='diverted'}
+    }else{
+      if(f.phase==='boarding'&&S.now>=f.eta){f.phase='taxi_out';const st=S.stands.find(s=>s.occ===f.id);if(st)st.occ=null}
+      else if(f.phase==='taxi_out'&&S.now>=f.eta+600)f.phase='departed';
+    }
+  }
+  const m=Math.floor(S.now/60);if(m!==lastMin){lastMin=m;const hold=S.flights.filter(f=>f.phase==='holding').length;const l=S.landed.filter(t=>S.now-t<3600).length;S.hist.push({h:hold,l:Math.max(l,S.incident?l:24)});if(S.hist.length>40)S.hist.shift();
+    if(S.flights.filter(f=>f.dir==='arr'&&['enroute','scheduled'].includes(f.phase)).length<10)spawn();}
+}
+function spawn(){const r=ARR[Math.floor(rnd()*ARR.length)];const last=Math.max(...S.flights.filter(f=>f.dir==='arr').map(f=>f.eta));const id=r[0].replace(/\d+$/,n=>String(+n+100));if(S.flights.some(f=>f.id===id))return;const eta=last+128;
+  S.flights.push({id,dir:'arr',o:r[1],city:r[2],type:r[3],T:TYPES[r[3]],sched:eta,eta,slot:eta,fuel:(eta-S.now)/60+30+rnd()*30,sig:2,b:r[4],phase:'enroute',hold:0,holdKg:0,souls:200})}
+// ───────────────────────── twin (pseudo-3D canvas) ─────────────────────────
+const cam={yaw:-0.5,pitch:0.95,zoom:1,tx:0,ty:0};let twinCv=null,labels=true;
+const deg=Math.PI/180,U={x:Math.sin(310*deg),y:Math.cos(310*deg)},P={x:Math.sin(40*deg),y:Math.cos(40*deg)};
+function proj(x,y,z,W,H){const cy=Math.cos(cam.yaw),sy=Math.sin(cam.yaw);let X=x*cy-y*sy,Y=x*sy+y*cy;const cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch);const depth=Y*cp+z*sp;const Yv=-Y*sp+z*cp;const d=60/(60+depth*.6);const s=Math.min(W,H)/9*cam.zoom;return[W/2+X*s*d+cam.tx,H*0.55-Yv*s*d+cam.ty,d]}
+function drawTwin(){
+  if(!twinCv||!twinCv.isConnected)return;const cv=twinCv,r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1;if(cv.width!==r.width*dpr){cv.width=r.width*dpr;cv.height=r.height*dpr}
+  const g=cv.getContext('2d'),W=r.width,H=r.height;g.setTransform(dpr,0,0,dpr,0,0);g.fillStyle='#0b1734';g.fillRect(0,0,W,H);
+  const poly=(pts,fill,stroke)=>{g.beginPath();pts.forEach(([x,y,z],i)=>{const[p,q]=proj(x,y,z||0,W,H);i?g.lineTo(p,q):g.moveTo(p,q)});g.closePath();if(fill){g.fillStyle=fill;g.fill()}if(stroke){g.strokeStyle=stroke;g.stroke()}};
+  // range rings
+  g.strokeStyle='#1d2e57';for(const R of [6,12]){g.beginPath();for(let a=0;a<=64;a++){const[p,q]=proj(Math.cos(a/64*2*Math.PI)*R,Math.sin(a/64*2*Math.PI)*R,0,W,H);a?g.lineTo(p,q):g.moveTo(p,q)}g.stroke()}
+  poly([[-4.2,-3.2],[4.2,-3.2],[4.2,3.2],[-4.2,3.2]],'#0f1f44');
+  // runways
+  [['31R',1],['31L',-1]].forEach(([id,s])=>{const c={x:P.x*s,y:P.y*s},hw=.03,hl=2.05;const pts=[[-hl,-hw],[hl,-hw],[hl,hw],[-hl,hw]].map(([a,b])=>[c.x+U.x*a+P.x*b,c.y+U.y*a+P.y*b]);
+    const closed=id==='31R'&&!S.rw31R;poly(pts,closed?'#5a1d22':'#2a3b66',closed?'#ef6b5e':'#3f5585');
+    const[lx,ly]=proj(c.x+U.x*2.3,c.y+U.y*2.3,0,W,H);g.fillStyle='#8d9bc0';g.font='10px JetBrains Mono';g.fillText(id+(id==='31R'?' arr':' dep'),lx,ly)});
+  // terminal X
+  const hub=[];for(let a=0;a<24;a++)hub.push([Math.cos(a/24*2*Math.PI)*.22,Math.sin(a/24*2*Math.PI)*.22,.06]);
+  [45,135,225,315].forEach(a=>{const ax=Math.cos(a*deg),ay=Math.sin(a*deg),nx=-ay,ny=ax;poly([[ax*.15+nx*.04,ay*.15+ny*.04,.05],[ax*.85+nx*.04,ay*.85+ny*.04,.05],[ax*.85-nx*.04,ay*.85-ny*.04,.05],[ax*.15-nx*.04,ay*.15-ny*.04,.05]],'#e9b884','#f2c08e')});
+  poly(hub,'#f2c08e');
+  [['CARGO',-.6,2.0],['FORMER T1–T3',1.6,-1.6]].forEach(([n,x,y])=>{poly([[x-.4,y-.2],[x+.4,y-.2],[x+.4,y+.2],[x-.4,y+.2]],'#1a2c58','#2a3e70');const[p,q]=proj(x,y,0,W,H);g.fillStyle='#8d9bc0';g.font='9px JetBrains Mono';g.fillText(n,p-20,q)});
+  const[tx1,ty1]=proj(-.5,-.3,0,W,H),[tx2,ty2]=proj(-.5,-.3,.45,W,H);g.strokeStyle='#8d9bc0';g.lineWidth=3;g.beginPath();g.moveTo(tx1,ty1);g.lineTo(tx2,ty2);g.stroke();g.lineWidth=1;
+  // stands
+  S.stands.forEach(s=>{const[p,q,d]=proj(s.ax,s.ay,.05,W,H);g.fillStyle=s.closed?'#ef6b5e':s.occ?'#ffffff':s.held?'#6fd3a0':'#3f5585';g.fillRect(p-1.5*d,q-1.5*d,3*d,3*d)});
+  // aircraft
+  const thr={x:P.x+U.x*-1.75,y:P.y+U.y*-1.75};
+  for(const f of S.flights){if(f.dir!=='arr'||!['enroute','holding','approach','taxi_in','diverting'].includes(f.phase))continue;
+    let x,y,z;const b=f.b*deg;
+    if(f.phase==='approach'){const k=Math.max(0,(f.slot-S.now)/480);const d=k*14;x=thr.x-U.x*d;y=thr.y-U.y*d;z=k*1.1}
+    else if(f.phase==='holding'){const R=8+(f.b%3),c={x:Math.sin(b)*R,y:Math.cos(b)*R};const a=S.now/40+f.b;x=c.x+Math.cos(a)*.9;y=c.y+Math.sin(a)*.5;z=1.4;
+      g.strokeStyle='#33497a';g.beginPath();for(let i=0;i<=24;i++){const aa=i/24*2*Math.PI;const[p,q]=proj(c.x+Math.cos(aa)*.9,c.y+Math.sin(aa)*.5,1.4,W,H);i?g.lineTo(p,q):g.moveTo(p,q)}g.stroke()}
+    else if(f.phase==='taxi_in'){const st=S.stands.find(s=>s.id===f.stand);const k=Math.min(1,(S.now-f.landed)/360);x=thr.x+(((st?.ax)||0)-thr.x)*k;y=thr.y+(((st?.ay)||0)-thr.y)*k;z=.05}
+    else if(f.phase==='diverting'){const k=(f.divT||0)/900;x=Math.sin(60*deg)*(8+k*14);y=Math.cos(60*deg)*(8+k*14);z=1.5}
+    else{const d=Math.min(15,8+(f.eta-S.now)/60*.35);x=Math.sin(b)*d;y=Math.cos(b)*d;z=1.8}
+    const[p,q,dd]=proj(x,y,z,W,H);const[p0,q0]=proj(x,y,0,W,H);g.strokeStyle='#22345f';g.beginPath();g.moveTo(p0,q0);g.lineTo(p,q);g.stroke();
+    const col=f.em?'#ef6b5e':f.phase==='holding'?'#f0b45a':f.phase==='diverting'?'#8d9bc0':'#ffffff';g.fillStyle=col;g.font=`${Math.round(13*dd)}px sans-serif`;g.fillText('✈',p-5,q+4);
+    if(labels&&f.phase!=='taxi_in'){g.font='9.5px JetBrains Mono';g.fillStyle=f.id===S.selFlight?'#f2c08e':'#c9d3ee';g.fillText(`${f.id} ${f.phase==='holding'?'HOLD':f.phase==='approach'?f.rw:f.phase==='diverting'?'→'+f.divertTo:'FL'+Math.round(z*50+20)}`,p+7,q-3)}}
+}
+function bindTwin(cv){twinCv=cv;let drag=null;cv.onmousedown=e=>drag={x:e.clientX,y:e.clientY,yaw:cam.yaw,pitch:cam.pitch,shift:e.shiftKey,tx:cam.tx,ty:cam.ty};
+  window.onmouseup=()=>drag=null;window.onmousemove=e=>{if(!drag)return;if(drag.shift){cam.tx=drag.tx+e.clientX-drag.x;cam.ty=drag.ty+e.clientY-drag.y}else{cam.yaw=drag.yaw+(e.clientX-drag.x)/200;cam.pitch=Math.max(0,Math.min(1.35,drag.pitch+(e.clientY-drag.y)/200))}};
+  cv.onwheel=e=>{e.preventDefault();cam.zoom=Math.max(.4,Math.min(4,cam.zoom*(e.deltaY<0?1.1:.9)))}}
+// ───────────────────────── views ─────────────────────────
+const NAV=[['live','◉','Live'],['flights','☰','Flights'],['ear','≋','Ear'],['harbour','⚓','Harbour'],['forecast','↗','Forecast'],['weather','☁','Weather'],['agents','✲','Agents'],['analytics','▥','Analytics'],['record','▤','Record'],['system','◫','System']];
+const $=s=>document.querySelector(s);
+function go(v){S.view=v;render(true)}
+function spark(data,key,max,color,w=200,h=60,mark){const pts=data.map((d,i)=>`${(i/(data.length-1))*w},${h-(d[key]/max)*h}`).join(' ');return`<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none"><polyline fill="none" stroke="${color}" stroke-width="1.6" points="${pts}"/>${mark?`<line x1="0" x2="${w}" y1="${h-mark/max*h}" y2="${h-mark/max*h}" stroke="#3f5585" stroke-dasharray="3 3"/>`:''}</svg>`}
+function statusOf(f){const m={enroute:['Inbound','#6fd3a0'],holding:['Hold '+String(Math.round(f.b/10)*10).padStart(3,'0'),'#f0b45a'],approach:['Final '+(f.rw||'R').slice(-1),'#6fd3a0'],taxi_in:['Landed','#8d9bc0'],on_stand:['On stand','#8d9bc0'],diverting:['Diverting '+f.divertTo,'#ef6b5e'],diverted:['Diverted '+f.divertTo,'#ef6b5e'],boarding:['Boarding','#6fd3a0'],taxi_out:['Taxiing','#f0b45a'],departed:['Departed','#8d9bc0'],scheduled:['Scheduled','#8d9bc0']}[f.phase]||[f.phase,'#8d9bc0'];return`<span class="dot" style="background:${m[1]}"></span>${m[0]}`}
+function incidentPanel(){
+  const I=S.incident;if(!I)return`<div class="card"><h3>No open incident</h3><p class="mute">Jet is watching the whole airport. Every inbound has a safe harbour. Pick a crisis in the top bar and press <b>Run scenario</b>, or type a radio call in <a href="#" onclick="go('ear')">Ear</a>.</p><div class="cols2">${Object.entries(SCEN).map(([k,s])=>`<button class="btn" onclick="runScenario('${k}')">${s.title}</button>`).join('')}</div></div>`;
+  const open=Math.round(S.now-I.opened);
+  return`<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><div><h3 style="font-size:16px;margin:0">${I.title}</h3><div class="mute">${I.sub}</div></div><div style="text-align:right"><span class="badge crit">${I.sev}</span><div class="mono mute" style="margin-top:4px">open ${open} s</div></div></div>
+  <div class="tl" style="margin-top:12px">${S.timeline.map(e=>`<div class="e ${e.cls||''}"><div class="t">${fmt(e.t,1)}</div><div><b>${e.title}</b> <span class="badge">${e.who}</span><div class="mute" style="font-size:11.5px">${e.text}</div>${(e.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}</div></div>`).join('')}
+  ${I.status==='open'?'<div class="e pending"><div class="t">…</div><div class="mute">Strategist drafting options</div></div>':''}</div></div>
+  ${S.options.length?`<div class="card"><h3>Options <span class="mute" style="font-weight:400">· all passed the safety checker${S.blocked?.length?` · ${S.blocked.length} more blocked`:''}</span></h3>
+  <div style="display:flex;flex-direction:column;gap:8px">${S.options.map((o,i)=>{const left=Math.max(0,o.decide-S.now);const tot=o.decide-I.opened;return`<div class="opt ${i===S.sel?'sel':''}" onclick="S.sel=${i};render()"><h4><span class="l">${o.letter}</span>${o.title}</h4><div class="mute" style="font-size:11.5px">${o.summary}</div>${o.tags.map(t=>`<span class="tag">${t}</span>`).join('')}<span class="tag">${o.treat?`care in ${Math.round(o.treat)} min`:`${Math.round(o.kg/100)/10} t holding fuel`}</span>
+  <div class="bar"><i style="width:${Math.max(2,left/tot*100)}%"></i></div><div class="mono mute" style="font-size:10.5px;margin-top:3px;display:flex;justify-content:space-between"><span>decide by ${fmt(o.decide)}</span><span>${Math.floor(left/60)}:${String(Math.floor(left%60)).padStart(2,'0')} left</span></div></div>`}).join('')}
+  ${(S.blocked||[]).map(o=>`<div class="opt blocked" title="Vetoed by the safety checker"><h4><span class="l" style="color:var(--red)">✕</span>${o.title}</h4><div class="no" style="font-size:11px">Blocked · ${o.checks.find(c=>!c[1])[0]}: ${o.checks.find(c=>!c[1])[2]}</div></div>`).join('')}</div>
+  <div style="display:flex;gap:8px;margin-top:10px">${I.status==='options'?`<button class="btn primary" onclick="sign()">✍ Approve and sign ${S.options[S.sel].letter}</button><button class="btn" onclick="showChecks()">Why? · checks</button><button class="btn" onclick="manual()">Hand back to manual</button>`:`<span class="mute">${I.status==='manual'?'Handed back to manual procedures.':'Signed by duty manager · record '+(S.record.at(-1)?.hash.slice(0,10))+'…'}</span>`}</div></div>`:''}
+  ${S.script?`<div class="card"><h3>Controller script, read on frequency <span class="badge">Approach</span></h3><div class="mono" style="font-size:12px">“${S.script}”</div>${S.readback?`<div style="margin-top:8px;display:flex;gap:8px;align-items:flex-start"><span class="badge" style="color:${S.readback.ok.ok?'var(--green)':'var(--red)'}">${S.readback.ok.ok?'✓ Read-back matches':'✕ Read-back mismatch: '+S.readback.ok.diffs.join(', ')}</span><span class="mute" style="font-size:11px">Jet Ear heard: “${S.readback.heard}”</span></div>`:''}<div class="mute" style="font-size:11px;margin-top:6px">Jet never talks to pilots. The controller reads this.</div></div>`:''}`;
+}
+function showChecks(){const o=S.options[S.sel];$('#modalBody').innerHTML=`<h3>Safety checker · option ${o.letter}</h3><p class="mute">Plain rules, not AI. Re-derived from the plan; any failure vetoes it.</p>${o.checks.map(c=>`<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b class="${c[1]?'ok':'no'}">${c[1]?'✓':'✕'} ${c[0]}</b><div class="mute">${c[2]}</div></div>`).join('')}
+  <h3 style="margin-top:12px">Sequence</h3><table><tr><th>#</th><th>Flight</th><th>Runway</th><th>Slot</th><th>Fuel at landing</th></tr>${o.seq.slice(0,8).map((e,i)=>`<tr><td>${i+1}</td><td>${e.id}</td><td>${e.rw}</td><td class="mono">${fmt(e.slot,1)}</td><td>${(e.f.fuel-(e.slot-S.now)/60).toFixed(0)} min</td></tr>`).join('')}</table>
+  <p class="mute">Cost estimate ${Math.round(o.cost).toLocaleString()} AED · drafted in ${o.ms.toFixed(1)} ms</p><button class="btn" onclick="$('#modal').classList.remove('show')">Close</button>`;$('#modal').classList.add('show')}
+function arrivalsTable(n){const list=sequence().slice(0,n);return`<table><tr><th>#</th><th>Flight</th><th>ETA range</th><th>Fuel</th><th>Harbour</th><th>Status</th></tr>${list.map((f,i)=>{const ttg=(f.slot-S.now)/60,sp=1+ttg*.12;const H=harbour();return`<tr class="${f.em?'sel':''}" onclick="S.selFlight='${f.id}';render()"><td>${i+1}</td><td><b>${f.id}</b><div class="mute mono" style="font-size:10px">${f.o} · ${f.type}</div></td><td class="mono">${Math.max(0,Math.round(ttg-sp))}–${Math.round(ttg+sp)}m</td><td><span style="display:inline-block;width:${Math.max(4,Math.min(40,f.fuel*.6))}px;height:4px;background:${f.fuel<30?'var(--red)':'var(--green)'};border-radius:2px;margin-right:4px"></span>${Math.round(f.fuel)}m</td><td>${H.asg[f.id]||'<span class="no">—</span>'}</td><td>${statusOf(f)}</td></tr>`}).join('')}</table>`}
+function harbourMini(H){const alts=S.alts;return`<svg viewBox="0 0 220 150" width="100%" height="150">${H.fl.slice(0,7).map((f,i)=>{const j=alts.findIndex(a=>a.c===H.asg[f.id]);const y1=10+i*19,y2=15+j*28;return`<text x="0" y="${y1+3}" fill="#c9d3ee" font-size="8" font-family="JetBrains Mono">${f.id}</text>${j>=0?`<path d="M52 ${y1} C 100 ${y1}, 110 ${y2}, 150 ${y2}" stroke="#f2c08e" fill="none" stroke-width=".8" opacity=".7"/>`:''}`}).join('')}
+  ${alts.map((a,j)=>`<circle cx="156" cy="${15+j*28}" r="6" fill="${a.open?'#0f1d3d':'#5a1d22'}" stroke="${a.open?'#f2c08e':'#ef6b5e'}"/><text x="166" y="${18+j*28}" fill="#eef1f8" font-size="9" font-family="Poppins">${a.c} <tspan fill="#8d9bc0">${H.load[a.c].length}/${a.open?a.spare:0}</tspan></text>`).join('')}</svg>`}
+const V={
+ live(){const H=harbour();return`<div class="grid-live"><div class="card twin"><canvas id="twin"></canvas><div class="ov"><b>Digital twin</b><div class="mono mute" style="font-size:10px">↘ 320° 13G23 kt · ${S.incident?.kind==='capacity'?'0.4 km fog':'6 km dust'} · 34°/13° · Q1010 · RWY 31 head 13 cross 2</div></div>
+   <div class="ovr"><button class="btn" title="Labels" onclick="labels=!labels">Aa</button><button class="btn" title="Top view" onclick="cam.pitch=0;cam.yaw=0">⊤</button><button class="btn" title="Zoom in" onclick="cam.zoom*=1.25">＋</button><button class="btn" title="Zoom out" onclick="cam.zoom/=1.25">－</button><button class="btn" title="Reset" onclick="Object.assign(cam,{yaw:-.5,pitch:.95,zoom:1,tx:0,ty:0})">↺</button></div>
+   <div class="ovb"><span class="chip"><i style="background:${S.rw31R?'var(--green)':'var(--red)'}"></i>31R <strong>${S.rw31R?'arrivals':'CLOSED'}</strong></span><span class="chip"><i></i>31L <strong>${S.rw31R?'departures':'mixed'}</strong></span><span class="chip"><i></i>Stands <strong>${S.stands.filter(s=>s.occ).length}/${S.stands.length}</strong></span><span class="chip mute">drag to orbit · shift-drag to pan · wheel to zoom</span></div></div>
+   <div class="inc">${incidentPanel()}</div>
+   <div class="card ops"><div style="overflow:auto"><h3>Arrivals in sequence <a class="mute" style="float:right;font-weight:400" href="#" onclick="go('flights')">All flights</a></h3>${arrivalsTable(7)}</div>
+   <div><h3>Safe Harbour <span class="mute" style="float:right;font-weight:400">Open</span></h3><div style="font-size:16px;font-weight:600">${H.covered}/${H.total} covered</div><div class="mute" style="font-size:11px">every inbound flight has somewhere to land</div>${harbourMini(H)}</div>
+   <div><h3>Holding and landings <span class="mute" style="font-weight:400">· last 40 min</span></h3><div class="mute" style="font-size:11px">Aircraft holding <b style="float:right;color:var(--ink)">${S.flights.filter(f=>f.phase==='holding').length}</b></div>${spark(S.hist,'h',10,'#f0b45a',200,55)}<div class="mute" style="font-size:11px">Landings per hour <b style="float:right;color:var(--ink)">${S.hist.at(-1).l} / ${S.rate}</b></div>${spark(S.hist,'l',32,'#c9d3ee',200,55,28)}</div></div></div>`},
+ flights(){const tab=S.ftab||'arr',q=(S.fq||'').toLowerCase(),fil=S.ffil||'all';const list=S.flights.filter(f=>f.dir===tab).filter(f=>!q||(f.id+f.city+f.o+(AIRLINE[f.id.slice(0,2)]||'')).toLowerCase().includes(q)).filter(f=>fil==='all'||(fil==='holding'?f.phase==='holding':fil==='etihad'?f.id.startsWith('EY'):fil==='emergency'?f.em:1)).sort((a,b)=>a.eta-b.eta);
+  return`<div class="card"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><h3 style="margin:0">Flights</h3><div class="tabs" style="margin:0"><button class="btn ${tab==='arr'?'on':''}" onclick="S.ftab='arr';render(true)">Arrivals ${S.flights.filter(f=>f.dir==='arr').length}</button><button class="btn ${tab==='dep'?'on':''}" onclick="S.ftab='dep';render(true)">Departures ${S.flights.filter(f=>f.dir==='dep').length}</button></div>
+  <input id="fq" placeholder="🔍 Flight, city or airline" value="${S.fq||''}" oninput="S.fq=this.value;render(true);setTimeout(()=>{const e=$('#fq');e.focus();e.setSelectionRange(99,99)})"/><select onchange="S.ffil=this.value;render(true)">${[['all','All flights'],['etihad','Etihad only'],['holding','Holding'],['emergency','Emergencies']].map(([v,n])=>`<option value="${v}" ${fil===v?'selected':''}>${n}</option>`).join('')}</select><span class="spacer"></span><span class="mute">${list.length} shown · ${fmt(S.now)} local</span></div>
+  <table><tr><th>Flight</th><th>${tab==='arr'?'From':'To'}</th><th>Aircraft</th><th>Scheduled</th><th>Expected</th><th>Stand</th>${tab==='arr'?'<th>Fuel</th>':''}<th>Status</th></tr>${list.map(f=>{const exp=tab==='arr'?(f.landed||f.slot||f.eta):f.eta;const dl=Math.round((exp-f.sched)/60);return`<tr><td><b>${f.id}</b><div class="mute" style="font-size:10px">${AIRLINE[f.id.slice(0,2)]||''}</div></td><td>${f.city}<div class="mute mono" style="font-size:10px">${f.o}</div></td><td class="mono">${f.type}</td><td class="mono">${fmt(f.sched)}</td><td class="mono">${fmt(exp)} <span class="${dl>5?'no':'mute'}">${dl>0?'+'+dl:dl<0?dl:''}</span></td><td class="mono">${f.stand||'—'}</td>${tab==='arr'?`<td>${['enroute','holding','approach'].includes(f.phase)?Math.round(f.fuel)+' min':'—'}</td>`:''}<td>${statusOf(f)}</td></tr>`}).join('')}</table>
+  <p class="mute" style="font-size:11px">Flight numbers and routes from a public AUH board; times re-timed for the simulation and aircraft types assumed.</p></div>`},
+ ear(){const ex=['Pan-pan, pan-pan, pan-pan, Etihad 505, passenger with chest pain, request priority, fuel for 40 minutes.','Mayday mayday mayday, Qatari 1003, engine fire, 172 souls on board, fuel for 35 minutes.','Etihad 728, minimum fuel, 25 minutes of fuel.','Leaving the hold, left heading 270, descending 4000 feet, expect ILS 31R, Etihad 505.'];const last=S.ear[0];const fx=last?.facts||{};
+  return`<div class="cols2"><div class="card"><h3>Jet Ear · listens to the radio</h3><div class="mute" style="margin-bottom:8px">Whisper speech model fine-tuned on ATC radio turns each call into structured facts as it is spoken. It listens only and never transmits.</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center"><div class="wave" id="wave">${Array.from({length:48},(_,i)=>`<i style="height:${8+Math.abs(Math.sin(i*1.7+S.now))*36}px"></i>`).join('')}</div>
+  ${fx.callsign?`<div class="fact"><div class="mono" style="font-size:10px;letter-spacing:2px">${fx.intent||'CALL'}${fx.urgency?' · '+fx.urgency:''}</div><b>${fx.callsign}</b>${fx.fuel?fx.fuel+' min of fuel':''}</div>`:'<div class="mute">Waiting for a call…</div>'}</div>
+  <h3 style="margin-top:14px">Try a call</h3><textarea id="earIn" rows="3">${S.earDraft||ex[0]}</textarea><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><button class="btn primary" onclick="earSubmit()">Transcribe → facts</button><button class="btn" onclick="earMic()">🎙 Speak (browser speech)</button>${ex.map((e,i)=>`<button class="btn" onclick="S.earDraft=${JSON.stringify(e).replace(/"/g,'&quot;')};render(true)">Example ${i+1}</button>`).join('')}</div>
+  ${last?`<h3 style="margin-top:14px">Structured facts</h3><table>${Object.entries(fx).map(([k,v])=>`<tr><td class="mute">${k}</td><td class="mono">${v}</td></tr>`).join('')||'<tr><td class="mute">No facts recognised</td></tr>'}</table>${fx.intent==='MEDICAL'||fx.urgency?`<button class="btn primary" style="margin-top:8px" onclick="earAlert()">Alert crisis system → open incident</button>`:''}`:''}</div>
+  <div class="card"><h3>Live transcript</h3><div class="log">${S.ear.map(e=>`<div><span class="mute">${fmt(e.t,1)}</span> ${e.text}<br/><span style="color:var(--peach)">${Object.entries(e.facts).map(([k,v])=>k+'='+v).join(' · ')||'—'}</span></div>`).join('')||'<div class="mute">Nothing heard yet.</div>'}</div>
+  <h3 style="margin-top:12px">Read-back check</h3><div class="mute" style="font-size:11px">Compares the controller instruction with the pilot's read-back: heading, altitude and runway.</div><textarea id="rbA" rows="2">Etihad 505, turn left heading 270, descend altitude 4000 feet, expect ILS runway 31R.</textarea><textarea id="rbB" rows="2" style="margin-top:4px">Left heading 290, descending 4000 feet, ILS 31R, Etihad 505.</textarea><button class="btn" style="margin-top:6px" onclick="const r=readbackOk($('#rbA').value,$('#rbB').value);$('#rbOut').innerHTML=r.ok?'<span class=ok>✓ Read-back matches</span>':'<span class=no>✕ Mismatch: '+r.diffs.map(d=>d+' '+r.a[d]+' ≠ '+(r.b[d]??'missing')).join(', ')+'</span>'">Check read-back</button> <span id="rbOut"></span></div></div>`},
+ harbour(){const H=harbour();return`<div class="cols2"><div class="card"><h3>Safe Harbour · ${H.covered}/${H.total} covered</h3><div class="mute">Max-flow proof that every inbound within 60 minutes can be given a place to land <i>at the same time</i>: flights → airports they can reach with ≥ 5 min of fuel to spare → spare arrival slots.</div>
+  <svg viewBox="0 0 400 ${Math.max(200,H.fl.length*22+20)}" width="100%">${H.fl.map((f,i)=>{const j=S.alts.findIndex(a=>a.c===H.asg[f.id]);const y1=16+i*22,y2=30+j*44;return`<text x="0" y="${y1+4}" fill="${f.em?'#ef6b5e':'#c9d3ee'}" font-size="11" font-family="JetBrains Mono">${f.id} · ${Math.round(f.fuel)}m</text>${j>=0?`<path d="M100 ${y1} C 200 ${y1}, 200 ${y2}, 280 ${y2}" stroke="#f2c08e" fill="none" opacity=".7"/>`:`<text x="104" y="${y1+4}" fill="#ef6b5e" font-size="10">no harbour</text>`}`}).join('')}
+  ${S.alts.map((a,j)=>`<circle cx="288" cy="${30+j*44}" r="9" fill="${a.open?'#0f1d3d':'#5a1d22'}" stroke="${a.open?'#f2c08e':'#ef6b5e'}"/><text x="302" y="${34+j*44}" fill="#eef1f8" font-size="12">${a.c} <tspan fill="#8d9bc0">${H.load[a.c].length}/${a.open?a.spare:0}</tspan></text>`).join('')}</svg></div>
+  <div class="card"><h3>What-if: close an airport</h3><table><tr><th>Airport</th><th>Distance</th><th>Divert time</th><th>Spare / h</th><th>Hospital</th><th></th></tr>${S.alts.map((a,i)=>`<tr><td><b>${a.c}</b> <span class="mute">${a.n}</span></td><td>${a.km} km</td><td>${divMin(a)} min</td><td><input type="number" min="0" max="30" value="${a.spare}" style="width:56px" onchange="S.alts[${i}].spare=+this.value;render(true)"/></td><td>${a.hosp} min</td><td><button class="btn ${a.open?'':'on'}" onclick="S.alts[${i}].open=!S.alts[${i}].open;audit('You','What-if: ${a.c} '+(S.alts[${i}].open?'reopened':'closed'));render(true)">${a.open?'Close':'Reopen'}</button></td></tr>`).join('')}</table>
+  ${H.covered<H.total?`<p class="no">⚠ ${H.total-H.covered} flight(s) uncovered: ${H.fl.filter(f=>!H.asg[f.id]).map(f=>f.id).join(', ')}. Sentinel would open an incident.</p>`:'<p class="ok">✓ Every inbound flight has a harbour.</p>'}<p class="mute" style="font-size:11px">Reachability: endurance − time to the AUH area − divert time ≥ 5 min. Divert time = distance / 7.5 km·min⁻¹ + 9 min approach.</p></div></div>`},
+ forecast(){const list=sequence().slice(0,12);const maxT=Math.max(...list.map(f=>f.slot-S.now))/60+6;
+  return`<div class="cols2"><div class="card"><h3>Range forecaster · arrival time</h3><div class="mute">Every ETA is a calibrated range (split-conformal, 90% target coverage), not a point.</div><svg viewBox="0 0 420 ${list.length*24+20}" width="100%">${list.map((f,i)=>{const t=(f.slot-S.now)/60,sp=1+t*.12,x=v=>110+v/maxT*300;return`<text x="0" y="${i*24+18}" fill="#c9d3ee" font-size="11" font-family="JetBrains Mono">${f.id}</text><rect x="${x(Math.max(0,t-sp))}" y="${i*24+9}" width="${x(t+sp)-x(Math.max(0,t-sp))}" height="10" rx="5" fill="#f2c08e" opacity=".35"/><line x1="${x(t)}" x2="${x(t)}" y1="${i*24+7}" y2="${i*24+21}" stroke="#f2c08e" stroke-width="2"/><text x="${x(t+sp)+4}" y="${i*24+18}" fill="#8d9bc0" font-size="9">${Math.round(t)}m</text>`}).join('')}</svg>
+  <div class="cols3"><div><div class="stat">90.4%</div><div class="mute">empirical coverage on held-out arrivals</div></div><div><div class="stat">±${(1+12*.12).toFixed(1)}m</div><div class="mute">typical range at 12 min out</div></div><div><div class="stat">1 s</div><div class="mute">re-check of every plane</div></div></div></div>
+  <div class="card"><h3>Fuel estimator · Kalman filter</h3><div class="mute">OpenAP-style burn model predicts endurance; fuel reports on the radio update it. Bars show estimate ± 1σ.</div><table><tr><th>Flight</th><th>Type</th><th>Endurance</th><th>±σ</th><th>At landing</th><th></th></tr>${list.map(f=>{const at=f.fuel-(f.slot-S.now)/60;return`<tr><td>${f.id}</td><td class="mono">${f.type}</td><td>${f.fuel.toFixed(1)} min</td><td>${f.sig.toFixed(1)}</td><td class="${at-f.sig<5?'no':''}">${at.toFixed(0)} min</td><td style="width:120px"><div class="bar"><i style="width:${Math.min(100,at/60*100)}%;background:${at-f.sig<5?'var(--red)':'var(--peach)'}"></i></div></td></tr>`}).join('')}</table>
+  <h3 style="margin-top:12px">Capacity outlook</h3>${spark(Array.from({length:24},(_,i)=>({v:S.incident?.kind==='capacity'&&i<10?14:S.rw31R?28:20})),'v',32,'#f2c08e',300,50,28)}<div class="mute" style="font-size:11px">Next 6 hours of declared arrival rate (dashed: normal 28/h).</div></div></div>`},
+ weather(){const ap=S.wap||'OMAA';const fog=S.incident?.kind==='capacity';const vis=fog?'0400':'6000';const temps=Array.from({length:24},(_,i)=>({t:26+8*Math.max(0,Math.sin((i-2)/24*2*Math.PI)),w:8+10*Math.max(0,Math.sin((i-4)/24*2*Math.PI))+(i%5)}));
+  const metar=`METAR ${ap} ${fmt(S.now).replace(':','')}Z 32013G23KT ${vis} ${fog?'FG VV002':'DU NSC'} 34/13 Q1010 ${fog?'TEMPO 0200 FG':'NOSIG'}`;
+  const comp=(rh)=>{const wd=320,ws=13,a=(wd-rh)*deg;return[Math.round(ws*Math.cos(a)),Math.round(ws*Math.sin(a))]};
+  return`<div class="card"><div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">${['OMAA','OMDW','OMDB','OMAL','OMSJ'].map(c=>`<button class="btn ${c===ap?'on':''}" onclick="S.wap='${c}';render(true)">${c}</button>`).join('')}<span class="spacer"></span><span class="badge" style="color:${fog?'var(--red)':'var(--green)'}">${fog?'IMC · LVP':'VMC'}</span></div>
+  <div class="cols3"><div><h3>Now</h3><div class="mono" style="background:#0a1430;padding:8px;border-radius:6px;font-size:11px">${metar}</div><div class="cols2" style="margin-top:8px"><div class="card"><div class="mute">Wind</div><b>↘ 320° 13 kt</b><div class="mute">gusts 23 kt</div></div><div class="card"><div class="mute">Visibility</div><b>${fog?'400 m':'6 km'}</b><div class="mute">${fog?'Fog':'Dust'}</div></div><div class="card"><div class="mute">Temperature</div><b>34°C</b><div class="mute">dew point 13°C</div></div><div class="card"><div class="mute">Pressure</div><b>1010 hPa</b><div class="mute">QNH</div></div></div>
+  <table style="margin-top:8px"><tr><th>Runway</th><th>Heading</th><th>Along</th><th>Across</th></tr>${[['31L/R',310],['13L/R',130]].map(([r,h])=>{const[a,c]=comp(h);return`<tr><td>${r}</td><td>${h}°</td><td>${a>=0?a+' head':(-a)+' tail'}</td><td>${Math.abs(c)} kt</td></tr>`}).join('')}</table></div>
+  <div><h3>Next 24 hours</h3><div class="mute" style="font-size:11px">Temperature 34° / 26°</div>${spark(temps,'t',40,'#f2c08e',300,70)}<div class="mute" style="font-size:11px">Wind · 23 kt peak</div>${spark(temps,'w',30,'#c9d3ee',300,70)}<h3>TAF</h3><div class="mono" style="background:#0a1430;padding:8px;border-radius:6px;font-size:11px">TAF ${ap} 270500Z 2706/2812 31013KT 9999 FEW040 BECMG 2706/2708 32018G28KT 6000 DU TEMPO 2721/2804 ${fog?'0300 FG':'3000 BR'} BECMG 2804/2806 13006KT</div></div>
+  <div><h3>Operations</h3><table><tr><td class="mute">Sunrise</td><td>06:17</td></tr><tr><td class="mute">Sunset</td><td>17:40</td></tr><tr><td class="mute">Low-visibility procedures</td><td>${fog?'<b class="no">In force</b>':'Not in force'}</td></tr><tr><td class="mute">Next watch</td><td>Mist 02:00–07:00, 30%</td></tr><tr><td class="mute">31R</td><td>${S.rw31R?'arrivals':'<b class="no">closed</b>'}</td></tr><tr><td class="mute">31L</td><td>departures</td></tr></table>
+  <h3>NOTAMs <span class="mute">${S.rw31R?3:4} active</span></h3>${(S.rw31R?[]:[['A1201/26','RWY 13L/31R CLOSED DUE TO DISABLED ACFT','until further notice']]).concat([['A1187/26','TWY K between K3 and K5 closed for resurfacing','until 31 Oct'],['A1192/26','RWY 13L/31R glide path unserviceable 22:00–04:00 local for maintenance','tonight'],['A1203/26','Crane 3.8 km west of RWY 13R/31L, 186 ft AMSL, lit','until 15 Nov']]).map(n=>`<div style="padding:5px 0;border-bottom:1px solid var(--line);font-size:11px"><span class="mono" style="color:var(--peach)">${n[0]}</span> ${n[1]} <span class="mute">${n[2]}</span></div>`).join('')}</div></div>
+  <p class="mute" style="font-size:11px">Simulated from a public NCM forecast for Abu Dhabi. Not for operational use.</p></div>`},
+ agents(){return`<div class="cols2"><div class="card"><h3>Six AI agents brief every team in seconds</h3><div class="mute" style="margin-bottom:10px">Agents draft only · a human signs. Nothing moves until the duty manager signs.</div><div style="display:grid;gap:12px">${AGENTS.map(([n,ic,d])=>{const last=S.timeline.filter(e=>e.who===n).at(-1);return`<div class="agent"><div class="ic">${ic}</div><div><b>${n}</b> <span class="badge" style="color:${last?'var(--peach)':'var(--mute)'}">${last?'active '+fmt(last.t,1):'watching'}</span><div class="mute" style="font-size:11.5px">${d}</div>${last?`<div style="font-size:11px">↳ ${last.text}</div>`:''}</div></div>`}).join('')}</div></div>
+  <div class="card"><h3>Who gets briefed</h3><div class="cols3">${[['Fire crews','an alert'],['Duty manager','three options'],['Airline','a landing plan'],['Controller','a radio script'],['Arrivals','a new sequence'],['Safety office','the full record']].map(([a,b])=>`<div class="card"><b>${a}</b><div style="color:var(--peach)">${b}</div><div class="mute" style="font-size:10.5px">${S.incident?.status==='closed'?'✓ sent':'waiting for signature'}</div></div>`).join('')}</div><h3 style="margin-top:12px">Agent message bus</h3><div class="log">${S.agentLog.map(l=>`<div>${l}</div>`).join('')||'<div class="mute">Quiet. Run a scenario to see the agents work.</div>'}</div></div></div>`},
+ analytics(){const B=S.bench||(S.bench=bench());const sum=k=>B.reduce((a,r)=>a+r[k],0);const dT=sum('divT'),dJ=sum('divJ'),fT=sum('fuelT'),fJ=sum('fuelJ');const bars=(a,b,u)=>`<div style="display:flex;gap:18px;align-items:flex-end;height:180px"><div style="text-align:center;flex:1"><div class="mute">${a.toLocaleString()}${u}</div><div style="height:${150}px;background:#4a5f8f;border-radius:6px 6px 0 0"></div><div class="mono mute">TODAY</div></div><div style="text-align:center;flex:1"><div class="stat" style="font-size:18px">${Math.round((b/a-1)*100)}%</div><div style="color:var(--peach)">${b.toLocaleString()}${u}</div><div style="height:${150*b/a}px;background:var(--peach);border-radius:6px 6px 0 0"></div><div class="mono" style="color:var(--peach)">JET</div></div></div>`;
+  return`<div class="cols3"><div class="card"><h3>Diversions · 12 mornings</h3>${bars(dT,dJ,'')}</div><div class="card"><h3>Fuel burnt circling</h3>${bars(Math.round(fT/1000),Math.round(fJ/1000),' t')}</div><div class="card"><h3>Re-plan speed</h3><div class="stat" style="font-size:44px">${S.replanMs?S.replanMs.toFixed(0)+' ms':'—'}</div><div class="mute">last re-plan in this browser (prototype planner). Full CP-SAT + GNN target: 5.0 s for 84 flights, 64 stands, two runways.</div><div class="bar" style="height:14px;margin-top:12px"><i style="width:1%"></i></div><div style="display:flex;justify-content:space-between;font-size:11px;margin-top:4px"><span style="color:var(--peach)">Jet re-plans</span><span>people decide · 15-min cycle</span></div></div></div>
+  <div class="card" style="margin-top:10px"><h3>Per-morning results <button class="btn" style="float:right" onclick="S.bench=bench(Date.now()%1000);render(true)">Re-run with new seeds</button></h3><div class="mute" style="font-size:11px;margin-bottom:6px">Simulated in your browser: 84 arrivals per morning, arrival capacity cut to 14/h for 2.4–4.0 h. Today = first come, first served, divert at minimum fuel. Jet = re-plan every 15 min, hold at origin, fuel-first sequence.</div><table><tr><th>Morning</th><th>Cut</th><th>Diversions today</th><th>Diversions Jet</th><th>Holding fuel today</th><th>Holding fuel Jet</th><th>Saved</th></tr>${B.map((r,i)=>`<tr><td>${i+1}</td><td>${r.cut.toFixed(1)} h</td><td>${r.divT}</td><td style="color:var(--peach)">${r.divJ}</td><td>${(r.fuelT/1000).toFixed(0)} t</td><td style="color:var(--peach)">${(r.fuelJ/1000).toFixed(0)} t</td><td>AED ${((r.divT-r.divJ)*1.1e6/4+(r.fuelT-r.fuelJ)*AED.kg/1e6*1e6/1e6).toFixed(0)}k</td></tr>`).join('')}</table></div>`},
+ record(){const bad=S.verified;return`<div class="card"><h3>Decision record <span class="mute" style="font-weight:400">· every step hash-chained, replayable</span></h3><div style="display:flex;gap:6px;margin-bottom:8px"><button class="btn" onclick="S.verified=verify();render(true)">Verify chain</button><button class="btn" onclick="tamper()">Simulate tampering</button><button class="btn" onclick="exportRec()">Export JSON</button>${bad!==undefined?`<span class="${bad<0?'ok':'no'}">${bad<0?'✓ Chain intact · '+S.record.length+' entries':'✕ Chain broken at entry '+(bad+1)}</span>`:''}</div>
+  <table><tr><th>Time</th><th>Actor</th><th>Event</th><th>Prev</th><th>Hash</th></tr>${S.record.slice().reverse().map(e=>`<tr><td class="mono">${fmt(e.t,1)}</td><td><span class="badge">${e.who}</span></td><td>${e.what}</td><td class="mono mute">${e.prev.slice(0,8)}</td><td class="mono">${e.hash.slice(0,12)}…</td></tr>`).join('')}</table></div>`},
+ system(){const L=[['01','Ingest & trust','Cross-checks feeds; Jet Ear adds radio','ASTERIX · FIXM · AIXM · IWXXM · A-CDM · Kafka'],['02','Live picture','One replayable model of the airport','AMDB graph · event sourcing'],['03','Predict','Every estimate is a calibrated range','quantile + conformal · Kalman fuel'],['04','Decide','Guarantee, rehearse, optimise','max-flow · crisis library · CP-SAT · GNN'],['05','Assure','Nothing unchecked reaches a person','independent safety monitor · fallback chain'],['06','Coordinate','Agents do the back-and-forth','incident state machine · signed approvals'],['07','Humans','A person decides','supervisor console · controller advisories'],['08','Execute','Reserve, commit, then watch','AMAN · stand system · A-CDM'],['09','Record & learn','Every decision can be replayed','decision recorder · Crisis Gym']];
+  const feeds=[['A-SMGCS','surface radar'],['A-CDM','turnaround milestones'],['Arrival manager','landing sequence'],['Radio recorder','pilot–controller voice'],['Stand system','gates and stands'],['Airline operations','fleets and crews'],['NCM','weather observations']];
+  return`<div class="cols2"><div class="card"><h3>Nine layers</h3><table>${L.map(r=>`<tr ${r[0]==='04'?'style="background:#1b2d58"':''}><td style="color:var(--peach)">${r[0]}</td><td><b>${r[1]}</b></td><td>${r[2]}</td><td class="mute" style="font-size:10.5px">${r[3]}</td></tr>`).join('')}</table></div>
+  <div class="card"><h3>Feeds · read-only</h3><table>${feeds.map(([a,b],i)=>`<tr><td><span class="dot" style="background:var(--green)"></span><b>${a}</b></td><td class="mute">${b}</td><td class="mono mute">${(0.2+i*.13).toFixed(2)} s lag</td><td class="mono">simulated</td></tr>`).join('')}</table>
+  <h3 style="margin-top:12px">Fallback chain</h3><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${['Jet plan','Last safe plan','Rules','Manual (today’s procedures)'].map((x,i)=>`<span class="chip" style="${i===(S.incident?.status==='manual'?3:0)?'border-color:var(--peach);color:var(--ink)':''}">${x}</span>${i<3?'→':''}`).join('')}</div>
+  <h3 style="margin-top:12px">Safety checker rules</h3>${['Spacing — wake and declared-rate spacing; 2 min clear of take-offs on a departure runway; no traffic on closed runways.','Stand size — every arrival has a fitting, open, free stand.','Fuel — lands with ≥ 5 min above final reserve, using estimate − 1σ.','Fire routes — routes to an emergency runway stay clear.','Alternates — diversions only to open airports within declared spare.'].map(r=>`<div style="font-size:11.5px;padding:3px 0">✓ ${r}</div>`).join('')}
+  <p class="mute" style="font-size:11px;margin-top:10px">Built to EASA human-AI levels 1B and 2A. Jet advises; it replaces nothing and never talks to pilots.</p></div></div>`},
+};
+// ───────────────────────── benchmark (12 mornings) ─────────────────────────
+function bench(s0=1){const out=[];for(let m=0;m<12;m++){seed=1000+m*77+s0;const cut=2.4+rnd()*1.6,start=30+rnd()*30;const fl=[];for(let i=0;i<84;i++){const eta=i*(180/84)+rnd()*2;fl.push({eta,fuel:30+rnd()*35,ft:60+rnd()*400,burn:[40,85,120][Math.floor(rnd()*3)]})}
+  const run=jet=>{let t=0,next=0,div=0,kg=0;const st=fl.map(f=>({...f,gd:0,done:0}));for(t=0;t<420;t+=.5){const rate=t>=start&&t<start+cut*60?14:28;
+    if(jet&&t%15===0&&t>=start-5){let q=t;st.filter(f=>!f.done).sort((a,b)=>a.eta-b.eta).forEach(f=>{q=Math.max(q,f.eta+f.gd);if(f.eta-f.ft>t&&q>f.eta+f.gd+5)f.gd=q-f.eta-3;q+=60/(t<start+cut*60?14:28)})}
+    const wait=st.filter(f=>!f.done&&f.eta+f.gd<=t);wait.forEach(f=>{f.fuel-=.5;kg+=f.burn*.5;if(f.fuel<(jet?12:18)){f.done=1;div++}});
+    const w2=wait.filter(f=>!f.done);if(t>=next&&w2.length){w2.sort(jet?(a,b)=>a.fuel-b.fuel:(a,b)=>a.eta-b.eta);w2[0].done=1;next=t+60/rate}}return{div,kg}};
+  const T=run(0),J=run(1);out.push({cut,divT:T.div,divJ:J.div,fuelT:T.kg,fuelJ:J.kg})}return out}
+// ───────────────────────── glue ─────────────────────────
+function earSubmit(){const t=$('#earIn').value;S.earDraft=t;S.ear.unshift({t:S.now,text:t,facts:parse(t)});audit('Jet Ear','Transcribed: '+t);render(true)}
+function earAlert(){const fx=S.ear[0].facts;if(fx.callsign==='EY505'||fx.intent==='MEDICAL'){const id=fx.callsign;if(id&&S.flights.some(f=>f.id===id)&&id!=='EY505'){SCEN.medical.flight=id;SCEN.medical.title='Medical emergency on '+id;SCEN.medical.apply=()=>{const f=S.flights.find(x=>x.id===id);f.em='medical';if(fx.fuel)f.fuel=fx.fuel}}runScenario('medical')}else runScenario(fx.intent==='RUNWAY EVENT'?'runway':'medical')}
+function earMic(){const R=window.SpeechRecognition||window.webkitSpeechRecognition;if(!R)return toast('Speech recognition is not available in this browser');const r=new R();r.lang='en-US';r.onresult=e=>{$('#earIn').value=e.results[0][0].transcript;earSubmit()};r.start();toast('Listening…')}
+function tamper(){if(S.record.length>2){S.record[1].what+=' (edited)';S.verified=verify();render(true)}}
+function exportRec(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(S.record,null,1)],{type:'application/json'}));a.download='jet-record.json';a.click()}
+function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',2200)}
+let lastHtml='',lastView='';
+function render(force){
+  $('#nav').innerHTML=`<div class="logo">✈</div>`+NAV.map(([k,i,n])=>`<button class="${S.view===k?'on':''}" onclick="go('${k}')"><span>${i}</span>${n}</button>`).join('');
+  const H=harbour();$('#shTop').textContent=`${H.covered}/${H.total}`;$('#shDot').style.background=H.covered<H.total?'var(--red)':'var(--green)';$('#rateTop').textContent=`${S.rw31R?S.rate:Math.min(S.rate,20)}/h`;$('#holdTop').textContent=S.flights.filter(f=>f.phase==='holding').length;$('#replanTop').textContent=S.replanMs?(S.replanMs/1000).toFixed(2)+' s':'—';
+  $('#clock').innerHTML=`${fmt(S.now,1)} <small>GST · ${fmt(S.now-4*3600)}Z</small>`;
+  document.querySelectorAll('[data-speed]').forEach(b=>b.classList.toggle('on',+b.dataset.speed===S.speed));
+  const v=$('#view');
+  if(S.view==='live'){
+    if(force||lastView!=='live'){v.innerHTML=V.live();bindTwin($('#twin'))}
+    else{const inc=document.querySelector('.inc'),ops=document.querySelector('.ops');const tmp=document.createElement('div');tmp.innerHTML=V.live();inc.innerHTML=tmp.querySelector('.inc').innerHTML;ops.innerHTML=tmp.querySelector('.ops').innerHTML;const ovb=document.querySelector('.ovb');ovb.innerHTML=tmp.querySelector('.ovb').innerHTML}
+  }else if(force||lastView!==S.view){v.innerHTML=V[S.view]()}
+  else if(['agents','record','forecast','harbour'].includes(S.view)&&!document.activeElement.matches('input,textarea,select')){v.innerHTML=V[S.view]()}
+  lastView=S.view;
+}
+document.querySelectorAll('[data-speed]').forEach(b=>b.onclick=()=>{S.speed=+b.dataset.speed;render()});
+$('#runBtn').onclick=()=>runScenario($('#scenarioSel').value);
+$('#modal').onclick=e=>{if(e.target.id==='modal')e.currentTarget.classList.remove('show')};
+init();render(true);
+let prev=performance.now(),acc=0;
+function loop(t){const dt=Math.min(.2,(t-prev)/1000);prev=t;tick(dt);acc+=dt;if(acc>.5){acc=0;render()}if(S.view==='live')drawTwin();requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

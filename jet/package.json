@@ -1,0 +1,23 @@
+{
+  "name": "jet",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Jet — decision support for airport disruption. The right call, in seconds, when disruption hits.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:single": "tsc --noEmit && vite build --mode single",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "bench": "vite-node scripts/bench.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vite-node": "^2.1.8",
+    "vite-plugin-singlefile": "^2.0.3",
+    "vitest": "^2.1.8"
+  }
+}
